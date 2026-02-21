@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "a-share-semi-auto-trading"
+version = "0.8.0"
+description = "A-share semi-automated trading assistant foundation"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Trading Team" }]
+dependencies = [
+  "fastapi>=0.115,<1.0",
+  "uvicorn[standard]>=0.30,<1.0",
+  "pydantic>=2.8,<3.0",
+  "pydantic-settings>=2.4,<3.0",
+  "pandas>=2.2,<3.0",
+  "numpy>=2.0,<3.0",
+  "akshare>=1.16.0",
+  "tushare>=1.4.0",
+]
+
+[project.scripts]
+trading-assistant = "trading_assistant.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2,<9.0",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+addopts = "-q -p no:cacheprovider"
+testpaths = ["tests"]
+norecursedirs = [".venv", "data", "deploy", "docs", "reports"]

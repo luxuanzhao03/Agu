@@ -1,0 +1,9 @@
+{
+  "name": "risk-and-compliance-watch",
+  "owner": "risk_team",
+  "event_types": ["risk_check", "portfolio_risk", "compliance"],
+  "min_severity": "WARNING",
+  "dedupe_window_sec": 300,
+  "enabled": true,
+  "channel": "inbox"
+}

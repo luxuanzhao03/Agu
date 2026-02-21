@@ -1,0 +1,11 @@
+{
+  "strict_symbol_match": true,
+  "rows": [
+    {
+      "event_id": "ann-2025-0001",
+      "source_name": "szse_ann_feed",
+      "symbol": "000001",
+      "used_in_trade_time": "2025-05-10T09:45:00Z"
+    }
+  ]
+}

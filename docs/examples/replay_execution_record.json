@@ -1,0 +1,10 @@
+{
+  "signal_id": "paste-signal-id-here",
+  "symbol": "000001",
+  "execution_date": "2025-12-01",
+  "side": "BUY",
+  "quantity": 1000,
+  "price": 10.25,
+  "fee": 3.1,
+  "note": "manual order from broker client"
+}

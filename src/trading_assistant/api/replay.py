@@ -1,0 +1,74 @@
+from __future__ import annotations
+
+from datetime import date
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from trading_assistant.audit.service import AuditService
+from trading_assistant.core.container import get_audit_service, get_replay_service
+from trading_assistant.core.models import (
+    ExecutionRecordCreate,
+    ExecutionReplayReport,
+    SignalDecisionRecord,
+)
+from trading_assistant.core.security import AuthContext, UserRole, require_roles
+from trading_assistant.replay.service import ReplayService
+
+router = APIRouter(prefix="/replay", tags=["replay"])
+
+
+@router.post("/signals/record", response_model=str)
+def record_signal(
+    req: SignalDecisionRecord,
+    replay: ReplayService = Depends(get_replay_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.RESEARCH, UserRole.PORTFOLIO)),
+) -> str:
+    signal_id = replay.record_signal(req)
+    audit.log(
+        event_type="replay_signal",
+        action="record",
+        payload={"signal_id": signal_id, "symbol": req.symbol, "action": req.action.value},
+    )
+    return signal_id
+
+
+@router.get("/signals", response_model=list[SignalDecisionRecord])
+def list_signals(
+    symbol: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=2000),
+    replay: ReplayService = Depends(get_replay_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.RESEARCH, UserRole.RISK)),
+) -> list[SignalDecisionRecord]:
+    return replay.list_signals(symbol=symbol, limit=limit)
+
+
+@router.post("/executions/record", response_model=int)
+def record_execution(
+    req: ExecutionRecordCreate,
+    replay: ReplayService = Depends(get_replay_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.RESEARCH, UserRole.PORTFOLIO)),
+) -> int:
+    try:
+        row_id = replay.record_execution(req)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    audit.log(
+        event_type="replay_execution",
+        action="record",
+        payload={"signal_id": req.signal_id, "symbol": req.symbol, "quantity": req.quantity},
+    )
+    return row_id
+
+
+@router.get("/report", response_model=ExecutionReplayReport)
+def replay_report(
+    symbol: str | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=2000),
+    replay: ReplayService = Depends(get_replay_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.RESEARCH, UserRole.RISK)),
+) -> ExecutionReplayReport:
+    return replay.report(symbol=symbol, start_date=start_date, end_date=end_date, limit=limit)

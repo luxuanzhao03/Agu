@@ -1,0 +1,21 @@
+{
+  "connector_name": "tushare_ann_connector",
+  "source_name": "ann_feed",
+  "connector_type": "TUSHARE_ANNOUNCEMENT",
+  "enabled": true,
+  "fetch_limit": 1000,
+  "poll_interval_minutes": 10,
+  "replay_backoff_seconds": 300,
+  "max_retry": 8,
+  "config": {
+    "token": "<TUSHARE_TOKEN>",
+    "api_name": "anns_d",
+    "start_param": "start_date",
+    "end_param": "end_date",
+    "symbol_param": "ts_code",
+    "lookback_days": 2,
+    "timezone": "Asia/Shanghai"
+  },
+  "created_by": "ops_user",
+  "note": "production announcement connector"
+}

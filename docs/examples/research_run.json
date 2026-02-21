@@ -1,0 +1,19 @@
+{
+  "symbols": ["000001", "600519", "300750"],
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "strategy_name": "multi_factor",
+  "strategy_params": {
+    "buy_threshold": 0.55,
+    "sell_threshold": 0.35
+  },
+  "industry_map": {
+    "000001": "BANK",
+    "600519": "CONSUMER",
+    "300750": "NEW_ENERGY"
+  },
+  "optimize_portfolio": true,
+  "max_single_position": 0.05,
+  "max_industry_exposure": 0.2,
+  "target_gross_exposure": 1.0
+}

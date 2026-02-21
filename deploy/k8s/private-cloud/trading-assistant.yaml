@@ -1,0 +1,120 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: trading-assistant
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: trading-assistant-config
+  namespace: trading-assistant
+data:
+  ENV: "prod"
+  LOG_LEVEL: "INFO"
+  DATA_PROVIDER_PRIORITY: "akshare,tushare"
+  AUDIT_DB_PATH: "/var/lib/trading/audit.db"
+  SNAPSHOT_DB_PATH: "/var/lib/trading/snapshot.db"
+  REPLAY_DB_PATH: "/var/lib/trading/replay.db"
+  STRATEGY_GOV_DB_PATH: "/var/lib/trading/strategy_gov.db"
+  LICENSE_DB_PATH: "/var/lib/trading/license.db"
+  JOB_DB_PATH: "/var/lib/trading/job.db"
+  ALERT_DB_PATH: "/var/lib/trading/alert.db"
+  EVENT_DB_PATH: "/var/lib/trading/event.db"
+  OPS_SCHEDULER_ENABLED: "true"
+  OPS_SCHEDULER_TICK_SECONDS: "30"
+  OPS_SCHEDULER_TIMEZONE: "Asia/Shanghai"
+  OPS_JOB_SLA_GRACE_MINUTES: "15"
+  OPS_JOB_RUNNING_TIMEOUT_MINUTES: "120"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: trading-assistant-secret
+  namespace: trading-assistant
+type: Opaque
+stringData:
+  TUSHARE_TOKEN: ""
+  AUTH_API_KEYS: ""
+  AUTH_ENABLED: "false"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: trading-assistant-data
+  namespace: trading-assistant
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trading-assistant
+  namespace: trading-assistant
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trading-assistant
+  template:
+    metadata:
+      labels:
+        app: trading-assistant
+    spec:
+      containers:
+        - name: api
+          image: trading-assistant:0.7.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: trading-assistant-config
+            - secretRef:
+                name: trading-assistant-secret
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/trading
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "2"
+              memory: "4Gi"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: trading-assistant-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trading-assistant
+  namespace: trading-assistant
+spec:
+  selector:
+    app: trading-assistant
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+  type: ClusterIP

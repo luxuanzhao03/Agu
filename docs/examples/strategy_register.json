@@ -1,0 +1,7 @@
+{
+  "strategy_name": "multi_factor",
+  "version": "v1.0.0",
+  "description": "initial production baseline",
+  "params_hash": "sha256:example",
+  "created_by": "quant_researcher"
+}

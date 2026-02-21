@@ -1,0 +1,322 @@
+Metadata-Version: 2.4
+Name: a-share-semi-auto-trading
+Version: 0.7.0
+Summary: A-share semi-automated trading assistant foundation
+Author: Trading Team
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi<1.0,>=0.115
+Requires-Dist: uvicorn[standard]<1.0,>=0.30
+Requires-Dist: pydantic<3.0,>=2.8
+Requires-Dist: pydantic-settings<3.0,>=2.4
+Requires-Dist: pandas<3.0,>=2.2
+Requires-Dist: numpy<3.0,>=2.0
+Requires-Dist: akshare>=1.16.0
+Requires-Dist: tushare>=1.4.0
+Provides-Extra: dev
+Requires-Dist: pytest<9.0,>=8.2; extra == "dev"
+
+# A-share Semi-Automated Trading Assistant
+
+This repository is a production-oriented foundation for a **semi-automated** A-share trading assistant.
+
+Design boundary:
+- Research + decision support only.
+- No broker integration.
+- No auto order execution.
+- Human trader places orders manually.
+
+## Implemented Scope
+
+1. Data layer with provider fallback
+- `akshare` first, `tushare` fallback.
+- Unified daily-bar schema.
+- Trade calendar endpoint.
+
+2. Factor engine
+- Trend, momentum, volatility, ATR, z-score, liquidity features.
+
+3. Strategy engine
+- `trend_following`
+- `mean_reversion`
+- `multi_factor`
+- `sector_rotation`
+- `event_driven`
+- Strategy registry and strategy metadata endpoints.
+
+4. Risk engine
+- T+1 sell constraint.
+- ST filter.
+- Suspension filter.
+- Limit-up/limit-down execution warning.
+- Single-position cap.
+- Liquidity threshold.
+- Portfolio drawdown cap.
+- Industry concentration warning.
+
+5. Signal center
+- Signal generation with strategy selection and strategy params.
+- Trade prep sheet output with risk explanation and compliance disclaimer.
+
+6. Backtest engine
+- Single-symbol long-only baseline.
+- Slippage + commission.
+- T+1 availability logic.
+- Equity curve, trade list, and key metrics.
+
+7. Audit trail
+- SQLite-based audit event store.
+- API events, signal generation, backtests, and risk checks are logged.
+
+8. Batch pipeline
+- Daily pipeline run across symbol lists.
+- Aggregated result with blocked/warning counts.
+
+9. Data governance
+- Dataset quality report (missing fields, duplicates, invalid OHLC checks).
+- PIT-friendly dataset snapshot metadata (hash + provider + date range).
+
+10. Portfolio workflow
+- Candidate optimization under symbol/industry caps.
+- Rebalance plan generation from current positions to target weights.
+
+11. Replay workflow
+- Signal record persistence.
+- Manual execution record write-back.
+- Replay report: follow rate, delay, execution tracking.
+
+12. Research workflow orchestration
+- Batch signal generation across symbols.
+- Optional portfolio optimization in same request.
+
+13. Alert center
+- Alert subscriptions with severity threshold and event filters.
+- Dedupe window and frequency control.
+- Notification inbox with ACK workflow.
+
+14. Strategy governance
+- Strategy version draft registration.
+- Review submission and multi-role decision workflow.
+- Approval workflow and approved-version querying.
+- Optional runtime enforcement (`ENFORCE_APPROVED_STRATEGY=true`).
+
+15. RBAC access control
+- Optional API-key authentication with role-based permissions.
+- Roles: `research`, `risk`, `portfolio`, `audit`, `readonly`, `admin`.
+
+16. PIT guard rails
+- Point-in-time validation endpoint.
+- Runtime checks before signal/backtest/pipeline execution.
+- Event-timestamp PIT validation endpoint.
+
+17. Report center
+- Signal/risk/replay report generation.
+- Markdown export with watermark and optional file output.
+
+18. Data license governance
+- License ledger (dataset/provider/scopes/expiry/export policy/watermark).
+- License check API and optional runtime enforcement (`ENFORCE_DATA_LICENSE=true`).
+- Market/signal/backtest/pipeline/research/report/audit paths include license checks and audit metadata.
+
+19. Ops job center
+- Job definition registry (`pipeline_daily` / `research_workflow` / `report_generate`).
+- Manual trigger with run history and structured run summary.
+- Full audit logging on register/trigger.
+
+20. Scheduled runtime and ops dashboard
+- Cron-based scheduler tick for `schedule_cron` jobs with same-minute dedupe.
+- SLA checks for invalid cron, missed run, failed latest run, and running timeout.
+- Unified ops dashboard for job health, alert backlog, and replay execution variance.
+- Optional background worker (`OPS_SCHEDULER_ENABLED=true`) for periodic auto tick.
+
+21. Event governance and PIT join validation
+- Event source registry with ingestion metadata and reliability profile.
+- Batch event ingest with upsert semantics and source-level audit.
+- PIT join validation against stored events (`publish_time` / `effective_time` checks).
+- Event feature enrichment (`event_score`, `negative_event_score`) for event-driven strategy.
+
+22. Deployment manifests
+- Single-node Docker deployment (`deploy/docker-compose.single-node.yml`).
+- Private-cloud Kubernetes baseline (`deploy/k8s/private-cloud/trading-assistant.yaml`).
+
+## Quick Start
+
+```bash
+python -m venv .venv
+. .venv/Scripts/activate
+pip install -e .[dev]
+copy .env.example .env
+uvicorn trading_assistant.main:app --reload
+```
+
+PowerShell shortcut:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\run_pipeline.ps1 -Symbols "000001,000002"
+```
+
+## Deployment
+
+Single node:
+```bash
+cd deploy
+docker compose -f docker-compose.single-node.yml up -d --build
+```
+
+Private cloud:
+```bash
+kubectl apply -f deploy/k8s/private-cloud/trading-assistant.yaml
+```
+
+## Optional Auth (RBAC)
+
+When `AUTH_ENABLED=true`, include API key header:
+
+```text
+X-API-Key: <your-key>
+```
+
+Configure key-role mapping in `.env`:
+
+```text
+AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admin
+```
+
+## API Overview
+
+- `GET /health`
+- `GET /market/bars`
+- `GET /market/calendar`
+- `POST /data/quality/report`
+- `POST /data/pit/validate`
+- `POST /data/pit/validate-events`
+- `POST /data/snapshots/register`
+- `GET /data/snapshots`
+- `GET /data/snapshots/latest`
+- `POST /data/licenses/register`
+- `GET /data/licenses`
+- `POST /data/licenses/check`
+- `POST /events/sources/register`
+- `GET /events/sources`
+- `POST /events/ingest`
+- `GET /events`
+- `POST /events/pit/join-validate`
+- `POST /events/features/preview`
+- `GET /factors/snapshot`
+- `GET /strategies`
+- `GET /strategies/{strategy_name}`
+- `POST /strategy-governance/register`
+- `POST /strategy-governance/submit-review`
+- `POST /strategy-governance/approve`
+- `POST /strategy-governance/decide`
+- `GET /strategy-governance/versions`
+- `GET /strategy-governance/latest-approved`
+- `GET /strategy-governance/decisions`
+- `GET /strategy-governance/policy`
+- `POST /signals/generate`
+- `POST /risk/check`
+- `POST /portfolio/risk/check`
+- `POST /portfolio/optimize`
+- `POST /portfolio/rebalance/plan`
+- `POST /portfolio/stress-test`
+- `POST /backtest/run`
+- `POST /pipeline/daily-run`
+- `POST /replay/signals/record`
+- `GET /replay/signals`
+- `POST /replay/executions/record`
+- `GET /replay/report`
+- `POST /research/run`
+- `GET /audit/events`
+- `GET /audit/export`
+- `GET /audit/verify-chain`
+- `GET /alerts/recent`
+- `POST /alerts/subscriptions`
+- `GET /alerts/subscriptions`
+- `GET /alerts/notifications`
+- `POST /alerts/notifications/{notification_id}/ack`
+- `GET /metrics/summary`
+- `GET /metrics/ops-dashboard`
+- `POST /model-risk/drift-check`
+- `POST /reports/generate`
+- `POST /compliance/preflight`
+- `POST /ops/jobs/register`
+- `GET /ops/jobs`
+- `POST /ops/jobs/{job_id}/run`
+- `GET /ops/jobs/{job_id}/runs`
+- `GET /ops/jobs/runs/{run_id}`
+- `POST /ops/jobs/scheduler/tick`
+- `GET /ops/jobs/scheduler/sla`
+- `GET /system/config`
+- `GET /system/auth/me`
+- `GET /system/auth/permissions`
+
+## Scheduler Config
+
+```text
+OPS_SCHEDULER_ENABLED=false
+OPS_SCHEDULER_TICK_SECONDS=30
+OPS_SCHEDULER_TIMEZONE=Asia/Shanghai
+OPS_SCHEDULER_SLA_LOG_COOLDOWN_SECONDS=1800
+OPS_SCHEDULER_SYNC_ALERTS_FROM_AUDIT=true
+OPS_JOB_SLA_GRACE_MINUTES=15
+OPS_JOB_RUNNING_TIMEOUT_MINUTES=120
+EVENT_DB_PATH=data/event.db
+```
+
+## Example Calls
+
+```bash
+curl "http://127.0.0.1:8000/market/bars?symbol=000001&start_date=2025-01-01&end_date=2025-12-31&limit=5"
+```
+
+```bash
+curl "http://127.0.0.1:8000/strategies"
+```
+
+```bash
+curl -X POST "http://127.0.0.1:8000/signals/generate" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"symbol\":\"000001\",\"start_date\":\"2025-01-01\",\"end_date\":\"2025-12-31\",\"strategy_name\":\"multi_factor\"}"
+```
+
+```bash
+curl -X POST "http://127.0.0.1:8000/backtest/run" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"symbol\":\"000001\",\"start_date\":\"2025-01-01\",\"end_date\":\"2025-12-31\",\"strategy_name\":\"trend_following\"}"
+```
+
+## Structure
+
+```text
+src/trading_assistant/
+  alerts/     # Alert subscriptions + notification inbox
+  api/        # FastAPI routes
+  audit/      # Audit trail store/service (SQLite)
+  backtest/   # Backtest engine
+  core/       # Config, models, DI container
+  data/       # Data providers: akshare/tushare + fallback router
+  factors/    # Factor engine
+  governance/ # Snapshot registry + data quality + data licenses
+  ops/        # Job orchestration + scheduler + ops dashboard services
+  pipeline/   # Batch runner
+  portfolio/  # Optimizer + rebalance planner
+  replay/     # Signal-execution replay storage/report
+  risk/       # Risk rules and evaluator
+  signal/     # Trade prep generation
+  strategy/   # Strategy templates and registry
+  main.py     # App entrypoint
+tests/
+docs/
+```
+
+## Notes
+
+- This is a base platform, not a complete investment advisory product.
+- For commercial use, complete compliance workflow and legal review are required.
+- See `docs/architecture.md` for the module-level design.
+- Deployment runbook: `docs/deployment.md`.
+- Version notes: `CHANGELOG.md`.
+- API payload examples are under `docs/examples/`.
+- Config loader supports `.env` fallback even if `pydantic-settings` is missing, but installing full dependencies is recommended.

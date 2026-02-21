@@ -1,0 +1,10 @@
+{
+  "symbol": "000001",
+  "start_date": "2025-05-01",
+  "end_date": "2025-05-31",
+  "strategy_name": "event_driven",
+  "strategy_params": {},
+  "enable_event_enrichment": true,
+  "event_lookback_days": 30,
+  "event_decay_half_life_days": 7
+}

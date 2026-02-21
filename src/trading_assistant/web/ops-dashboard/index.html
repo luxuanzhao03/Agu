@@ -1,0 +1,340 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ops Event Governance Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/ui/ops-dashboard/styles.css" />
+  </head>
+  <body>
+    <div class="bg-layer"></div>
+    <main class="page">
+      <header class="hero" data-animate>
+        <div>
+          <p class="eyebrow">A-Share Semi-Auto Trading Assistant</p>
+          <h1>Ops + Event Governance Dashboard</h1>
+          <p class="sub">Jobs | SLA | Alerts | Event NLP | Replay Workbench</p>
+        </div>
+        <div class="hero-actions">
+          <button id="refreshBtn" type="button">Refresh</button>
+          <button id="syncSlaBtn" type="button" class="secondary">Sync SLA Alerts</button>
+          <p id="lastUpdated">Last update: -</p>
+        </div>
+      </header>
+
+      <div id="errorBanner" class="error-banner hidden"></div>
+
+      <section class="kpi-grid" data-animate>
+        <article class="kpi-card">
+          <p>Job Runs (24h)</p>
+          <h2 id="kpiRuns24h">-</h2>
+        </article>
+        <article class="kpi-card">
+          <p>Scheduler SLA Breaches</p>
+          <h2 id="kpiJobSlaBreaches">-</h2>
+        </article>
+        <article class="kpi-card">
+          <p>Connector SLA Critical</p>
+          <h2 id="kpiConnectorSlaCritical">-</h2>
+        </article>
+        <article class="kpi-card">
+          <p>Connector SLA Open</p>
+          <h2 id="kpiConnectorSlaOpen">-</h2>
+        </article>
+        <article class="kpi-card">
+          <p>Connector SLA Escalated Open</p>
+          <h2 id="kpiConnectorSlaEscalatedOpen">-</h2>
+        </article>
+        <article class="kpi-card">
+          <p>Unacked Critical Alerts</p>
+          <h2 id="kpiCriticalAlerts">-</h2>
+        </article>
+        <article class="kpi-card">
+          <p>Event Symbols (30d)</p>
+          <h2 id="kpiEventSymbols">-</h2>
+        </article>
+      </section>
+
+      <section class="panel" data-animate>
+        <div class="panel-head">
+          <h3>Event Coverage Overview</h3>
+          <p id="coverageMeta">-</p>
+        </div>
+        <div class="coverage-grid">
+          <div class="coverage-cards">
+            <article><p>Total Events</p><h4 id="coverageTotal">-</h4></article>
+            <article><p>Positive</p><h4 id="coveragePositive">-</h4></article>
+            <article><p>Negative</p><h4 id="coverageNegative">-</h4></article>
+            <article><p>Sources Covered</p><h4 id="coverageSources">-</h4></article>
+          </div>
+          <div class="coverage-chart-wrap">
+            <div id="coverageChart" class="coverage-chart"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-animate>
+        <div class="panel-head">
+          <h3>Connector Health + Backlog</h3>
+          <p>checkpoint / freshness / pending / dead</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Connector</th>
+                <th>Source</th>
+                <th>Last Run</th>
+                <th>Status</th>
+                <th>Freshness(min)</th>
+                <th>Pending</th>
+                <th>Dead</th>
+                <th>Checkpoint</th>
+              </tr>
+            </thead>
+            <tbody id="connectorRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" data-animate>
+        <div class="panel-head">
+          <h3>Connector SLA Breaches + Escalation State Machine</h3>
+          <p id="connectorSlaSummaryMeta">-</p>
+        </div>
+        <div class="split-grid">
+          <div class="table-wrap">
+            <h4>SLA Breaches</h4>
+            <table>
+              <thead>
+                <tr>
+                  <th>Connector</th>
+                  <th>Breach</th>
+                  <th>Stage</th>
+                  <th>Severity</th>
+                  <th>Freshness</th>
+                  <th>Pending</th>
+                  <th>Dead</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody id="connectorSlaRows"></tbody>
+            </table>
+          </div>
+          <div class="table-wrap">
+            <h4>Open States</h4>
+            <table>
+              <thead>
+                <tr>
+                  <th>Connector</th>
+                  <th>Breach</th>
+                  <th>Stage</th>
+                  <th>Severity</th>
+                  <th>Repeat</th>
+                  <th>Escalation</th>
+                  <th>Last Seen</th>
+                  <th>Last Emitted</th>
+                </tr>
+              </thead>
+              <tbody id="connectorSlaStateRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-animate>
+        <div class="panel-head">
+          <h3>NLP Ruleset + Drift Monitor</h3>
+          <p>hit rate / score distribution / contribution / feedback drift</p>
+        </div>
+        <div class="monitor-grid">
+          <article class="monitor-card">
+            <p>Active Ruleset</p>
+            <h4 id="nlpActiveRuleset">-</h4>
+          </article>
+          <article class="monitor-card">
+            <p>Latest Risk</p>
+            <h4 id="nlpLatestRisk">-</h4>
+          </article>
+          <article class="monitor-card">
+            <p>Latest Snapshot</p>
+            <h4 id="nlpLatestSnapshot">-</h4>
+          </article>
+          <article class="monitor-card">
+            <p>Hit Delta Trend</p>
+            <h4 id="nlpTrendHitRate">-</h4>
+          </article>
+          <article class="monitor-card">
+            <p>Score Delta Trend</p>
+            <h4 id="nlpTrendScore">-</h4>
+          </article>
+          <article class="monitor-card">
+            <p>Contribution Trend</p>
+            <h4 id="nlpTrendContribution">-</h4>
+          </article>
+          <article class="monitor-card">
+            <p>Feedback Polarity Trend</p>
+            <h4 id="nlpTrendFeedbackPolarity">-</h4>
+          </article>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Ruleset</th>
+                <th>Hit Delta</th>
+                <th>Score Delta</th>
+                <th>Contribution</th>
+                <th>Feedback Polarity</th>
+                <th>Feedback Type</th>
+                <th>Alerts</th>
+              </tr>
+            </thead>
+            <tbody id="nlpSnapshotRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" data-animate>
+        <div class="panel-head">
+          <h3>Jobs + Scheduler SLA</h3>
+          <p>recent jobs and scheduler breaches</p>
+        </div>
+        <div class="split-grid">
+          <div class="table-wrap">
+            <h4>Recent Job Runs</h4>
+            <table>
+              <thead>
+                <tr>
+                  <th>Run ID</th>
+                  <th>Job ID</th>
+                  <th>Status</th>
+                  <th>Started</th>
+                </tr>
+              </thead>
+              <tbody id="runRows"></tbody>
+            </table>
+          </div>
+          <div class="table-wrap">
+            <h4>Scheduler SLA Breaches</h4>
+            <table>
+              <thead>
+                <tr>
+                  <th>Job</th>
+                  <th>Type</th>
+                  <th>Severity</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody id="slaRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-animate>
+        <div class="panel-head">
+          <h3>Unacked Alerts</h3>
+          <p>risk / sla / governance chain</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Severity</th>
+                <th>Source</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="alertRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" data-animate>
+        <div class="panel-head">
+          <h3>Replay Workbench</h3>
+          <p>manual repair + replay for failed rows</p>
+        </div>
+        <div class="workbench-controls">
+          <label>
+            Connector
+            <select id="wbConnectorSelect"></select>
+          </label>
+          <label>
+            Status
+            <select id="wbStatusFilter">
+              <option value="PENDING">PENDING</option>
+              <option value="DEAD">DEAD</option>
+              <option value="REPLAYED">REPLAYED</option>
+              <option value="ALL">ALL</option>
+            </select>
+          </label>
+          <label>
+            Error Keyword
+            <input id="wbErrorKeyword" type="text" placeholder="contains..." />
+          </label>
+          <button id="loadFailuresBtn" type="button">Load Failures</button>
+          <button id="selectAllFailuresBtn" type="button" class="secondary">Select All</button>
+          <button id="replaySelectedBtn" type="button">Replay Selected</button>
+          <button id="repairReplaySelectedBtn" type="button">Save + Replay Selected</button>
+        </div>
+        <p id="wbActionResult" class="muted">-</p>
+        <div class="workbench-grid">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Pick</th>
+                  <th>ID</th>
+                  <th>Status</th>
+                  <th>Retry</th>
+                  <th>Next Retry</th>
+                  <th>Last Error</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="wbFailureRows"></tbody>
+            </table>
+          </div>
+          <div class="workbench-editor">
+            <p id="wbSelectedMeta" class="muted">Pick one row to edit payload.</p>
+            <label>raw_record (JSON)</label>
+            <textarea id="wbRawEditor" rows="8" spellcheck="false"></textarea>
+            <label>event (JSON)</label>
+            <textarea id="wbEventEditor" rows="8" spellcheck="false"></textarea>
+            <label>repair note</label>
+            <input id="wbRepairNote" type="text" placeholder="what was fixed" />
+            <label class="inline">
+              <input id="wbResetRetry" type="checkbox" /> reset retry_count to 0
+            </label>
+            <button id="saveRepairBtn" type="button">Save Repair</button>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <h4>Replay Results</h4>
+          <table>
+            <thead>
+              <tr>
+                <th>Failure ID</th>
+                <th>Status</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="wbReplayResultRows"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/ui/ops-dashboard/app.js"></script>
+  </body>
+</html>

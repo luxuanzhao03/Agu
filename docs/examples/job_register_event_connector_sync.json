@@ -1,0 +1,12 @@
+{
+  "name": "event-connector-sync-ann-feed",
+  "job_type": "event_connector_sync",
+  "owner": "ops",
+  "schedule_cron": "*/10 * * * 1-5",
+  "payload": {
+    "connector_name": "ann_file_connector",
+    "dry_run": false,
+    "force_full_sync": false
+  },
+  "description": "sync announcement connector every 10 minutes"
+}

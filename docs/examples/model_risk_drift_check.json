@@ -1,0 +1,7 @@
+{
+  "strategy_name": "multi_factor",
+  "symbol": "000001",
+  "lookback_events": 300,
+  "return_drift_threshold": 0.08,
+  "follow_rate_threshold": 0.5
+}

@@ -1,0 +1,11 @@
+fastapi<1.0,>=0.115
+uvicorn[standard]<1.0,>=0.30
+pydantic<3.0,>=2.8
+pydantic-settings<3.0,>=2.4
+pandas<3.0,>=2.2
+numpy<3.0,>=2.0
+akshare>=1.16.0
+tushare>=1.4.0
+
+[dev]
+pytest<9.0,>=8.2

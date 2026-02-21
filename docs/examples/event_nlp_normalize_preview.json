@@ -1,0 +1,23 @@
+{
+  "source_name": "ann_feed",
+  "default_timezone": "Asia/Shanghai",
+  "source_reliability_score": 0.9,
+  "records": [
+    {
+      "source_event_id": "news-2025-001",
+      "symbol": "000001",
+      "title": "Earnings beat guidance",
+      "summary": "profit growth and guidance up",
+      "publish_time_text": "2025-01-10 08:30:00",
+      "url": "https://example.com/ann/1"
+    },
+    {
+      "source_event_id": "news-2025-002",
+      "symbol": "000001",
+      "title": "Regulatory investigation notice",
+      "summary": "company receives formal inquiry",
+      "publish_time_text": "2025-01-11 09:00:00",
+      "url": "https://example.com/ann/2"
+    }
+  ]
+}

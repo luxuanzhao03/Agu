@@ -1,0 +1,12 @@
+{
+  "dataset_name": "daily_bars",
+  "provider": "akshare",
+  "licensor": "akshare-community",
+  "usage_scopes": ["internal_research"],
+  "allow_export": false,
+  "enforce_watermark": "Internal Research Use Only",
+  "valid_from": "2025-01-01",
+  "valid_to": "2026-12-31",
+  "created_by": "compliance_user",
+  "note": "MVP data source authorization record"
+}

@@ -1,0 +1,5 @@
+{
+  "connector_name": "ann_feed_prod",
+  "failure_ids": [128, 130, 132],
+  "triggered_by": "ops_dashboard"
+}

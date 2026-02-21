@@ -1,0 +1,169 @@
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+
+from trading_assistant.core.models import RiskCheckRequest, RuleHit, SignalAction, SignalLevel
+
+
+class RiskRule(ABC):
+    name: str
+
+    @abstractmethod
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        """Validate one risk rule and return rule hit details."""
+
+
+class TPlusOneRule(RiskRule):
+    name = "t_plus_one"
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        if req.signal.action != SignalAction.SELL:
+            return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Not a SELL action.")
+
+        available_qty = req.position.available_quantity if req.position else 0
+        if available_qty <= 0:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.CRITICAL,
+                message="T+1 constraint hit: no available quantity for selling.",
+            )
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="T+1 validation passed.")
+
+
+class STRule(RiskRule):
+    name = "st_filter"
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        if req.signal.action == SignalAction.BUY and req.is_st:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.CRITICAL,
+                message="ST/risk-warning stock is blocked for new BUY signals.",
+            )
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="ST validation passed.")
+
+
+class SuspensionRule(RiskRule):
+    name = "suspension_filter"
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        if req.signal.action in {SignalAction.BUY, SignalAction.SELL} and req.is_suspended:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.CRITICAL,
+                message="Security is suspended.",
+            )
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Suspension validation passed.")
+
+
+class LimitPriceRule(RiskRule):
+    name = "limit_price"
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        if req.signal.action == SignalAction.BUY and req.at_limit_up:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.WARNING,
+                message="Near/up-limit-up, BUY may not be filled.",
+            )
+        if req.signal.action == SignalAction.SELL and req.at_limit_down:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.WARNING,
+                message="Near/at-limit-down, SELL may not be filled.",
+            )
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Limit-price validation passed.")
+
+
+class PositionLimitRule(RiskRule):
+    name = "single_position_limit"
+
+    def __init__(self, max_single_position: float) -> None:
+        self.max_single_position = max_single_position
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        target = req.signal.suggested_position
+        if req.signal.action == SignalAction.BUY and target is not None and target > self.max_single_position:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.CRITICAL,
+                message=f"Target position {target:.2%} exceeds limit {self.max_single_position:.2%}.",
+            )
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Single-position limit passed.")
+
+
+class LiquidityRule(RiskRule):
+    name = "liquidity_min_turnover"
+
+    def __init__(self, min_turnover_20d: float) -> None:
+        self.min_turnover_20d = min_turnover_20d
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        if req.signal.action not in {SignalAction.BUY, SignalAction.SELL}:
+            return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Not an executable signal.")
+
+        turnover = req.avg_turnover_20d if req.avg_turnover_20d is not None else 0.0
+        if turnover < self.min_turnover_20d:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.WARNING,
+                message=f"Avg turnover20 {turnover:.2f} below threshold {self.min_turnover_20d:.2f}.",
+            )
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Liquidity validation passed.")
+
+
+class DrawdownRule(RiskRule):
+    name = "portfolio_drawdown"
+
+    def __init__(self, max_drawdown: float) -> None:
+        self.max_drawdown = max_drawdown
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        if req.portfolio is None:
+            return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="No portfolio snapshot.")
+
+        if req.portfolio.current_drawdown > self.max_drawdown:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.CRITICAL,
+                message=(
+                    f"Portfolio drawdown {req.portfolio.current_drawdown:.2%} "
+                    f"exceeds limit {self.max_drawdown:.2%}."
+                ),
+            )
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Drawdown validation passed.")
+
+
+class IndustryExposureRule(RiskRule):
+    name = "industry_exposure"
+
+    def __init__(self, max_industry_exposure: float) -> None:
+        self.max_industry_exposure = max_industry_exposure
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        if req.portfolio is None or not req.symbol_industry or req.signal.action != SignalAction.BUY:
+            return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Industry check not applicable.")
+
+        current = float(req.portfolio.industry_exposure.get(req.symbol_industry, 0.0))
+        incremental = float(req.signal.suggested_position or 0.0)
+        projected = current + incremental
+        if projected > self.max_industry_exposure:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.WARNING,
+                message=(
+                    f"Projected industry exposure {projected:.2%} exceeds "
+                    f"limit {self.max_industry_exposure:.2%}."
+                ),
+            )
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Industry exposure validation passed.")
+

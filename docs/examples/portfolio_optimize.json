@@ -1,0 +1,30 @@
+{
+  "candidates": [
+    {
+      "symbol": "000001",
+      "expected_return": 0.12,
+      "volatility": 0.22,
+      "industry": "BANK",
+      "liquidity_score": 0.9
+    },
+    {
+      "symbol": "600519",
+      "expected_return": 0.11,
+      "volatility": 0.18,
+      "industry": "CONSUMER",
+      "liquidity_score": 0.85
+    },
+    {
+      "symbol": "300750",
+      "expected_return": 0.10,
+      "volatility": 0.30,
+      "industry": "NEW_ENERGY",
+      "liquidity_score": 0.8
+    }
+  ],
+  "max_single_position": 0.05,
+  "max_industry_exposure": 0.2,
+  "min_weight_threshold": 0.005,
+  "risk_aversion": 0.5,
+  "target_gross_exposure": 1.0
+}

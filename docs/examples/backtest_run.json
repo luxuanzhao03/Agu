@@ -1,0 +1,14 @@
+{
+  "symbol": "000001",
+  "start_date": "2024-01-01",
+  "end_date": "2025-12-31",
+  "strategy_name": "trend_following",
+  "strategy_params": {
+    "atr_multiplier": 2.0
+  },
+  "initial_cash": 1000000,
+  "commission_rate": 0.0003,
+  "slippage_rate": 0.0005,
+  "lot_size": 100,
+  "max_single_position": 0.05
+}

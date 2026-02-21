@@ -1,0 +1,11 @@
+{
+  "source_name": "szse_ann_feed",
+  "source_type": "ANNOUNCEMENT",
+  "provider": "internal_ingest",
+  "timezone": "Asia/Shanghai",
+  "ingestion_lag_minutes": 2,
+  "reliability_score": 0.9,
+  "description": "Shenzhen exchange announcements parsed by internal pipeline",
+  "created_by": "ops_user",
+  "note": "PIT-enforced source for event-driven strategy"
+}

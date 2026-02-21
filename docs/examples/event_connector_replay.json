@@ -1,0 +1,5 @@
+{
+  "connector_name": "ann_file_connector",
+  "limit": 100,
+  "triggered_by": "manual_ops_replay"
+}

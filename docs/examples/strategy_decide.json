@@ -1,0 +1,8 @@
+{
+  "strategy_name": "multi_factor",
+  "version": "v1.0.0",
+  "reviewer": "risk_manager",
+  "reviewer_role": "risk",
+  "decision": "APPROVE",
+  "note": "risk checks passed"
+}

@@ -1,0 +1,8 @@
+{
+  "dataset_name": "daily_bars",
+  "provider": "akshare",
+  "requested_usage": "internal_research",
+  "export_requested": false,
+  "expected_rows": 300,
+  "as_of": "2025-12-31"
+}

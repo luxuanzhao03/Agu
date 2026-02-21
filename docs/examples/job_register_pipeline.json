@@ -1,0 +1,20 @@
+{
+  "name": "daily-pipeline-mainboard",
+  "job_type": "pipeline_daily",
+  "owner": "ops_user",
+  "schedule_cron": "0 17 * * 1-5",
+  "enabled": true,
+  "description": "Run after market close for tracked symbols",
+  "payload": {
+    "symbols": ["000001", "000002", "600000"],
+    "start_date": "2025-01-01",
+    "end_date": "2025-12-31",
+    "strategy_name": "multi_factor",
+    "strategy_params": {},
+    "industry_map": {
+      "000001": "BANK",
+      "000002": "REAL_ESTATE",
+      "600000": "BANK"
+    }
+  }
+}

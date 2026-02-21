@@ -1,0 +1,24 @@
+{
+  "version": "ruleset-v3-20260221",
+  "activate": true,
+  "created_by": "nlp_admin",
+  "note": "increase policy and contract sensitivity",
+  "rules": [
+    {
+      "rule_id": "policy_positive_v3",
+      "event_type": "policy_positive",
+      "polarity": "POSITIVE",
+      "weight": 0.78,
+      "tag": "policy_tailwind",
+      "patterns": ["policy support", "subsidy", "政策支持", "补贴"]
+    },
+    {
+      "rule_id": "major_contract_v3",
+      "event_type": "major_contract",
+      "polarity": "POSITIVE",
+      "weight": 0.82,
+      "tag": "contract",
+      "patterns": ["major contract", "winning bid", "重大合同", "中标"]
+    }
+  ]
+}

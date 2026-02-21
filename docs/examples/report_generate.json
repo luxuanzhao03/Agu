@@ -1,0 +1,9 @@
+{
+  "report_type": "replay",
+  "symbol": "000001",
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "limit": 200,
+  "save_to_file": true,
+  "watermark": "Internal Use Only"
+}

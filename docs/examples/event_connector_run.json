@@ -1,0 +1,6 @@
+{
+  "connector_name": "ann_file_connector",
+  "triggered_by": "manual_ops",
+  "dry_run": false,
+  "force_full_sync": false
+}

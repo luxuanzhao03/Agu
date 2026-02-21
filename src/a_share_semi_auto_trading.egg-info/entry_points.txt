@@ -1,0 +1,2 @@
+[console_scripts]
+trading-assistant = trading_assistant.cli:main

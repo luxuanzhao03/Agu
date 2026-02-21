@@ -1,0 +1,23 @@
+{
+  "source_name": "szse_ann_feed",
+  "events": [
+    {
+      "event_id": "ann-2025-0001",
+      "symbol": "000001",
+      "event_type": "earnings_preannounce_positive",
+      "publish_time": "2025-05-10T08:32:00Z",
+      "effective_time": "2025-05-10T08:35:00Z",
+      "polarity": "POSITIVE",
+      "score": 0.92,
+      "confidence": 0.87,
+      "title": "Q1 preannounce beat",
+      "summary": "Net profit expected to grow above consensus",
+      "raw_ref": "https://example.com/ann/2025/0001",
+      "tags": ["earnings", "preannounce", "beat"],
+      "metadata": {
+        "source_batch_id": "batch_20250510_01",
+        "parser_version": "v2.3.0"
+      }
+    }
+  ]
+}

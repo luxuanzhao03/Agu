@@ -1,0 +1,11 @@
+{
+  "symbol": "000001",
+  "start_date": "2025-01-01",
+  "end_date": "2025-12-31",
+  "strategy_name": "multi_factor",
+  "strategy_params": {
+    "buy_threshold": 0.55,
+    "sell_threshold": 0.35
+  },
+  "industry": "BANK"
+}

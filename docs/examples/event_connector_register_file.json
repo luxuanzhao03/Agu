@@ -1,0 +1,16 @@
+{
+  "connector_name": "ann_file_connector",
+  "source_name": "ann_feed",
+  "connector_type": "FILE_ANNOUNCEMENT",
+  "enabled": true,
+  "fetch_limit": 500,
+  "poll_interval_minutes": 10,
+  "replay_backoff_seconds": 300,
+  "max_retry": 5,
+  "config": {
+    "file_path": "data/mock_announcements.json",
+    "timezone": "Asia/Shanghai"
+  },
+  "created_by": "ops_user",
+  "note": "local file connector for integration test"
+}

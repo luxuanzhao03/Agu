@@ -1,0 +1,16 @@
+{
+  "symbol": "000001",
+  "start_date": "2025-01-01",
+  "end_date": "2025-06-30",
+  "strategy_name": "event_driven",
+  "strategy_params": {},
+  "event_lookback_days": 30,
+  "event_decay_half_life_days": 7.0,
+  "initial_cash": 1000000,
+  "commission_rate": 0.0003,
+  "slippage_rate": 0.0005,
+  "lot_size": 100,
+  "max_single_position": 0.05,
+  "save_report": true,
+  "watermark": "For Research Only"
+}

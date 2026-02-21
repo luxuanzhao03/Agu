@@ -1,0 +1,15 @@
+{
+  "source_name": "ann_feed_prod",
+  "current_start": "2026-02-01",
+  "current_end": "2026-02-21",
+  "baseline_start": "2026-01-01",
+  "baseline_end": "2026-01-21",
+  "include_contribution": true,
+  "contribution_symbol": "000001",
+  "contribution_strategy_name": "event_driven",
+  "contribution_strategy_params": {
+    "event_score_buy_threshold": 0.2,
+    "event_score_sell_threshold": -0.2
+  },
+  "save_snapshot": true
+}

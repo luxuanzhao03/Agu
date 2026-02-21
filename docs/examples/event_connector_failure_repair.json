@@ -1,0 +1,12 @@
+{
+  "connector_name": "ann_feed_prod",
+  "failure_id": 128,
+  "patch_raw_record": {
+    "symbol": "000001",
+    "publish_time_text": "2026-02-20 20:10:00"
+  },
+  "patch_event": {},
+  "reset_retry_count": true,
+  "triggered_by": "ops_dashboard",
+  "note": "fill missing symbol and publish time"
+}
