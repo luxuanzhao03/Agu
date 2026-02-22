@@ -1,5 +1,83 @@
 ﻿# 更新日志
 
+## 0.8.7
+
+- 自动调参与过拟合防护升级：
+  - walk-forward 多窗口验证 + 稳定性惩罚。
+  - 新增参数漂移惩罚（objective_weight_param_drift）。
+  - 自动调参请求接入拟真执行模型参数（冲击成本、成交概率底线）。
+- 参数画像与灰度发布能力增强：
+  - 新增回滚接口：POST /autotune/profiles/rollback。
+  - 新增灰度规则接口：
+    - POST /autotune/rollout/rules/upsert
+    - GET /autotune/rollout/rules
+    - DELETE /autotune/rollout/rules/{rule_id}
+  - 运行时参数解析支持按策略/按标的灰度启停画像。
+- 回测引擎升级：
+  - 单标的回测接入拟真成本模型（冲击成本、分档滑点、涨跌停/停牌成交概率、部分成交）。
+  - 新增多标的组合净值回测接口：POST /backtest/portfolio-run。
+- 风控升级：
+  - 组合风控新增连续亏损熔断、单日最大亏损、VaR/ES、主题集中度约束。
+- 研究到执行闭环：
+  - 新增执行偏差归因接口：GET /replay/attribution。
+  - 报告中心新增 closure 固定报表。
+  - 新增运维作业类型：execution_review。
+- 数据层与性能：
+  - 新增本地时序缓存与增量补拉。
+  - 数据质量新增字段级评分与总体评分。
+  - 因子引擎减少 DataFrame fragmented 风险（批量赋值）。
+- 前端工作台升级：
+  - 新增“自动调参”独立页签，支持任务运行、候选榜、基线对比、画像回滚、灰度规则管理。
+  - 新增组合净值回测结果展示。
+  - 新增偏差归因与 closure 报表展示。
+- 证据包增强：
+  - 合规证据包新增自动调参实验与生效记录导出。
+- 运维文档：
+  - 新增 runbook：docs/runbooks/autotune_experiment_rollout.md。
+
+## 0.8.6
+
+- 新增自动调参闭环：
+  - 新增 `autotune` 服务与参数画像存储（`global/symbol` 两级作用域）。
+  - 支持策略参数网格搜索（自定义 `search_space` + 内置默认模板）。
+  - 支持训练/验证分段回测评分（收益、年化、夏普、回撤、阻断比例、成交活跃度综合目标函数）。
+  - 输出候选排行榜、最佳参数、相对基线提升、应用结果。
+- 新增自动调参 API：
+  - `POST /autotune/run`
+  - `GET /autotune/profiles`
+  - `GET /autotune/profiles/active`
+  - `POST /autotune/profiles/{profile_id}/activate`
+- 新增运行时参数自动覆盖能力：
+  - `signals/backtest/research/pipeline` 支持自动读取活动调参画像。
+  - 合并规则：自动画像先加载，请求显式 `strategy_params` 后覆盖（显式优先）。
+  - 新增请求级开关：`use_autotune_profile`（默认 `true`）。
+- 新增运维作业类型：
+  - `auto_tune`（可纳入定时任务体系运行自动调参）。
+- 新增配置：
+  - `AUTOTUNE_RUNTIME_OVERRIDE_ENABLED`
+  - `AUTOTUNE_DB_PATH`
+- 新增测试：
+  - `test_autotune_service.py`
+  - `test_job_service.py` 增加 `auto_tune` 作业执行覆盖。
+
+## 0.8.5
+
+- 数据源优先级调整为 `tushare -> akshare`（配置默认值与 `.env.example` 同步更新）。
+- `tushare` 高级数据能力升级：
+  - 新增高级数据能力目录（按积分可用性 + API 可用性 + 系统接入目标）。
+  - 新增批量预取能力（逐数据集返回 success/failed/skipped、参数、行列数）。
+  - 日线自动融合高级字段（`daily_basic` / `moneyflow` / `stk_limit` / `adj_factor`）。
+- 新增市场 API：
+  - `GET /market/tushare/capabilities`
+  - `POST /market/tushare/prefetch`
+- 因子与策略升级：
+  - 因子引擎新增 `tushare_valuation_score`、`tushare_moneyflow_score`、`tushare_tradability_score`、`tushare_advanced_score`。
+  - `multi_factor` 与 `small_capital_adaptive` 策略接入 `tushare_advanced_score` 买入侧约束。
+- 新增测试：
+  - `test_tushare_provider_advanced.py`
+  - `test_market_tushare_endpoints.py`
+  - `test_strategy_multi_factor_tushare.py`
+  - 既有 `factor/small_capital` 测试补充 `tushare` 高级分值断言。
 ## 0.8.4
 
 - 新增小资金专用策略：`small_capital_adaptive`
@@ -259,3 +337,4 @@
   - 夏普
 - 新增 CLI 入口与 pipeline 脚本。
 - 新增回退配置加载器（无 `pydantic-settings` 环境可用）。
+

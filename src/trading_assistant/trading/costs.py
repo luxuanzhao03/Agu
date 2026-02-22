@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import math
+
+from trading_assistant.core.models import SignalAction
+
 
 def calc_commission(notional: float, rate: float, min_commission: float) -> float:
     if notional <= 0:
@@ -112,3 +116,92 @@ def infer_expected_edge_bps(
         base += max(-40.0, min(60.0, (float(fundamental_score) - 0.5) * 120.0))
     return max(0.0, base)
 
+
+def tiered_slippage_rate(
+    *,
+    order_notional: float,
+    avg_turnover_20d: float | None,
+    base_slippage_rate: float,
+) -> float:
+    """
+    Piece-wise slippage uplift by order participation ratio.
+    """
+    base = max(0.0, float(base_slippage_rate))
+    adv = float(avg_turnover_20d or 0.0)
+    if order_notional <= 0 or adv <= 0:
+        return base
+
+    ratio = float(order_notional) / max(adv, 1.0)
+    # Each tier adds extra slippage in rate terms (1bp = 0.0001).
+    if ratio <= 0.005:
+        uplift = 0.0
+    elif ratio <= 0.015:
+        uplift = 0.0002
+    elif ratio <= 0.03:
+        uplift = 0.0005
+    elif ratio <= 0.06:
+        uplift = 0.0010
+    else:
+        uplift = 0.0020
+    return base + uplift
+
+
+def estimate_market_impact_rate(
+    *,
+    order_notional: float,
+    avg_turnover_20d: float | None,
+    impact_coeff: float,
+    impact_exponent: float,
+) -> float:
+    """
+    Square-root like impact model: impact = coeff * participation^exponent.
+    """
+    adv = float(avg_turnover_20d or 0.0)
+    if order_notional <= 0 or adv <= 0:
+        return 0.0
+    ratio = max(0.0, float(order_notional) / max(adv, 1.0))
+    coeff = max(0.0, float(impact_coeff))
+    exponent = max(0.1, min(2.0, float(impact_exponent)))
+    return coeff * (ratio**exponent) * 0.001
+
+
+def estimate_fill_probability(
+    *,
+    side: SignalAction,
+    is_suspended: bool,
+    at_limit_up: bool = False,
+    at_limit_down: bool = False,
+    is_one_word_limit_up: bool = False,
+    is_one_word_limit_down: bool = False,
+    avg_turnover_20d: float | None = None,
+    order_notional: float | None = None,
+    probability_floor: float = 0.02,
+) -> float:
+    floor = max(0.0, min(1.0, float(probability_floor)))
+    if is_suspended:
+        return 0.0
+    if side == SignalAction.BUY and is_one_word_limit_up:
+        return floor
+    if side == SignalAction.SELL and is_one_word_limit_down:
+        return floor
+    if side == SignalAction.BUY and at_limit_up:
+        return max(floor, 0.15)
+    if side == SignalAction.SELL and at_limit_down:
+        return max(floor, 0.15)
+
+    adv = float(avg_turnover_20d or 0.0)
+    notional = float(order_notional or 0.0)
+    if adv <= 0 or notional <= 0:
+        return 1.0
+    participation = max(0.0, notional / max(adv, 1.0))
+    # Logistic decay on participation ratio.
+    prob = 1.0 / (1.0 + math.exp(18.0 * (participation - 0.035)))
+    return max(floor, min(1.0, prob))
+
+
+def filled_quantity_by_probability(*, desired_qty: int, lot_size: int, fill_probability: float) -> int:
+    if desired_qty <= 0 or lot_size <= 0:
+        return 0
+    prob = max(0.0, min(1.0, float(fill_probability)))
+    filled = int((desired_qty * prob) // lot_size) * lot_size
+    return max(0, min(int(desired_qty), filled))

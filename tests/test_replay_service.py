@@ -38,3 +38,7 @@ def test_replay_signal_and_execution(tmp_path: Path) -> None:
     report = service.report(symbol="000001")
     assert len(report.items) == 1
     assert report.follow_rate >= 0
+
+    attr = service.attribution(symbol="000001")
+    assert attr.sample_size == 1
+    assert isinstance(attr.suggestions, list)

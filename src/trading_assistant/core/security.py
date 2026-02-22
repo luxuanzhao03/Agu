@@ -90,6 +90,8 @@ def permission_matrix() -> dict[str, list[str]]:
         "market_data_read": ["readonly", "research", "risk", "audit", "admin"],
         "signal_generation": ["research", "risk", "admin"],
         "backtest": ["research", "risk", "admin"],
+        "autotune": ["research", "risk", "admin"],
+        "strategy_challenge": ["research", "risk", "admin"],
         "portfolio_optimize": ["portfolio", "research", "admin"],
         "portfolio_rebalance": ["portfolio", "admin"],
         "risk_checks": ["risk", "research", "admin"],
@@ -102,4 +104,5 @@ def permission_matrix() -> dict[str, list[str]]:
         "ops_jobs": ["research", "risk", "audit", "admin"],
         "ops_scheduler": ["risk", "audit", "admin"],
         "ops_dashboard": ["risk", "audit", "admin"],
+        "manual_holdings": ["portfolio", "research", "risk", "audit", "admin"],
     }

@@ -20,6 +20,8 @@ class ReportingService:
             return self._build_replay_report(req)
         if req.report_type == "risk":
             return self._build_risk_report(req)
+        if req.report_type == "closure":
+            return self._build_closure_report(req)
         return self._build_signal_report(req)
 
     def _build_signal_report(self, req: ReportGenerateRequest) -> ReportGenerateResult:
@@ -92,6 +94,43 @@ class ReportingService:
         path = self._save_if_needed("risk", content, req.save_to_file)
         return ReportGenerateResult(title="Risk Check Report", content=content, saved_path=path)
 
+    def _build_closure_report(self, req: ReportGenerateRequest) -> ReportGenerateResult:
+        attribution = self.replay.attribution(
+            symbol=req.symbol,
+            start_date=req.start_date,
+            end_date=req.end_date,
+            limit=req.limit,
+        )
+        lines = [
+            "# Execution Closure Report",
+            "",
+            f"- Generated at: {datetime.now(timezone.utc).isoformat()}",
+            f"- Watermark: {req.watermark}",
+            f"- Samples: {attribution.sample_size}",
+            f"- Follow Rate: {attribution.follow_rate:.2%}",
+            f"- Avg Delay (days): {attribution.avg_delay_days:.2f}",
+            f"- Avg Slippage (bps): {attribution.avg_slippage_bps:.2f}",
+            "",
+            "## Deviation Reasons",
+        ]
+        if attribution.reason_counts:
+            for key, value in sorted(attribution.reason_counts.items(), key=lambda x: x[1], reverse=True):
+                lines.append(f"- {key}: {value}")
+        else:
+            lines.append("- No major execution deviations.")
+        lines.extend(["", "## Parameter Suggestions"])
+        for suggestion in attribution.suggestions:
+            lines.append(f"- {suggestion}")
+        lines.extend(["", "## Sample Items"])
+        for item in attribution.items[: min(100, len(attribution.items))]:
+            lines.append(
+                f"- {item.signal_id} | {item.symbol} | {item.reason_code} | "
+                f"{item.severity.value} | {item.detail}"
+            )
+        content = "\n".join(lines)
+        path = self._save_if_needed("closure", content, req.save_to_file)
+        return ReportGenerateResult(title="Execution Closure Report", content=content, saved_path=path)
+
     def _save_if_needed(self, prefix: str, content: str, save: bool) -> str | None:
         if not save:
             return None
@@ -99,4 +138,3 @@ class ReportingService:
         path = self.output_dir / f"{prefix}_report_{ts}.md"
         path.write_text(content, encoding="utf-8")
         return str(path)
-

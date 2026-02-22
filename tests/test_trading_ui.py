@@ -11,6 +11,21 @@ def test_trading_workbench_ui_route() -> None:
     assert "marketKlineChart" in resp.text
     assert "targetWeightChart" in resp.text
     assert "rebalanceRows" in resp.text
+    assert 'data-tab="autotune"' in resp.text
+    assert 'data-tab="challenge"' in resp.text
+    assert "runPortfolioBacktestBtn" in resp.text
+    assert "rolloutRuleRows" in resp.text
+    assert "runChallengeBtn" in resp.text
+    assert "challengeResultRows" in resp.text
+    assert "challengeGateMinValidationSharpeInput" in resp.text
+    assert "autotuneReturnVarWeightInput" in resp.text
+    assert "portfolioRiskMaxDailyLossInput" in resp.text
+    assert 'data-tab="holdings"' in resp.text
+    assert "submitHoldingTradeBtn" in resp.text
+    assert "runHoldingAnalyzeBtn" in resp.text
+    assert "holdingRecommendationRows" in resp.text
+    assert "loadReplayAttributionBtn" in resp.text
+    assert "closureReportPreview" in resp.text
     assert "/market/bars" in resp.text
     assert "/portfolio/rebalance/plan" in resp.text
     assert 'data-small-cap-template="2000"' in resp.text
@@ -22,6 +37,18 @@ def test_trading_workbench_ui_route() -> None:
     assert "runSignal" in js.text
     assert "loadMarketBars" in js.text
     assert "runRebalancePlan" in js.text
+    assert "runPortfolioBacktest" in js.text
+    assert "rollbackAutotuneProfile" in js.text
+    assert "loadRolloutRules" in js.text
+    assert "buildStrategyChallengeRequest" in js.text
+    assert "runStrategyChallenge" in js.text
+    assert "renderChallengeWorkbench" in js.text
+    assert "applyChallengeChampionToStrategyForm" in js.text
+    assert "submitHoldingTrade" in js.text
+    assert "loadHoldingPositions" in js.text
+    assert "runHoldingAnalyze" in js.text
+    assert "loadReplayAttribution" in js.text
+    assert "generateClosureReport" in js.text
     assert "SMALL_CAPITAL_TEMPLATE_LIBRARY" in js.text
     assert "applySmallCapitalTemplate" in js.text
 

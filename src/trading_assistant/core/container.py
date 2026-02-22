@@ -4,15 +4,20 @@ import json
 import logging
 from functools import lru_cache
 
+from trading_assistant.autotune.service import AutoTuneService
+from trading_assistant.autotune.store import AutoTuneStore
+from trading_assistant.challenge.service import StrategyChallengeService
 from trading_assistant.alerts.service import AlertService
 from trading_assistant.alerts.store import AlertStore
 from trading_assistant.alerts.dispatcher import RealAlertDispatcher
 from trading_assistant.audit.service import AuditService
 from trading_assistant.audit.store import AuditStore
 from trading_assistant.backtest.engine import BacktestEngine
+from trading_assistant.backtest.portfolio_engine import PortfolioBacktestEngine
 from trading_assistant.core.config import Settings, get_settings
 from trading_assistant.data.akshare_provider import AkshareProvider
 from trading_assistant.data.base import MarketDataProvider
+from trading_assistant.data.cache_store import LocalTimeseriesCache
 from trading_assistant.data.composite_provider import CompositeDataProvider
 from trading_assistant.data.tushare_provider import TushareProvider
 from trading_assistant.factors.engine import FactorEngine
@@ -37,6 +42,8 @@ from trading_assistant.ops.dashboard import OpsDashboardService
 from trading_assistant.ops.job_service import JobService
 from trading_assistant.ops.job_store import JobStore
 from trading_assistant.ops.scheduler_worker import JobSchedulerWorker
+from trading_assistant.holdings.service import HoldingService
+from trading_assistant.holdings.store import HoldingStore
 from trading_assistant.pipeline.runner import DailyPipelineRunner
 from trading_assistant.portfolio.optimizer import PortfolioOptimizer
 from trading_assistant.portfolio.rebalancer import PortfolioRebalancer
@@ -73,7 +80,12 @@ def get_data_provider() -> CompositeDataProvider:
             logger.warning("Skip provider %s due to init error: %s", name, exc)
     if not providers:
         raise RuntimeError("No usable data provider. Check DATA_PROVIDER_PRIORITY and credentials.")
-    return CompositeDataProvider(providers=providers)
+    cache_store = LocalTimeseriesCache(settings.market_data_cache_db_path)
+    return CompositeDataProvider(
+        providers=providers,
+        cache_store=cache_store,
+        enable_cache=settings.market_data_cache_enabled,
+    )
 
 
 @lru_cache
@@ -97,6 +109,14 @@ def get_risk_engine() -> RiskEngine:
         fundamental_buy_warning_score=settings.fundamental_buy_warning_score,
         fundamental_buy_critical_score=settings.fundamental_buy_critical_score,
         fundamental_require_data_for_buy=settings.fundamental_require_data_for_buy,
+        tushare_disclosure_warning_score=settings.tushare_disclosure_warning_score,
+        tushare_disclosure_critical_score=settings.tushare_disclosure_critical_score,
+        tushare_forecast_warning_pct=settings.tushare_forecast_warning_pct,
+        tushare_forecast_critical_pct=settings.tushare_forecast_critical_pct,
+        small_cap_pledge_critical_ratio=settings.small_cap_pledge_critical_ratio,
+        small_cap_unlock_warning_ratio=settings.small_cap_unlock_warning_ratio,
+        small_cap_unlock_critical_ratio=settings.small_cap_unlock_critical_ratio,
+        small_cap_overhang_warning_score=settings.small_cap_overhang_warning_score,
     )
 
 
@@ -106,9 +126,51 @@ def get_signal_service() -> SignalService:
 
 
 @lru_cache
+def get_autotune_store() -> AutoTuneStore:
+    settings = get_settings()
+    return AutoTuneStore(settings.autotune_db_path)
+
+
+@lru_cache
+def get_autotune_service() -> AutoTuneService:
+    settings = get_settings()
+    return AutoTuneService(
+        store=get_autotune_store(),
+        provider=get_data_provider(),
+        backtest_engine=get_backtest_engine(),
+        registry=get_strategy_registry(),
+        event_service=get_event_service(),
+        fundamental_service=get_fundamental_service(),
+        strategy_gov=get_strategy_governance_service(),
+        runtime_override_enabled=settings.autotune_runtime_override_enabled,
+    )
+
+
+@lru_cache
+def get_strategy_challenge_service() -> StrategyChallengeService:
+    return StrategyChallengeService(
+        autotune=get_autotune_service(),
+        provider=get_data_provider(),
+        backtest_engine=get_backtest_engine(),
+        registry=get_strategy_registry(),
+        event_service=get_event_service(),
+        fundamental_service=get_fundamental_service(),
+    )
+
+
+@lru_cache
 def get_backtest_engine() -> BacktestEngine:
     return BacktestEngine(
         factor_engine=get_factor_engine(),
+        risk_engine=get_risk_engine(),
+    )
+
+
+@lru_cache
+def get_portfolio_backtest_engine() -> PortfolioBacktestEngine:
+    return PortfolioBacktestEngine(
+        factor_engine=get_factor_engine(),
+        optimizer=get_portfolio_optimizer(),
         risk_engine=get_risk_engine(),
     )
 
@@ -132,6 +194,7 @@ def get_pipeline_runner() -> DailyPipelineRunner:
         quality_service=get_data_quality_service(),
         pit_validator=get_pit_validator(),
         event_service=get_event_service(),
+        autotune_service=get_autotune_service(),
         snapshot_service=get_snapshot_service(),
         license_service=get_data_license_service(),
         enforce_data_license=settings.enforce_data_license,
@@ -230,6 +293,7 @@ def get_compliance_evidence_service() -> ComplianceEvidenceService:
         strategy_gov=get_strategy_governance_service(),
         event_connector=get_event_connector_service(),
         event_nlp=get_event_nlp_governance_service(),
+        autotune=get_autotune_service(),
         default_signing_secret=settings.compliance_evidence_signing_secret,
         default_vault_dir=settings.compliance_evidence_vault_dir,
         default_external_worm_endpoint=settings.compliance_evidence_external_worm_endpoint,
@@ -267,6 +331,23 @@ def get_replay_service() -> ReplayService:
 
 
 @lru_cache
+def get_holding_store() -> HoldingStore:
+    settings = get_settings()
+    return HoldingStore(settings.holdings_db_path)
+
+
+@lru_cache
+def get_holding_service() -> HoldingService:
+    return HoldingService(
+        store=get_holding_store(),
+        provider=get_data_provider(),
+        factor_engine=get_factor_engine(),
+        registry=get_strategy_registry(),
+        autotune=get_autotune_service(),
+    )
+
+
+@lru_cache
 def get_research_workflow_service() -> ResearchWorkflowService:
     settings = get_settings()
     return ResearchWorkflowService(
@@ -279,6 +360,7 @@ def get_research_workflow_service() -> ResearchWorkflowService:
         replay=get_replay_service(),
         pit_validator=get_pit_validator(),
         event_service=get_event_service(),
+        autotune_service=get_autotune_service(),
         license_service=get_data_license_service(),
         enforce_data_license=settings.enforce_data_license,
         default_commission_rate=settings.default_commission_rate,
@@ -362,6 +444,7 @@ def get_job_service() -> JobService:
         event_connector=get_event_connector_service(),
         compliance_evidence=get_compliance_evidence_service(),
         alerts=get_alert_service(),
+        autotune=get_autotune_service(),
         scheduler_timezone=settings.ops_scheduler_timezone,
         running_timeout_minutes=settings.ops_job_running_timeout_minutes,
     )

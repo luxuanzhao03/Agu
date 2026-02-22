@@ -162,6 +162,8 @@ class AlertService:
             for sub in subscriptions:
                 if not self._subscription_match(sub, event, alert):
                     continue
+                if self._should_suppress_noise(subscription=sub, alert=alert):
+                    continue
                 dedupe_key = f"{alert.source}|{alert.message}"
                 if self.store.exists_recent_notification(sub.id, dedupe_key, sub.dedupe_window_sec):
                     continue
@@ -926,3 +928,33 @@ class AlertService:
             message=message,
             payload=payload,
         )
+
+    @staticmethod
+    def _should_suppress_noise(*, subscription: AlertSubscriptionRecord, alert: AlertItem) -> bool:
+        cfg = subscription.channel_config if isinstance(subscription.channel_config, dict) else {}
+        noise = cfg.get("noise_reduction")
+        if not isinstance(noise, dict):
+            return False
+        if alert.severity == SignalLevel.CRITICAL and not bool(noise.get("allow_critical_suppression", False)):
+            return False
+
+        min_repeat = int(noise.get("min_repeat_count", 0) or 0)
+        repeat_count = int(alert.payload.get("repeat_count", 0) or 0)
+        if min_repeat > 0 and repeat_count < min_repeat:
+            return True
+
+        max_escalation = int(noise.get("max_escalation_level", 0) or 0)
+        escalation_level = int(alert.payload.get("escalation_level", 0) or 0)
+        if max_escalation > 0 and escalation_level > max_escalation:
+            return False
+        if max_escalation > 0 and escalation_level <= max_escalation and alert.severity == SignalLevel.WARNING:
+            return True
+
+        keywords = noise.get("message_keywords")
+        if isinstance(keywords, list):
+            message = alert.message.lower()
+            for keyword in keywords:
+                token = str(keyword).strip().lower()
+                if token and token in message:
+                    return True
+        return False

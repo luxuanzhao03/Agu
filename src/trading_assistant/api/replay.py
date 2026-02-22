@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from trading_assistant.audit.service import AuditService
 from trading_assistant.core.container import get_audit_service, get_replay_service
 from trading_assistant.core.models import (
+    ExecutionAttributionReport,
     ExecutionRecordCreate,
     ExecutionReplayReport,
     SignalDecisionRecord,
@@ -72,3 +73,15 @@ def replay_report(
     _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.RESEARCH, UserRole.RISK)),
 ) -> ExecutionReplayReport:
     return replay.report(symbol=symbol, start_date=start_date, end_date=end_date, limit=limit)
+
+
+@router.get("/attribution", response_model=ExecutionAttributionReport)
+def replay_attribution(
+    symbol: str | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=2000),
+    replay: ReplayService = Depends(get_replay_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.RESEARCH, UserRole.RISK)),
+) -> ExecutionAttributionReport:
+    return replay.attribution(symbol=symbol, start_date=start_date, end_date=end_date, limit=limit)

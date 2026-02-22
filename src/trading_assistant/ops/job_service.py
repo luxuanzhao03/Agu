@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import time
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from trading_assistant.alerts.service import AlertService
+from trading_assistant.autotune.service import AutoTuneService
 from trading_assistant.core.models import (
+    AutoTuneJobPayload,
     ComplianceEvidenceExportJobPayload,
+    ExecutionReviewJobPayload,
     EventConnectorReplayJobPayload,
     EventConnectorReplayRequest,
     EventConnectorRunRequest,
@@ -47,6 +51,7 @@ class JobService:
         event_connector: EventConnectorService | None = None,
         compliance_evidence: ComplianceEvidenceService | None = None,
         alerts: AlertService | None = None,
+        autotune: AutoTuneService | None = None,
         scheduler_timezone: str = "Asia/Shanghai",
         running_timeout_minutes: int = 120,
     ) -> None:
@@ -57,6 +62,7 @@ class JobService:
         self.event_connector = event_connector
         self.compliance_evidence = compliance_evidence
         self.alerts = alerts
+        self.autotune = autotune
         self.scheduler_timezone = scheduler_timezone
         self.running_timeout_minutes = max(1, running_timeout_minutes)
 
@@ -81,15 +87,34 @@ class JobService:
         run_id = uuid4().hex
         self.store.create_run(run_id=run_id, job_id=job_id, triggered_by=triggered_by)
 
+        max_retries, retry_backoff_seconds = self._resolve_retry_config(job.payload)
+        attempts = 0
+        last_error: str | None = None
         try:
-            summary = self._execute(job)
+            while True:
+                attempts += 1
+                try:
+                    summary = self._execute(job)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    last_error = str(exc)
+                    if attempts > max_retries:
+                        raise
+                    if retry_backoff_seconds > 0:
+                        time.sleep(min(retry_backoff_seconds, 2))
+            if attempts > 1:
+                summary = {**summary, "retry_attempts": attempts - 1}
             self.store.finish_run(run_id=run_id, status=JobRunStatus.SUCCESS, result_summary=summary)
         except Exception as exc:  # noqa: BLE001
             self.store.finish_run(
                 run_id=run_id,
                 status=JobRunStatus.FAILED,
-                result_summary={"error": str(exc)},
-                error_message=str(exc),
+                result_summary={
+                    "error": str(exc),
+                    "retry_attempts": max(0, attempts - 1),
+                    "last_error": last_error or str(exc),
+                },
+                error_message=last_error or str(exc),
             )
         run = self.store.get_run(run_id)
         if run is None:
@@ -357,7 +382,52 @@ class JobService:
                 "errors": len(result.errors),
             }
 
+        if job.job_type == JobType.AUTO_TUNE:
+            if self.autotune is None:
+                raise ValueError("autotune service is not configured")
+            payload = AutoTuneJobPayload.model_validate(job.payload)
+            result = self.autotune.run(payload.request)
+            return {
+                "autotune_run_id": result.run_id,
+                "strategy_name": result.strategy_name,
+                "symbol": result.symbol,
+                "evaluated_count": result.evaluated_count,
+                "applied": result.applied,
+                "apply_decision": result.apply_decision,
+                "best_objective": (result.best.objective_score if result.best is not None else None),
+                "improvement_vs_baseline": result.improvement_vs_baseline,
+            }
+
+        if job.job_type == JobType.EXECUTION_REVIEW:
+            payload = ExecutionReviewJobPayload.model_validate(job.payload)
+            result = self.reporting.generate(
+                ReportGenerateRequest(
+                    report_type="closure",
+                    symbol=payload.symbol,
+                    start_date=payload.start_date,
+                    end_date=payload.end_date,
+                    limit=payload.limit,
+                    save_to_file=payload.save_to_file,
+                )
+            )
+            return {
+                "title": result.title,
+                "saved_path": result.saved_path,
+                "content_size": len(result.content),
+            }
+
         raise ValueError(f"unsupported job_type: {job.job_type.value}")
+
+    @staticmethod
+    def _resolve_retry_config(payload: dict) -> tuple[int, int]:
+        cfg = payload.get("_retry", {}) if isinstance(payload, dict) else {}
+        if not isinstance(cfg, dict):
+            return 0, 0
+        max_retries = int(cfg.get("max_retries", 0) or 0)
+        max_retries = max(0, min(max_retries, 5))
+        backoff_seconds = int(cfg.get("backoff_seconds", 0) or 0)
+        backoff_seconds = max(0, min(backoff_seconds, 60))
+        return max_retries, backoff_seconds
 
     def _schedule_zone(self) -> tuple[str, ZoneInfo]:
         try:

@@ -20,7 +20,9 @@ class MultiFactorStrategy(BaseStrategy):
             "w_low_vol": "float",
             "w_liquidity": "float",
             "w_fundamental": "float",
+            "w_tushare_advanced": "float",
             "min_fundamental_score_buy": "float",
+            "min_tushare_score_buy": "float",
         },
     )
 
@@ -36,7 +38,9 @@ class MultiFactorStrategy(BaseStrategy):
         w_low_vol = float(context.params.get("w_low_vol", 0.15))
         w_liquidity = float(context.params.get("w_liquidity", 0.15))
         w_fundamental = float(context.params.get("w_fundamental", 0.15))
+        w_tushare_advanced = float(context.params.get("w_tushare_advanced", 0.10))
         min_fundamental_score_buy = float(context.params.get("min_fundamental_score_buy", 0.35))
+        min_tushare_score_buy = float(context.params.get("min_tushare_score_buy", 0.30))
 
         latest = features.sort_values("trade_date").iloc[-1]
         momentum = max(-0.5, min(0.5, float(latest.get("momentum60", 0.0)))) + 0.5
@@ -46,14 +50,22 @@ class MultiFactorStrategy(BaseStrategy):
         liquidity = min(1.0, turnover / 30_000_000)
         fundamental_available = bool(latest.get("fundamental_available", False))
         fundamental = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
+        tushare_available = bool(latest.get("tushare_advanced_available", False))
+        tushare_advanced = float(latest.get("tushare_advanced_score", 0.5)) if tushare_available else 0.5
 
-        score = (
-            momentum * w_momentum
-            + quality * w_quality
-            + low_vol * w_low_vol
-            + liquidity * w_liquidity
-            + fundamental * w_fundamental
-        )
+        weighted_components = [
+            (momentum, w_momentum),
+            (quality, w_quality),
+            (low_vol, w_low_vol),
+            (liquidity, w_liquidity),
+            (fundamental, w_fundamental),
+            (tushare_advanced, w_tushare_advanced),
+        ]
+        total_weight = sum(max(0.0, w) for _, w in weighted_components)
+        if total_weight <= 0:
+            score = 0.5
+        else:
+            score = sum(float(v) * max(0.0, w) for v, w in weighted_components) / total_weight
 
         if score >= buy_threshold:
             action = SignalAction.BUY
@@ -70,6 +82,12 @@ class MultiFactorStrategy(BaseStrategy):
             reason = (
                 f"Technical score reached buy zone, but fundamental score {fundamental:.3f} "
                 f"< {min_fundamental_score_buy:.3f}; downgraded to WATCH."
+            )
+        if action == SignalAction.BUY and tushare_available and tushare_advanced < min_tushare_score_buy:
+            action = SignalAction.WATCH
+            reason = (
+                f"Technical score reached buy zone, but tushare advanced score {tushare_advanced:.3f} "
+                f"< {min_tushare_score_buy:.3f}; downgraded to WATCH."
             )
 
         return [
@@ -89,6 +107,8 @@ class MultiFactorStrategy(BaseStrategy):
                     "liquidity": round(liquidity, 4),
                     "fundamental_score": round(fundamental, 4),
                     "fundamental_available": fundamental_available,
+                    "tushare_advanced_score": round(tushare_advanced, 4),
+                    "tushare_advanced_available": tushare_available,
                 },
             )
         ]

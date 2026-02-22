@@ -127,13 +127,27 @@ const state = {
   latestSignalPreps: [],
   latestBacktestRequest: null,
   latestBacktestResult: null,
+  latestPortfolioBacktestRequest: null,
+  latestPortfolioBacktestResult: null,
   latestResearchRequest: null,
   latestResearchResult: null,
+  latestAutotuneRequest: null,
+  latestAutotuneResult: null,
+  latestAutotuneProfiles: [],
+  latestAutotuneActiveProfile: null,
+  latestRolloutRules: [],
+  latestChallengeRequest: null,
+  latestChallengeResult: null,
   latestMarketBars: null,
   latestRebalancePlan: null,
+  latestHoldingTrades: [],
+  latestHoldingPositions: null,
+  latestHoldingAnalysis: null,
   selectedPrepIndex: 0,
   replaySignals: [],
   replayReport: null,
+  replayAttribution: null,
+  closureReport: null,
   savedFormSnapshot: null,
 };
 
@@ -204,6 +218,26 @@ function setExecutionMessage(message) {
   if (msg) msg.textContent = message || "-";
 }
 
+function setAutotuneMessage(message) {
+  const msg = el("autotuneMsg");
+  if (msg) msg.textContent = message || "-";
+}
+
+function setRolloutRuleMessage(message) {
+  const msg = el("rolloutRuleMsg");
+  if (msg) msg.textContent = message || "-";
+}
+
+function setChallengeMessage(message) {
+  const msg = el("challengeMsg");
+  if (msg) msg.textContent = message || "-";
+}
+
+function setHoldingMessage(message) {
+  const msg = el("holdingMsg");
+  if (msg) msg.textContent = message || "-";
+}
+
 function saveAuth() {
   const payload = {
     headerName: String(el("authHeaderName")?.value || "X-API-Key").trim() || "X-API-Key",
@@ -252,6 +286,18 @@ async function postJSON(url, body) {
     method: "POST",
     headers: buildHeaders(true),
     body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status} ${url}: ${text.slice(0, 320)}`);
+  }
+  return res.json();
+}
+
+async function deleteJSON(url) {
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: buildHeaders(false),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -316,6 +362,10 @@ function parseIndustryMap(raw) {
     mapping[symbol] = industry;
   }
   return mapping;
+}
+
+function parseThemeMap(raw) {
+  return parseIndustryMap(raw);
 }
 
 function normalizeDateString(value) {
@@ -443,6 +493,7 @@ function buildCommonRequest() {
 
 function buildSignalRequest() {
   const req = buildCommonRequest();
+  req.use_autotune_profile = Boolean(el("useAutotuneProfileInput")?.checked);
 
   if (el("usePositionCtx")?.checked) {
     req.current_position = {
@@ -483,6 +534,7 @@ function buildBacktestRequest() {
     enable_small_capital_mode: req.enable_small_capital_mode,
     small_capital_principal: req.small_capital_principal,
     small_capital_min_expected_edge_bps: req.small_capital_min_expected_edge_bps,
+    use_autotune_profile: Boolean(el("useAutotuneProfileInput")?.checked),
     initial_cash: toNumber(el("initialCashInput")?.value, "初始资金", { min: 1000 }),
     commission_rate: toNumber(el("commissionRateInput")?.value, "手续费率", { min: 0, max: 0.02 }),
     slippage_rate: toNumber(el("slippageRateInput")?.value, "滑点率", { min: 0, max: 0.02 }),
@@ -491,6 +543,85 @@ function buildBacktestRequest() {
     transfer_fee_rate: toNumber(el("transferFeeRateInput")?.value, "过户费率", { min: 0, max: 0.01 }),
     lot_size: toNumber(el("lotSizeInput")?.value, "最小交易手数", { integer: true, min: 1 }),
     max_single_position: toNumber(el("maxSinglePositionInput")?.value, "单标的上限", { min: 0.001, max: 1 }),
+    enable_realistic_cost_model: Boolean(el("realisticCostModelInput")?.checked),
+    impact_cost_coeff: toNumber(el("impactCostCoeffInput")?.value, "impact_cost_coeff", { min: 0, max: 5 }),
+    impact_cost_exponent: toNumber(el("impactCostExponentInput")?.value, "impact_cost_exponent", { min: 0.1, max: 2 }),
+    fill_probability_floor: toNumber(el("fillProbabilityFloorInput")?.value, "fill_probability_floor", { min: 0, max: 1 }),
+  };
+}
+
+function buildPortfolioBacktestRequest() {
+  const req = buildCommonRequest();
+  const symbols = parseSymbols(el("symbolsInput")?.value);
+  if (!symbols.length) throw new Error("组合回测 symbols 不能为空");
+
+  return {
+    symbols,
+    start_date: req.start_date,
+    end_date: req.end_date,
+    strategy_name: req.strategy_name,
+    strategy_params: req.strategy_params,
+    industry_map: parseIndustryMap(el("industryMapInput")?.value),
+    theme_map: parseThemeMap(el("themeMapInput")?.value),
+    rebalance_interval_days: toNumber(el("portfolioRebalanceIntervalInput")?.value, "rebalance_interval_days", {
+      integer: true,
+      min: 1,
+      max: 250,
+    }),
+    initial_cash: toNumber(el("initialCashInput")?.value, "initial_cash", { min: 1000 }),
+    target_gross_exposure: toNumber(el("targetGrossExposureInput")?.value, "target_gross_exposure", {
+      min: 0.001,
+      max: 1,
+    }),
+    cash_reserve_ratio: toNumber(el("portfolioCashReserveRatioInput")?.value, "cash_reserve_ratio", {
+      min: 0,
+      max: 0.95,
+    }),
+    max_single_position: toNumber(el("maxSinglePositionInput")?.value, "max_single_position", { min: 0.001, max: 1 }),
+    max_industry_exposure: toNumber(el("maxIndustryExposureInput")?.value, "max_industry_exposure", {
+      min: 0.001,
+      max: 1,
+    }),
+    max_theme_exposure: toNumber(el("maxThemeExposureInput")?.value, "max_theme_exposure", { min: 0.001, max: 1 }),
+    lot_size: toNumber(el("lotSizeInput")?.value, "lot_size", { integer: true, min: 1 }),
+    commission_rate: toNumber(el("commissionRateInput")?.value, "commission_rate", { min: 0, max: 0.02 }),
+    slippage_rate: toNumber(el("slippageRateInput")?.value, "slippage_rate", { min: 0, max: 0.02 }),
+    min_commission_cny: toNumber(el("minCommissionInput")?.value, "min_commission_cny", { min: 0, max: 500 }),
+    stamp_duty_sell_rate: toNumber(el("stampDutyRateInput")?.value, "stamp_duty_sell_rate", { min: 0, max: 0.02 }),
+    transfer_fee_rate: toNumber(el("transferFeeRateInput")?.value, "transfer_fee_rate", { min: 0, max: 0.01 }),
+    enable_realistic_cost_model: Boolean(el("realisticCostModelInput")?.checked),
+    impact_cost_coeff: toNumber(el("impactCostCoeffInput")?.value, "impact_cost_coeff", { min: 0, max: 5 }),
+    impact_cost_exponent: toNumber(el("impactCostExponentInput")?.value, "impact_cost_exponent", { min: 0.1, max: 2 }),
+    fill_probability_floor: toNumber(el("fillProbabilityFloorInput")?.value, "fill_probability_floor", { min: 0, max: 1 }),
+    enable_portfolio_risk_control: Boolean(el("portfolioRiskControlInput")?.checked),
+    risk_max_drawdown: toNumber(el("portfolioRiskMaxDrawdownInput")?.value, "risk_max_drawdown", { min: 0, max: 1 }),
+    risk_max_consecutive_losses: toNumber(
+      el("portfolioRiskMaxConsecutiveLossesInput")?.value,
+      "risk_max_consecutive_losses",
+      { integer: true, min: 1, max: 200 }
+    ),
+    risk_max_daily_loss: toNumber(el("portfolioRiskMaxDailyLossInput")?.value, "risk_max_daily_loss", { min: 0, max: 1 }),
+    risk_var_confidence: toNumber(el("portfolioRiskVarConfidenceInput")?.value, "risk_var_confidence", {
+      min: 0.5,
+      max: 0.999,
+    }),
+    risk_max_var: toNumber(el("portfolioRiskMaxVarInput")?.value, "risk_max_var", { min: 0, max: 1 }),
+    risk_max_es: toNumber(el("portfolioRiskMaxEsInput")?.value, "risk_max_es", { min: 0, max: 1 }),
+    risk_return_lookback_days: toNumber(el("portfolioRiskReturnLookbackInput")?.value, "risk_return_lookback_days", {
+      integer: true,
+      min: 20,
+      max: 5000,
+    }),
+    risk_loss_streak_lookback_trades: toNumber(
+      el("portfolioRiskTradeLookbackInput")?.value,
+      "risk_loss_streak_lookback_trades",
+      { integer: true, min: 10, max: 10000 }
+    ),
+    use_autotune_profile: Boolean(el("useAutotuneProfileInput")?.checked),
+    enable_event_enrichment: req.enable_event_enrichment,
+    enable_fundamental_enrichment: true,
+    event_lookback_days: req.event_lookback_days,
+    event_decay_half_life_days: req.event_decay_half_life_days,
   };
 }
 
@@ -511,12 +642,688 @@ function buildResearchRequest() {
     small_capital_min_expected_edge_bps: req.small_capital_min_expected_edge_bps,
     event_lookback_days: req.event_lookback_days,
     event_decay_half_life_days: req.event_decay_half_life_days,
+    use_autotune_profile: Boolean(el("useAutotuneProfileInput")?.checked),
     industry_map: parseIndustryMap(el("industryMapInput")?.value),
     optimize_portfolio: Boolean(el("optimizePortfolioInput")?.checked),
     max_single_position: toNumber(el("maxSinglePositionInput")?.value, "单标的上限", { min: 0.001, max: 1 }),
     max_industry_exposure: toNumber(el("maxIndustryExposureInput")?.value, "行业敞口上限", { min: 0.001, max: 1 }),
     target_gross_exposure: toNumber(el("targetGrossExposureInput")?.value, "目标总仓位", { min: 0.001, max: 1 }),
   };
+}
+
+function parseAutotuneSearchSpace(raw, { tolerant = false } = {}) {
+  const text = String(raw || "").trim();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      if (tolerant) return {};
+      throw new Error("search_space JSON 必须是对象");
+    }
+    const out = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!Array.isArray(value)) {
+        if (tolerant) continue;
+        throw new Error(`search_space.${key} 必须是数组`);
+      }
+      const items = value
+        .filter((x) => x !== null && x !== undefined)
+        .map((x) => {
+          if (typeof x === "string" || typeof x === "number" || typeof x === "boolean") return x;
+          return String(x);
+        });
+      if (!items.length) continue;
+      out[String(key)] = items;
+    }
+    return out;
+  } catch (err) {
+    if (tolerant) return {};
+    throw new Error(`search_space JSON 解析失败：${err.message}`);
+  }
+}
+
+function buildAutotuneRequest({ tolerantSearchSpace = false } = {}) {
+  const req = buildCommonRequest();
+  return {
+    symbol: req.symbol,
+    start_date: req.start_date,
+    end_date: req.end_date,
+    strategy_name: req.strategy_name,
+    base_strategy_params: req.strategy_params,
+    search_space: parseAutotuneSearchSpace(el("autotuneSearchSpaceInput")?.value, {
+      tolerant: tolerantSearchSpace,
+    }),
+    max_combinations: toNumber(el("autotuneMaxCombInput")?.value, "max_combinations", {
+      integer: true,
+      min: 1,
+      max: 5000,
+    }),
+    validation_ratio: toNumber(el("autotuneValidationRatioInput")?.value, "validation_ratio", { min: 0, max: 0.8 }),
+    validation_weight: toNumber(el("autotuneValidationWeightInput")?.value, "validation_weight", { min: 0, max: 1 }),
+    min_train_bars: toNumber(el("autotuneMinTrainBarsInput")?.value, "min_train_bars", {
+      integer: true,
+      min: 20,
+      max: 5000,
+    }),
+    min_validation_bars: toNumber(el("autotuneMinValidationBarsInput")?.value, "min_validation_bars", {
+      integer: true,
+      min: 10,
+      max: 5000,
+    }),
+    min_trade_count: toNumber(el("autotuneMinTradeCountInput")?.value, "min_trade_count", {
+      integer: true,
+      min: 0,
+      max: 5000,
+    }),
+    low_trade_penalty: toNumber(el("autotuneLowTradePenaltyInput")?.value, "low_trade_penalty", { min: 0, max: 5 }),
+    objective_weight_overfit_gap: toNumber(el("autotuneOverfitWeightInput")?.value, "objective_weight_overfit_gap", {
+      min: 0,
+      max: 5,
+    }),
+    objective_weight_stability: toNumber(el("autotuneStabilityWeightInput")?.value, "objective_weight_stability", {
+      min: 0,
+      max: 5,
+    }),
+    objective_weight_param_drift: toNumber(
+      el("autotuneParamDriftWeightInput")?.value,
+      "objective_weight_param_drift",
+      {
+        min: 0,
+        max: 5,
+      }
+    ),
+    objective_weight_return_variance: toNumber(
+      el("autotuneReturnVarWeightInput")?.value,
+      "objective_weight_return_variance",
+      { min: 0, max: 5 }
+    ),
+    stability_eval_top_n: toNumber(el("autotuneStabilityTopNInput")?.value, "stability_eval_top_n", {
+      integer: true,
+      min: 0,
+      max: 500,
+    }),
+    walk_forward_slices: toNumber(el("autotuneWalkForwardSlicesInput")?.value, "walk_forward_slices", {
+      integer: true,
+      min: 0,
+      max: 12,
+    }),
+    low_sample_penalty: toNumber(el("autotuneLowSamplePenaltyInput")?.value, "low_sample_penalty", { min: 0, max: 5 }),
+    auto_apply: Boolean(el("autotuneAutoApplyInput")?.checked),
+    apply_scope: String(el("autotuneApplyScopeInput")?.value || "GLOBAL"),
+    min_improvement_to_apply: toNumber(el("autotuneMinImprovementInput")?.value, "min_improvement_to_apply", {
+      min: -5,
+      max: 5,
+    }),
+    apply_require_validation: Boolean(el("autotuneRequireValidationInput")?.checked),
+    apply_min_validation_total_return: toNumber(
+      el("autotuneMinValidationReturnInput")?.value,
+      "apply_min_validation_total_return",
+      { min: -1, max: 5 }
+    ),
+    apply_max_train_validation_gap: toNumber(el("autotuneMaxGapInput")?.value, "apply_max_train_validation_gap", {
+      min: 0,
+      max: 5,
+    }),
+    apply_min_walk_forward_samples: toNumber(
+      el("autotuneMinWfSamplesInput")?.value,
+      "apply_min_walk_forward_samples",
+      { integer: true, min: 0, max: 20 }
+    ),
+    create_governance_draft: Boolean(el("autotuneCreateGovDraftInput")?.checked),
+    governance_submit_review: Boolean(el("autotuneSubmitReviewInput")?.checked),
+    run_by: String(el("autotuneRunByInput")?.value || "").trim() || "workbench_user",
+    enable_event_enrichment: req.enable_event_enrichment,
+    enable_fundamental_enrichment: true,
+    enable_small_capital_mode: req.enable_small_capital_mode,
+    small_capital_principal: req.small_capital_principal,
+    small_capital_min_expected_edge_bps: req.small_capital_min_expected_edge_bps,
+    event_lookback_days: req.event_lookback_days,
+    event_decay_half_life_days: req.event_decay_half_life_days,
+    initial_cash: toNumber(el("initialCashInput")?.value, "initial_cash", { min: 1000 }),
+    commission_rate: toNumber(el("commissionRateInput")?.value, "commission_rate", { min: 0, max: 0.02 }),
+    slippage_rate: toNumber(el("slippageRateInput")?.value, "slippage_rate", { min: 0, max: 0.02 }),
+    min_commission_cny: toNumber(el("minCommissionInput")?.value, "min_commission_cny", { min: 0, max: 500 }),
+    stamp_duty_sell_rate: toNumber(el("stampDutyRateInput")?.value, "stamp_duty_sell_rate", { min: 0, max: 0.02 }),
+    transfer_fee_rate: toNumber(el("transferFeeRateInput")?.value, "transfer_fee_rate", { min: 0, max: 0.01 }),
+    lot_size: toNumber(el("lotSizeInput")?.value, "lot_size", { integer: true, min: 1 }),
+    max_single_position: toNumber(el("maxSinglePositionInput")?.value, "max_single_position", { min: 0.001, max: 1 }),
+    enable_realistic_cost_model: Boolean(el("autotuneRealisticCostInput")?.checked),
+    impact_cost_coeff: toNumber(el("autotuneImpactCoeffInput")?.value, "impact_cost_coeff", { min: 0, max: 5 }),
+    impact_cost_exponent: toNumber(el("autotuneImpactExponentInput")?.value, "impact_cost_exponent", { min: 0.1, max: 2 }),
+    fill_probability_floor: toNumber(el("autotuneFillProbFloorInput")?.value, "fill_probability_floor", {
+      min: 0,
+      max: 1,
+    }),
+  };
+}
+
+function parseChallengeStrategyNames() {
+  const picks = Array.from(document.querySelectorAll(".challenge-strategy-picker"));
+  const selected = [];
+  for (const node of picks) {
+    if (!(node instanceof HTMLInputElement)) continue;
+    if (!node.checked) continue;
+    const name = String(node.value || "").trim().toLowerCase();
+    if (!name || selected.includes(name)) continue;
+    selected.push(name);
+  }
+  return selected;
+}
+
+function parseChallengeBaseParamsMap(raw, { tolerant = false } = {}) {
+  const text = String(raw || "").trim();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      if (tolerant) return {};
+      throw new Error("base_strategy_params_map JSON 必须是对象");
+    }
+    const out = {};
+    for (const [strategyName, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        if (tolerant) continue;
+        throw new Error(`base_strategy_params_map.${strategyName} 必须是对象`);
+      }
+      const params = {};
+      for (const [key, item] of Object.entries(value)) {
+        if (item === null || item === undefined) continue;
+        if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+          params[String(key)] = item;
+        } else {
+          params[String(key)] = String(item);
+        }
+      }
+      out[String(strategyName).trim().toLowerCase()] = params;
+    }
+    return out;
+  } catch (err) {
+    if (tolerant) return {};
+    throw new Error(`base_strategy_params_map JSON 解析失败：${err.message}`);
+  }
+}
+
+function parseChallengeSearchSpaceMap(raw, { tolerant = false } = {}) {
+  const text = String(raw || "").trim();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      if (tolerant) return {};
+      throw new Error("search_space_map JSON 必须是对象");
+    }
+    const out = {};
+    for (const [strategyName, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        if (tolerant) continue;
+        throw new Error(`search_space_map.${strategyName} 必须是对象`);
+      }
+      const strategySpace = {};
+      for (const [paramName, candidates] of Object.entries(value)) {
+        if (!Array.isArray(candidates)) {
+          if (tolerant) continue;
+          throw new Error(`search_space_map.${strategyName}.${paramName} 必须是数组`);
+        }
+        const filtered = candidates
+          .filter((x) => x !== null && x !== undefined)
+          .map((x) => {
+            if (typeof x === "string" || typeof x === "number" || typeof x === "boolean") return x;
+            return String(x);
+          });
+        if (!filtered.length) continue;
+        strategySpace[String(paramName)] = filtered;
+      }
+      out[String(strategyName).trim().toLowerCase()] = strategySpace;
+    }
+    return out;
+  } catch (err) {
+    if (tolerant) return {};
+    throw new Error(`search_space_map JSON 解析失败：${err.message}`);
+  }
+}
+
+function buildStrategyChallengeRequest({ tolerantSearchSpace = false } = {}) {
+  const req = buildCommonRequest();
+  const selectedStrategies = parseChallengeStrategyNames();
+  const baseMap = parseChallengeBaseParamsMap(el("challengeBaseParamsMapInput")?.value, {
+    tolerant: tolerantSearchSpace,
+  });
+  const searchMap = parseChallengeSearchSpaceMap(el("challengeSearchSpaceMapInput")?.value, {
+    tolerant: tolerantSearchSpace,
+  });
+
+  const currentParams = collectStrategyParams(false);
+  if (req.strategy_name && Object.keys(currentParams).length && !(req.strategy_name in baseMap)) {
+    baseMap[req.strategy_name] = currentParams;
+  }
+
+  return {
+    symbol: req.symbol,
+    start_date: req.start_date,
+    end_date: req.end_date,
+    strategy_names: selectedStrategies,
+    base_strategy_params_map: baseMap,
+    search_space_map: searchMap,
+    per_strategy_max_combinations: toNumber(
+      el("challengePerStrategyMaxCombInput")?.value,
+      "per_strategy_max_combinations",
+      { integer: true, min: 1, max: 5000 }
+    ),
+    validation_ratio: toNumber(el("challengeValidationRatioInput")?.value, "validation_ratio", { min: 0, max: 0.8 }),
+    validation_weight: toNumber(el("challengeValidationWeightInput")?.value, "validation_weight", { min: 0, max: 1 }),
+    min_train_bars: toNumber(el("challengeMinTrainBarsInput")?.value, "min_train_bars", {
+      integer: true,
+      min: 20,
+      max: 5000,
+    }),
+    min_validation_bars: toNumber(el("challengeMinValidationBarsInput")?.value, "min_validation_bars", {
+      integer: true,
+      min: 10,
+      max: 5000,
+    }),
+    min_trade_count: toNumber(el("challengeMinTradeCountInput")?.value, "min_trade_count", {
+      integer: true,
+      min: 0,
+      max: 5000,
+    }),
+    low_trade_penalty: toNumber(el("autotuneLowTradePenaltyInput")?.value, "low_trade_penalty", { min: 0, max: 5 }),
+    objective_weight_total_return: 0.55,
+    objective_weight_annualized_return: 0.2,
+    objective_weight_sharpe: 0.2,
+    objective_weight_win_rate: 0.1,
+    objective_weight_trade_count: 0.05,
+    objective_weight_max_drawdown: 0.35,
+    objective_weight_blocked_ratio: 0.05,
+    objective_weight_overfit_gap: toNumber(el("autotuneOverfitWeightInput")?.value, "objective_weight_overfit_gap", {
+      min: 0,
+      max: 5,
+    }),
+    objective_weight_stability: toNumber(el("autotuneStabilityWeightInput")?.value, "objective_weight_stability", {
+      min: 0,
+      max: 5,
+    }),
+    objective_weight_param_drift: toNumber(
+      el("autotuneParamDriftWeightInput")?.value,
+      "objective_weight_param_drift",
+      { min: 0, max: 5 }
+    ),
+    objective_weight_return_variance: toNumber(
+      el("autotuneReturnVarWeightInput")?.value,
+      "objective_weight_return_variance",
+      { min: 0, max: 5 }
+    ),
+    stability_eval_top_n: toNumber(el("challengeStabilityTopNInput")?.value, "stability_eval_top_n", {
+      integer: true,
+      min: 0,
+      max: 500,
+    }),
+    walk_forward_slices: toNumber(el("challengeWalkForwardSlicesInput")?.value, "walk_forward_slices", {
+      integer: true,
+      min: 0,
+      max: 12,
+    }),
+    low_sample_penalty: toNumber(el("challengeLowSamplePenaltyInput")?.value, "low_sample_penalty", { min: 0, max: 5 }),
+    enable_event_enrichment: req.enable_event_enrichment,
+    enable_fundamental_enrichment: true,
+    enable_small_capital_mode: req.enable_small_capital_mode,
+    small_capital_principal: req.small_capital_principal,
+    small_capital_min_expected_edge_bps: req.small_capital_min_expected_edge_bps,
+    fundamental_max_staleness_days: 540,
+    event_lookback_days: req.event_lookback_days,
+    event_decay_half_life_days: req.event_decay_half_life_days,
+    initial_cash: toNumber(el("initialCashInput")?.value, "initial_cash", { min: 1000 }),
+    commission_rate: toNumber(el("commissionRateInput")?.value, "commission_rate", { min: 0, max: 0.02 }),
+    slippage_rate: toNumber(el("slippageRateInput")?.value, "slippage_rate", { min: 0, max: 0.02 }),
+    min_commission_cny: toNumber(el("minCommissionInput")?.value, "min_commission_cny", { min: 0, max: 500 }),
+    stamp_duty_sell_rate: toNumber(el("stampDutyRateInput")?.value, "stamp_duty_sell_rate", { min: 0, max: 0.02 }),
+    transfer_fee_rate: toNumber(el("transferFeeRateInput")?.value, "transfer_fee_rate", { min: 0, max: 0.01 }),
+    lot_size: toNumber(el("lotSizeInput")?.value, "lot_size", { integer: true, min: 1 }),
+    max_single_position: toNumber(el("maxSinglePositionInput")?.value, "max_single_position", { min: 0.001, max: 1 }),
+    enable_realistic_cost_model: Boolean(el("realisticCostModelInput")?.checked),
+    impact_cost_coeff: toNumber(el("impactCostCoeffInput")?.value, "impact_cost_coeff", { min: 0, max: 5 }),
+    impact_cost_exponent: toNumber(el("impactCostExponentInput")?.value, "impact_cost_exponent", { min: 0.1, max: 2 }),
+    fill_probability_floor: toNumber(el("fillProbabilityFloorInput")?.value, "fill_probability_floor", { min: 0, max: 1 }),
+    gate_require_validation: Boolean(el("challengeGateRequireValidationInput")?.checked),
+    gate_min_validation_total_return: toNumber(
+      el("challengeGateMinValidationReturnInput")?.value,
+      "gate_min_validation_total_return",
+      { min: -1, max: 5 }
+    ),
+    gate_max_validation_drawdown: toNumber(
+      el("challengeGateMaxValidationDrawdownInput")?.value,
+      "gate_max_validation_drawdown",
+      { min: 0, max: 1 }
+    ),
+    gate_min_validation_sharpe: toNumber(
+      el("challengeGateMinValidationSharpeInput")?.value,
+      "gate_min_validation_sharpe",
+      { min: -10, max: 20 }
+    ),
+    gate_min_validation_trade_count: toNumber(
+      el("challengeGateMinValidationTradeCountInput")?.value,
+      "gate_min_validation_trade_count",
+      { integer: true, min: 0, max: 10000 }
+    ),
+    gate_min_walk_forward_samples: toNumber(el("challengeGateMinWfSamplesInput")?.value, "gate_min_walk_forward_samples", {
+      integer: true,
+      min: 0,
+      max: 50,
+    }),
+    gate_max_walk_forward_return_std: toNumber(
+      el("challengeGateMaxWfStdInput")?.value,
+      "gate_max_walk_forward_return_std",
+      { min: 0, max: 5 }
+    ),
+    rank_weight_validation_return: toNumber(el("challengeRankWeightReturnInput")?.value, "rank_weight_validation_return", {
+      min: 0,
+      max: 5,
+    }),
+    rank_weight_validation_sharpe: toNumber(el("challengeRankWeightSharpeInput")?.value, "rank_weight_validation_sharpe", {
+      min: 0,
+      max: 5,
+    }),
+    rank_weight_stability: toNumber(el("challengeRankWeightStabilityInput")?.value, "rank_weight_stability", {
+      min: 0,
+      max: 5,
+    }),
+    rank_weight_drawdown_penalty: toNumber(
+      el("challengeRankWeightDrawdownInput")?.value,
+      "rank_weight_drawdown_penalty",
+      { min: 0, max: 5 }
+    ),
+    rank_weight_variance_penalty: toNumber(
+      el("challengeRankWeightVarianceInput")?.value,
+      "rank_weight_variance_penalty",
+      { min: 0, max: 5 }
+    ),
+    rollout_gray_days: toNumber(el("challengeRolloutGrayDaysInput")?.value, "rollout_gray_days", {
+      integer: true,
+      min: 7,
+      max: 20,
+    }),
+    run_by: String(el("challengeRunByInput")?.value || "").trim() || "workbench_user",
+  };
+}
+
+function getHoldingStrategyName() {
+  const explicit = String(el("holdingAnalyzeStrategyInput")?.value || "").trim();
+  if (explicit) return explicit;
+  return String(el("strategySelect")?.value || "").trim();
+}
+
+function buildHoldingTradeRequest() {
+  const tradeDate = String(el("holdingTradeDateInput")?.value || "").trim() || todayISO();
+  const symbol = String(el("holdingTradeSymbolInput")?.value || "").trim().toUpperCase();
+  if (!symbol) throw new Error("holding symbol 不能为空");
+  const side = String(el("holdingTradeSideInput")?.value || "BUY").trim().toUpperCase();
+  if (!["BUY", "SELL"].includes(side)) throw new Error("holding side 必须是 BUY 或 SELL");
+  return {
+    trade_date: tradeDate,
+    symbol,
+    symbol_name: String(el("holdingTradeNameInput")?.value || "").trim(),
+    side,
+    price: toNumber(el("holdingTradePriceInput")?.value, "holding price", { min: 0.0001 }),
+    lots: toNumber(el("holdingTradeLotsInput")?.value, "holding lots", { integer: true, min: 1, max: 1_000_000 }),
+    lot_size: toNumber(el("holdingTradeLotSizeInput")?.value, "holding lot_size", {
+      integer: true,
+      min: 1,
+      max: 10_000,
+    }),
+    fee: toNumber(el("holdingTradeFeeInput")?.value, "holding fee", { min: 0, max: 1_000_000 }),
+    note: String(el("holdingTradeNoteInput")?.value || "").trim(),
+  };
+}
+
+function buildHoldingTradeQuery() {
+  const params = new URLSearchParams();
+  const symbol = String(el("holdingTradeFilterSymbolInput")?.value || "").trim().toUpperCase();
+  const startDate = String(el("holdingTradeFilterStartDateInput")?.value || "").trim();
+  const endDate = String(el("holdingTradeFilterEndDateInput")?.value || "").trim();
+  const limit = toNumber(el("holdingTradeFilterLimitInput")?.value, "holding trade limit", {
+    integer: true,
+    min: 1,
+    max: 5000,
+  });
+  if (startDate && endDate && startDate > endDate) throw new Error("holding start_date 必须 <= end_date");
+  if (symbol) params.set("symbol", symbol);
+  if (startDate) params.set("start_date", startDate);
+  if (endDate) params.set("end_date", endDate);
+  params.set("limit", String(limit));
+  return params;
+}
+
+function buildHoldingAnalysisRequest() {
+  const asOfDate = String(el("holdingAsOfDateInput")?.value || "").trim() || todayISO();
+  const strategyName = getHoldingStrategyName();
+  if (!strategyName) throw new Error("holding strategy_name 不能为空");
+  return {
+    as_of_date: asOfDate,
+    strategy_name: strategyName,
+    strategy_params: collectStrategyParams(false),
+    use_autotune_profile: Boolean(el("useAutotuneProfileInput")?.checked),
+    available_cash: toNumber(el("holdingAvailableCashInput")?.value, "holding available_cash", { min: 0 }),
+    candidate_symbols: parseSymbols(el("holdingCandidateSymbolsInput")?.value),
+    max_new_buys: toNumber(el("holdingMaxNewBuysInput")?.value, "holding max_new_buys", {
+      integer: true,
+      min: 0,
+      max: 50,
+    }),
+    max_single_position_ratio: toNumber(
+      el("holdingMaxSingleRatioInput")?.value,
+      "holding max_single_position_ratio",
+      { min: 0.01, max: 1 }
+    ),
+    lot_size: toNumber(el("holdingAnalyzeLotSizeInput")?.value, "holding lot_size", { integer: true, min: 1 }),
+  };
+}
+
+async function submitHoldingTrade() {
+  showGlobalError("");
+  const req = buildHoldingTradeRequest();
+  const row = await postJSON("/holdings/trades", req);
+  await loadHoldingTrades({ silent: true });
+  await loadHoldingPositions({ silent: true }).catch(() => {});
+  setHoldingMessage(
+    `成交已录入：id=${row.id} ${row.symbol} ${row.side} ${fmtNum(row.quantity, 0)} 股 @ ${fmtNum(row.price, 4)}`
+  );
+}
+
+async function loadHoldingTrades({ silent = false } = {}) {
+  const params = buildHoldingTradeQuery();
+  const rows = await fetchJSON(`/holdings/trades?${params.toString()}`);
+  state.latestHoldingTrades = Array.isArray(rows) ? rows : [];
+  renderHoldingTrades();
+  if (!silent) setHoldingMessage(`成交台账已刷新：${fmtNum(state.latestHoldingTrades.length, 0)} 条。`);
+}
+
+async function deleteHoldingTrade(tradeId) {
+  const id = toNumber(tradeId, "holding trade_id", { integer: true, min: 1, max: 9_999_999 });
+  await deleteJSON(`/holdings/trades/${id}`);
+  await loadHoldingTrades({ silent: true });
+  await loadHoldingPositions({ silent: true }).catch(() => {});
+  setHoldingMessage(`成交已删除：trade_id=${id}`);
+}
+
+async function loadHoldingPositions({ silent = false } = {}) {
+  const asOfDate = String(el("holdingAsOfDateInput")?.value || "").trim() || todayISO();
+  if (el("holdingAsOfDateInput") && !el("holdingAsOfDateInput").value) el("holdingAsOfDateInput").value = asOfDate;
+  const result = await fetchJSON(`/holdings/positions?${new URLSearchParams({ as_of_date: asOfDate }).toString()}`);
+  state.latestHoldingPositions = result;
+  renderHoldingPositionSummary();
+  renderHoldingPositionRows();
+  if (!silent) {
+    const count = result && result.summary ? Number(result.summary.position_count || 0) : 0;
+    setHoldingMessage(`持仓快照已刷新：${fmtNum(count, 0)} 个标的（as_of=${asOfDate}）。`);
+  }
+}
+
+async function runHoldingAnalyze() {
+  showGlobalError("");
+  const req = buildHoldingAnalysisRequest();
+  const result = await postJSON("/holdings/analyze", req);
+  state.latestHoldingAnalysis = result;
+  renderHoldingAnalysis();
+  const recCount = Array.isArray(result.recommendations) ? result.recommendations.length : 0;
+  setHoldingMessage(`持仓分析完成：建议 ${fmtNum(recCount, 0)} 条，下一交易日=${result.next_trade_date || "-"}`);
+}
+
+function renderHoldingTrades() {
+  const host = el("holdingTradeRows");
+  if (!host) return;
+  const rows = Array.isArray(state.latestHoldingTrades) ? state.latestHoldingTrades : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="11" class="muted">暂无手工成交记录，请先录入成交。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .map(
+      (row) => `<tr>
+      <td>${fmtNum(row.id, 0)}</td>
+      <td>${esc(row.trade_date || "-")}</td>
+      <td>${esc(row.symbol || "-")}</td>
+      <td>${esc(row.symbol_name || "-")}</td>
+      <td>${statusChip(row.side || "-")}</td>
+      <td>${fmtNum(row.price, 4)}</td>
+      <td>${fmtNum(row.lots, 0)}</td>
+      <td>${fmtNum(row.quantity, 0)}</td>
+      <td>${fmtNum(row.fee, 2)}</td>
+      <td>${esc(row.note || "-")}</td>
+      <td><button type="button" class="badge-btn secondary" data-holding-trade-delete-id="${esc(row.id)}">删除</button></td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderHoldingPositionSummary() {
+  const result = state.latestHoldingPositions;
+  const summary = result && result.summary ? result.summary : null;
+  const positionMeta = el("holdingPositionMeta");
+  const positionCountEl = el("holdingPositionCountKpi");
+  const quantityEl = el("holdingQuantityKpi");
+  const costEl = el("holdingCostKpi");
+  const marketEl = el("holdingMarketValueKpi");
+  const pnlEl = el("holdingPnlKpi");
+  const pnlPctEl = el("holdingPnlPctKpi");
+  if (!positionMeta || !positionCountEl || !quantityEl || !costEl || !marketEl || !pnlEl || !pnlPctEl) return;
+
+  if (!summary) {
+    positionMeta.textContent = "暂无持仓快照，请点击“刷新持仓快照”。";
+    positionCountEl.textContent = "-";
+    quantityEl.textContent = "-";
+    costEl.textContent = "-";
+    marketEl.textContent = "-";
+    pnlEl.textContent = "-";
+    pnlPctEl.textContent = "-";
+    return;
+  }
+
+  const asOf = result.as_of_date || "-";
+  const provider = result.provider || "-";
+  positionMeta.textContent = `as_of_date=${asOf} | provider=${provider}`;
+  positionCountEl.textContent = fmtNum(summary.position_count, 0);
+  quantityEl.textContent = fmtNum(summary.total_quantity, 0);
+  costEl.textContent = fmtNum(summary.total_cost_value, 2);
+  marketEl.textContent = fmtNum(summary.total_market_value, 2);
+  pnlEl.textContent = fmtNum(summary.total_unrealized_pnl, 2);
+  pnlPctEl.textContent = fmtPct(summary.total_unrealized_pnl_pct, 2);
+}
+
+function renderHoldingPositionRows() {
+  const host = el("holdingPositionRows");
+  if (!host) return;
+  const rows = state.latestHoldingPositions && Array.isArray(state.latestHoldingPositions.positions)
+    ? state.latestHoldingPositions.positions
+    : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="15" class="muted">暂无持仓快照。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .map(
+      (row) => `<tr>
+      <td>${esc(row.symbol || "-")}</td>
+      <td>${esc(row.symbol_name || "-")}</td>
+      <td>${fmtNum(row.quantity, 0)}</td>
+      <td>${fmtNum(row.lots, 0)}</td>
+      <td>${fmtNum(row.avg_cost, 4)}</td>
+      <td>${fmtNum(row.latest_price, 4)}</td>
+      <td>${row.day_change_pct === null || row.day_change_pct === undefined ? "-" : fmtPct(row.day_change_pct, 2)}</td>
+      <td>${fmtNum(row.cost_value, 2)}</td>
+      <td>${fmtNum(row.market_value, 2)}</td>
+      <td>${fmtNum(row.unrealized_pnl, 2)} (${fmtPct(row.unrealized_pnl_pct, 2)})</td>
+      <td>${fmtPct(row.weight, 2)}</td>
+      <td>${row.momentum20 === null || row.momentum20 === undefined ? "-" : fmtPct(row.momentum20, 2)}</td>
+      <td>${row.volatility20 === null || row.volatility20 === undefined ? "-" : fmtPct(row.volatility20, 2)}</td>
+      <td>${row.fundamental_score === null || row.fundamental_score === undefined ? "-" : fmtNum(row.fundamental_score, 3)}</td>
+      <td>${esc(row.market_comment || "-")}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderHoldingAnalysis() {
+  const meta = el("holdingOverviewMeta");
+  const posHost = el("holdingAnalyzePositionRows");
+  const recHost = el("holdingRecommendationRows");
+  if (!meta || !posHost || !recHost) return;
+
+  const result = state.latestHoldingAnalysis;
+  if (!result) {
+    meta.textContent = "尚未运行持仓分析。";
+    posHost.innerHTML = '<tr><td colspan="8" class="muted">暂无持仓分析结果。</td></tr>';
+    recHost.innerHTML = '<tr><td colspan="11" class="muted">暂无建议清单。</td></tr>';
+    return;
+  }
+
+  const overview = String(result.market_overview || "").trim() || "暂无市场综述。";
+  meta.textContent =
+    `as_of=${result.as_of_date || "-"} | next_trade_date=${result.next_trade_date || "-"} | strategy=${result.strategy_name || "-"} | ${overview}`;
+
+  const positions = Array.isArray(result.positions) ? result.positions : [];
+  posHost.innerHTML = positions.length
+    ? positions
+        .map(
+          (row) => `<tr>
+      <td>${esc(row.symbol || "-")}</td>
+      <td>${esc(row.symbol_name || "-")}</td>
+      <td>${statusChip(row.strategy_signal || "WATCH")}</td>
+      <td>${fmtPct(row.expected_next_day_return, 2)}</td>
+      <td>${fmtPct(row.up_probability, 2)}</td>
+      <td>${statusChip(row.suggested_action || "HOLD")}</td>
+      <td>${fmtNum(row.suggested_delta_lots, 0)}</td>
+      <td>${esc(row.analysis_note || "-")}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="8" class="muted">暂无持仓分析结果。</td></tr>';
+
+  const recommendations = Array.isArray(result.recommendations) ? result.recommendations : [];
+  recHost.innerHTML = recommendations.length
+    ? recommendations
+        .map(
+          (row) => `<tr>
+      <td>${esc(row.symbol || "-")}</td>
+      <td>${esc(row.symbol_name || "-")}</td>
+      <td>${statusChip(row.action || "WATCH")}</td>
+      <td>${fmtNum(row.target_lots, 0)}</td>
+      <td>${fmtNum(row.delta_lots, 0)}</td>
+      <td>${fmtPct(row.confidence, 2)}</td>
+      <td>${fmtPct(row.expected_next_day_return, 2)}</td>
+      <td>${fmtPct(row.up_probability, 2)}</td>
+      <td>${esc(row.next_trade_date || "-")}</td>
+      <td>${esc(Array.isArray(row.risk_flags) && row.risk_flags.length ? row.risk_flags.join(\",\") : \"-\")}</td>
+      <td>${esc(row.rationale || "-")}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="11" class="muted">暂无建议清单。</td></tr>';
+}
+
+function renderHoldings() {
+  renderHoldingTrades();
+  renderHoldingPositionSummary();
+  renderHoldingPositionRows();
+  renderHoldingAnalysis();
 }
 
 function syncBarsInputsFromStrategy() {
@@ -639,7 +1446,10 @@ function updateRequestPreview() {
     const snapshot = {
       signal_request: buildSignalRequest(),
       backtest_request: buildBacktestRequest(),
+      portfolio_backtest_request: buildPortfolioBacktestRequest(),
       research_request: buildResearchRequest(),
+      autotune_request: buildAutotuneRequest({ tolerantSearchSpace: true }),
+      strategy_challenge_request: buildStrategyChallengeRequest({ tolerantSearchSpace: true }),
     };
     try {
       snapshot.market_bars_request = buildBarsRequest();
@@ -687,12 +1497,16 @@ function bindTabEvents() {
     });
   });
   const hashName = String(window.location.hash || "").replace("#", "").trim();
-  if (["strategy", "results", "execution"].includes(hashName)) switchTab(hashName);
+  if (["strategy", "autotune", "challenge", "results", "holdings", "execution"].includes(hashName)) switchTab(hashName);
 }
 
 function saveFormSnapshot() {
   const data = {};
-  const selector = "#tab-strategy input[id], #tab-strategy textarea[id], #tab-strategy select[id]";
+  const selector =
+    "#tab-strategy input[id], #tab-strategy textarea[id], #tab-strategy select[id], " +
+    "#tab-autotune input[id], #tab-autotune textarea[id], #tab-autotune select[id], " +
+    "#tab-challenge input[id], #tab-challenge textarea[id], #tab-challenge select[id], " +
+    "#tab-holdings input[id], #tab-holdings textarea[id], #tab-holdings select[id]";
   document.querySelectorAll(selector).forEach((node) => {
     if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement)) return;
     if (!node.id) return;
@@ -718,7 +1532,11 @@ function applyFormSnapshot() {
   const saved = state.savedFormSnapshot;
   if (!saved || typeof saved !== "object") return;
 
-  const selector = "#tab-strategy input[id], #tab-strategy textarea[id], #tab-strategy select[id]";
+  const selector =
+    "#tab-strategy input[id], #tab-strategy textarea[id], #tab-strategy select[id], " +
+    "#tab-autotune input[id], #tab-autotune textarea[id], #tab-autotune select[id], " +
+    "#tab-challenge input[id], #tab-challenge textarea[id], #tab-challenge select[id], " +
+    "#tab-holdings input[id], #tab-holdings textarea[id], #tab-holdings select[id]";
   document.querySelectorAll(selector).forEach((node) => {
     if (!(node instanceof HTMLInputElement || node instanceof HTMLTextAreaElement || node instanceof HTMLSelectElement)) return;
     if (!node.id) return;
@@ -793,6 +1611,20 @@ async function runBacktest({ silent = false } = {}) {
   }
 }
 
+async function runPortfolioBacktest({ silent = false } = {}) {
+  showGlobalError("");
+  if (!silent) setActionMessage("正在运行组合净值回测...");
+  const req = buildPortfolioBacktestRequest();
+  const result = await postJSON("/backtest/portfolio-run", req);
+  state.latestPortfolioBacktestRequest = req;
+  state.latestPortfolioBacktestResult = result;
+  renderResults();
+  if (!silent) {
+    setActionMessage("组合净值回测完成，已更新组合净值曲线与组合成交。");
+    switchTab("results");
+  }
+}
+
 async function runResearch({ silent = false } = {}) {
   showGlobalError("");
   if (!silent) setActionMessage("正在运行研究工作流...");
@@ -807,6 +1639,168 @@ async function runResearch({ silent = false } = {}) {
     setActionMessage(`研究工作流完成：候选信号 ${count} 条`);
     switchTab("results");
   }
+}
+
+async function runAutotune({ silent = false } = {}) {
+  showGlobalError("");
+  if (!silent) setAutotuneMessage("正在运行自动调参...");
+  const req = buildAutotuneRequest();
+  const result = await postJSON("/autotune/run", req);
+  state.latestAutotuneRequest = req;
+  state.latestAutotuneResult = result;
+  await loadAutotuneProfiles({ silent: true }).catch(() => {});
+  await loadAutotuneActiveProfile({ silent: true }).catch(() => {});
+  renderAutotuneWorkbench();
+  renderResults();
+  if (!silent) {
+    const bestObj = result && result.best ? fmtNum(result.best.objective_score, 6) : "-";
+    setAutotuneMessage(
+      `自动调参完成：候选=${fmtNum(result.evaluated_count || 0, 0)}，best objective=${bestObj}，决策=${result.apply_decision || "-"}.`
+    );
+    switchTab("autotune");
+  }
+}
+
+async function runStrategyChallenge({ silent = false } = {}) {
+  showGlobalError("");
+  if (!silent) setChallengeMessage("正在运行跨策略挑战赛...");
+  const req = buildStrategyChallengeRequest();
+  const result = await postJSON("/challenge/run", req);
+  state.latestChallengeRequest = req;
+  state.latestChallengeResult = result;
+  renderChallengeWorkbench();
+  if (!silent) {
+    setChallengeMessage(
+      `挑战赛完成：参赛=${fmtNum((result.strategy_names || []).length, 0)}，入围=${fmtNum(result.qualified_count || 0, 0)}，冠军=${result.champion_strategy || "-"}。`
+    );
+    switchTab("challenge");
+  }
+}
+
+async function loadAutotuneProfiles({ silent = false } = {}) {
+  const strategyName = String(el("strategySelect")?.value || "").trim();
+  if (!strategyName) throw new Error("strategy_name 不能为空");
+  const symbol = String(el("symbolInput")?.value || "").trim();
+  const qs = new URLSearchParams({ strategy_name: strategyName, limit: "200" });
+  if (symbol) qs.set("symbol", symbol);
+  const rows = await fetchJSON(`/autotune/profiles?${qs.toString()}`);
+  state.latestAutotuneProfiles = Array.isArray(rows) ? rows : [];
+  renderAutotuneWorkbench();
+  if (!silent) setAutotuneMessage(`已加载参数画像 ${fmtNum(state.latestAutotuneProfiles.length, 0)} 条。`);
+}
+
+async function loadAutotuneActiveProfile({ silent = false } = {}) {
+  const strategyName = String(el("strategySelect")?.value || "").trim();
+  if (!strategyName) throw new Error("strategy_name 不能为空");
+  const symbol = String(el("symbolInput")?.value || "").trim();
+  const qs = new URLSearchParams({ strategy_name: strategyName });
+  if (symbol) qs.set("symbol", symbol);
+  const row = await fetchJSON(`/autotune/profiles/active?${qs.toString()}`);
+  state.latestAutotuneActiveProfile = row && typeof row === "object" ? row : null;
+  renderAutotuneWorkbench();
+  if (!silent) {
+    if (state.latestAutotuneActiveProfile) {
+      setAutotuneMessage(
+        `当前生效画像：id=${state.latestAutotuneActiveProfile.id} scope=${state.latestAutotuneActiveProfile.scope} symbol=${state.latestAutotuneActiveProfile.symbol || "-"}`
+      );
+    } else {
+      setAutotuneMessage("当前策略暂无生效画像。");
+    }
+  }
+}
+
+async function activateAutotuneProfile(profileId) {
+  const id = toNumber(profileId, "profile_id", { integer: true, min: 1, max: 9_999_999 });
+  const row = await postJSON(`/autotune/profiles/${id}/activate`, {});
+  state.latestAutotuneActiveProfile = row && typeof row === "object" ? row : null;
+  await loadAutotuneProfiles({ silent: true }).catch(() => {});
+  renderAutotuneWorkbench();
+  setAutotuneMessage(`画像已切换：id=${id}（可用于版本回退）。`);
+}
+
+async function rollbackAutotuneProfile() {
+  const strategyName = String(el("strategySelect")?.value || "").trim();
+  if (!strategyName) throw new Error("strategy_name 不能为空");
+  const symbol = String(el("symbolInput")?.value || "").trim() || null;
+  const scopeRaw = String(el("autotuneRollbackScopeInput")?.value || "AUTO").trim().toUpperCase();
+  const body = {
+    strategy_name: strategyName,
+    symbol,
+  };
+  if (scopeRaw === "GLOBAL" || scopeRaw === "SYMBOL") body.scope = scopeRaw;
+  const row = await postJSON("/autotune/profiles/rollback", body);
+  state.latestAutotuneActiveProfile = row && typeof row === "object" ? row : null;
+  await loadAutotuneProfiles({ silent: true }).catch(() => {});
+  renderAutotuneWorkbench();
+  setAutotuneMessage(`回滚完成：已切换到画像 id=${row.id}。`);
+}
+
+function getRolloutStrategyName() {
+  const explicit = String(el("rolloutRuleStrategyInput")?.value || "").trim();
+  if (explicit) return explicit;
+  return String(el("strategySelect")?.value || "").trim();
+}
+
+async function loadRolloutRules({ silent = false } = {}) {
+  const strategyName = getRolloutStrategyName();
+  if (!strategyName) throw new Error("strategy_name 不能为空");
+  const symbol = String(el("rolloutRuleSymbolInput")?.value || "").trim();
+  const qs = new URLSearchParams({ strategy_name: strategyName, limit: "500" });
+  if (symbol) qs.set("symbol", symbol);
+  const rows = await fetchJSON(`/autotune/rollout/rules?${qs.toString()}`);
+  state.latestRolloutRules = Array.isArray(rows) ? rows : [];
+  renderRolloutRuleRows();
+  if (!silent) setRolloutRuleMessage(`已加载灰度规则 ${fmtNum(state.latestRolloutRules.length, 0)} 条。`);
+}
+
+async function upsertRolloutRule() {
+  const strategyName = getRolloutStrategyName();
+  if (!strategyName) throw new Error("strategy_name 不能为空");
+  const symbol = String(el("rolloutRuleSymbolInput")?.value || "").trim() || null;
+  const body = {
+    strategy_name: strategyName,
+    symbol,
+    enabled: Boolean(el("rolloutRuleEnabledInput")?.checked),
+    note: String(el("rolloutRuleNoteInput")?.value || "").trim(),
+  };
+  const row = await postJSON("/autotune/rollout/rules/upsert", body);
+  await loadRolloutRules({ silent: true }).catch(() => {});
+  setRolloutRuleMessage(`灰度规则已保存：id=${row.id} strategy=${row.strategy_name} symbol=${row.symbol || "-"}`);
+}
+
+async function deleteRolloutRule(ruleId) {
+  const id = toNumber(ruleId, "rule_id", { integer: true, min: 1, max: 9_999_999 });
+  await deleteJSON(`/autotune/rollout/rules/${id}`);
+  await loadRolloutRules({ silent: true }).catch(() => {});
+  setRolloutRuleMessage(`灰度规则已删除：id=${id}`);
+}
+
+function applyStrategyParamsToForm(strategyName, params, sourceLabel = "参数来源") {
+  const select = el("strategySelect");
+  if (select instanceof HTMLSelectElement && strategyName) {
+    const hasTarget = Array.from(select.options).some((opt) => opt.value === strategyName);
+    if (hasTarget) select.value = strategyName;
+  }
+  const finalStrategy = String(el("strategySelect")?.value || strategyName || "").trim();
+  renderStrategyParams(finalStrategy, params || {});
+  updateSmallCapitalHint();
+  updateRequestPreview();
+  saveFormSnapshot();
+  setAutotuneMessage(`${sourceLabel} 已回填到策略参数区，可直接运行信号/回测/研究。`);
+}
+
+function applyChallengeChampionToStrategyForm() {
+  const result = state.latestChallengeResult;
+  if (!result || !result.champion_strategy) {
+    throw new Error("暂无挑战赛冠军参数，请先运行挑战赛。");
+  }
+  const rows = Array.isArray(result.results) ? result.results : [];
+  const winner = rows.find((x) => String(x.strategy_name || "") === String(result.champion_strategy || ""));
+  if (!winner || !winner.best_params || !Object.keys(winner.best_params).length) {
+    throw new Error("冠军策略缺少可回填参数。");
+  }
+  applyStrategyParamsToForm(String(winner.strategy_name || ""), winner.best_params, "挑战赛冠军参数");
+  setChallengeMessage(`冠军参数已回填：strategy=${winner.strategy_name}`);
 }
 
 async function loadMarketBars({ silent = false } = {}) {
@@ -1205,6 +2199,277 @@ function renderWeightVisuals() {
   }
 }
 
+function renderAutotuneSummaryKpis() {
+  const result = state.latestAutotuneResult;
+  const evalEl = el("autotuneEvalCount");
+  const bestEl = el("autotuneBestObjective");
+  const improveEl = el("autotuneImprovement");
+  const decisionEl = el("autotuneApplyDecision");
+  if (evalEl) evalEl.textContent = result ? fmtNum(result.evaluated_count || 0, 0) : "-";
+  if (bestEl) bestEl.textContent = result && result.best ? fmtNum(result.best.objective_score, 6) : "-";
+  if (improveEl) improveEl.textContent = result ? fmtNum(result.improvement_vs_baseline || 0, 6) : "-";
+  if (decisionEl) decisionEl.textContent = result ? String(result.apply_decision || "-") : "-";
+}
+
+function renderAutotuneCandidateRows() {
+  const host = el("autotuneCandidateRows");
+  if (!host) return;
+  const rows = state.latestAutotuneResult && Array.isArray(state.latestAutotuneResult.candidates)
+    ? state.latestAutotuneResult.candidates
+    : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="12" class="muted">暂无自动调参结果。请先运行自动调参。</td></tr>';
+    return;
+  }
+
+  host.innerHTML = rows
+    .slice(0, 80)
+    .map((item, idx) => {
+      const guard = item.apply_eligible ? "eligible" : String(item.apply_guard_reason || "-");
+      return `<tr>
+        <td>${fmtNum(item.rank, 0)}</td>
+        <td>${fmtNum(item.objective_score, 6)}</td>
+        <td>${fmtNum(item.train_score, 6)}</td>
+        <td>${item.validation_score === null || item.validation_score === undefined ? "-" : fmtNum(item.validation_score, 6)}</td>
+        <td>${fmtNum(item.overfit_penalty || 0, 6)}</td>
+        <td>${fmtNum(item.stability_penalty || 0, 6)}</td>
+        <td>${fmtNum(item.param_drift_penalty || 0, 6)}</td>
+        <td>${fmtNum(item.return_variance_penalty || 0, 6)}</td>
+        <td>${fmtNum(item.walk_forward_samples || 0, 0)}</td>
+        <td>${esc(guard)}</td>
+        <td><code class="code-inline">${esc(JSON.stringify(item.strategy_params || {}))}</code></td>
+        <td><button type="button" class="badge-btn secondary" data-autotune-candidate-idx="${idx}">回填参数</button></td>
+      </tr>`;
+    })
+    .join("");
+}
+
+function renderAutotuneProfileRows() {
+  const host = el("autotuneProfileRows");
+  if (!host) return;
+  const rows = state.latestAutotuneProfiles || [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="9" class="muted">暂无画像记录。可先运行自动调参或点击“加载画像列表”。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .map(
+      (item) => `<tr class="${item.active ? "row-active" : ""}">
+      <td>${fmtNum(item.id, 0)}</td>
+      <td>${esc(item.strategy_name || "-")}</td>
+      <td>${esc(item.scope || "-")}</td>
+      <td>${esc(item.symbol || "-")}</td>
+      <td>${fmtNum(item.objective_score, 6)}</td>
+      <td>${item.active ? statusChip("ACTIVE") : statusChip("INACTIVE", "warn")}</td>
+      <td>${fmtTs(item.updated_at)}</td>
+      <td><code>${esc(item.source_run_id || "-")}</code></td>
+      <td>${
+        item.active
+          ? '<span class="muted">生效中</span>'
+          : `<button type="button" class="badge-btn secondary" data-autotune-activate-id="${esc(item.id)}">设为生效（回退）</button>`
+      }</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderRolloutRuleRows() {
+  const host = el("rolloutRuleRows");
+  if (!host) return;
+  const rows = Array.isArray(state.latestRolloutRules) ? state.latestRolloutRules : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="7" class="muted">暂无灰度规则。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .map(
+      (item) => `<tr>
+      <td>${fmtNum(item.id, 0)}</td>
+      <td>${esc(item.strategy_name || "-")}</td>
+      <td>${esc(item.symbol || "-")}</td>
+      <td>${item.enabled ? statusChip("ENABLED") : statusChip("DISABLED", "warn")}</td>
+      <td>${fmtTs(item.updated_at)}</td>
+      <td>${esc(item.note || "-")}</td>
+      <td><button type="button" class="badge-btn secondary" data-rollout-delete-id="${esc(item.id)}">删除</button></td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderAutotuneComparison() {
+  const meta = el("autotuneCompareMeta");
+  const host = el("autotuneCompareRows");
+  if (!meta || !host) return;
+  const result = state.latestAutotuneResult;
+  if (!result || !result.best || !result.baseline) {
+    meta.textContent = "暂无自动调参结果。";
+    host.innerHTML = '<tr><td colspan="3" class="muted">运行自动调参后显示基线与最优参数对比。</td></tr>';
+    return;
+  }
+
+  const base = result.baseline;
+  const best = result.best;
+  meta.textContent = `策略=${result.strategy_name} | 决策=${result.apply_decision || "-"} | 提升=${fmtNum(result.improvement_vs_baseline || 0, 6)}`;
+
+  const rows = [
+    ["objective_score", fmtNum(base.objective_score, 6), fmtNum(best.objective_score, 6)],
+    ["train_score", fmtNum(base.train_score, 6), fmtNum(best.train_score, 6)],
+    [
+      "validation_score",
+      base.validation_score === null || base.validation_score === undefined ? "-" : fmtNum(base.validation_score, 6),
+      best.validation_score === null || best.validation_score === undefined ? "-" : fmtNum(best.validation_score, 6),
+    ],
+    ["train_total_return", fmtPct(base.train_metrics.total_return, 2), fmtPct(best.train_metrics.total_return, 2)],
+    [
+      "validation_total_return",
+      base.validation_metrics ? fmtPct(base.validation_metrics.total_return, 2) : "-",
+      best.validation_metrics ? fmtPct(best.validation_metrics.total_return, 2) : "-",
+    ],
+    ["max_drawdown(train)", fmtPct(base.train_metrics.max_drawdown, 2), fmtPct(best.train_metrics.max_drawdown, 2)],
+    ["sharpe(train)", fmtNum(base.train_metrics.sharpe, 4), fmtNum(best.train_metrics.sharpe, 4)],
+    ["overfit_penalty", fmtNum(base.overfit_penalty || 0, 6), fmtNum(best.overfit_penalty || 0, 6)],
+    ["stability_penalty", fmtNum(base.stability_penalty || 0, 6), fmtNum(best.stability_penalty || 0, 6)],
+    ["param_drift_penalty", fmtNum(base.param_drift_penalty || 0, 6), fmtNum(best.param_drift_penalty || 0, 6)],
+    ["return_variance_penalty", fmtNum(base.return_variance_penalty || 0, 6), fmtNum(best.return_variance_penalty || 0, 6)],
+    ["walk_forward_return_std", fmtNum(base.walk_forward_return_std || 0, 6), fmtNum(best.walk_forward_return_std || 0, 6)],
+    ["walk_forward_samples", fmtNum(base.walk_forward_samples || 0, 0), fmtNum(best.walk_forward_samples || 0, 0)],
+  ];
+  host.innerHTML = rows.map(([k, v1, v2]) => `<tr><td>${esc(k)}</td><td>${esc(v1)}</td><td>${esc(v2)}</td></tr>`).join("");
+}
+
+function renderAutotuneWorkbench() {
+  renderAutotuneSummaryKpis();
+  renderAutotuneCandidateRows();
+  renderAutotuneProfileRows();
+  renderRolloutRuleRows();
+  renderAutotuneComparison();
+  const result = state.latestAutotuneResult;
+  const quickMeta = el("autotuneResultsMeta");
+  if (quickMeta) {
+    if (result && result.best) {
+      quickMeta.textContent =
+        `最近一次调参：strategy=${result.strategy_name} improvement=${fmtNum(result.improvement_vs_baseline || 0, 6)} decision=${result.apply_decision || "-"}`;
+    } else {
+      quickMeta.textContent = "自动调参详细候选榜、基线对比、画像回滚和灰度规则请在“自动调参页”查看。";
+    }
+  }
+}
+
+function renderChallengeSummaryKpis() {
+  const result = state.latestChallengeResult;
+  const evalEl = el("challengeEvaluatedCount");
+  const qualEl = el("challengeQualifiedCount");
+  const championEl = el("challengeChampion");
+  const runnerUpEl = el("challengeRunnerUp");
+  if (evalEl) evalEl.textContent = result ? fmtNum(result.evaluated_count || 0, 0) : "-";
+  if (qualEl) qualEl.textContent = result ? fmtNum(result.qualified_count || 0, 0) : "-";
+  if (championEl) championEl.textContent = result ? String(result.champion_strategy || "-") : "-";
+  if (runnerUpEl) runnerUpEl.textContent = result ? String(result.runner_up_strategy || "-") : "-";
+}
+
+function renderChallengePlan() {
+  const result = state.latestChallengeResult;
+  const meta = el("challengeSummaryMeta");
+  const planHost = el("challengePlanRows");
+  if (!meta || !planHost) return;
+  if (!result) {
+    meta.textContent = "尚未运行挑战赛。";
+    planHost.innerHTML = '<tr><td colspan="2" class="muted">暂无灰度计划。</td></tr>';
+    return;
+  }
+
+  meta.textContent =
+    `run_id=${result.run_id || "-"} | symbol=${result.symbol || "-"} | 窗口=${result.start_date || "-"}~${result.end_date || "-"} | ${result.market_fit_summary || ""}`;
+
+  const plan = result.rollout_plan;
+  if (!plan) {
+    planHost.innerHTML = '<tr><td colspan="2" class="muted">未返回灰度计划。</td></tr>';
+    return;
+  }
+  const rows = [
+    ["enabled", String(Boolean(plan.enabled))],
+    ["strategy_name", String(plan.strategy_name || "-")],
+    ["symbol", String(plan.symbol || "-")],
+    ["gray_days", fmtNum(plan.gray_days, 0)],
+    ["activation_scope", String(plan.activation_scope || "-")],
+    [
+      "rollback_triggers",
+      Array.isArray(plan.rollback_triggers) && plan.rollback_triggers.length
+        ? plan.rollback_triggers.join("; ")
+        : "-",
+    ],
+  ];
+  planHost.innerHTML = rows
+    .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`)
+    .join("");
+}
+
+function renderChallengeReasonRows() {
+  const host = el("challengeReasonRows");
+  if (!host) return;
+  const rows = state.latestChallengeResult && Array.isArray(state.latestChallengeResult.results)
+    ? state.latestChallengeResult.results
+    : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="3" class="muted">暂无挑战赛结果。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .map((item) => {
+      const reasons = [];
+      if (Array.isArray(item.qualification_reasons) && item.qualification_reasons.length) {
+        reasons.push(...item.qualification_reasons);
+      }
+      if (item.error) reasons.push(`error=${item.error}`);
+      const reasonText = reasons.length ? reasons.join("; ") : "qualified";
+      return `<tr>
+        <td>${esc(item.strategy_name || "-")}</td>
+        <td>${item.qualified ? statusChip("QUALIFIED") : statusChip("REJECTED", "warn")}</td>
+        <td>${esc(reasonText)}</td>
+      </tr>`;
+    })
+    .join("");
+}
+
+function renderChallengeResultRows() {
+  const host = el("challengeResultRows");
+  if (!host) return;
+  const rows = state.latestChallengeResult && Array.isArray(state.latestChallengeResult.results)
+    ? state.latestChallengeResult.results
+    : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="12" class="muted">暂无挑战赛候选榜。</td></tr>';
+    return;
+  }
+
+  host.innerHTML = rows
+    .map((item) => {
+      const vm = item.validation_metrics || null;
+      return `<tr>
+        <td>${esc(item.strategy_name || "-")}</td>
+        <td>${item.qualified ? statusChip("QUALIFIED") : statusChip("REJECTED", "warn")}</td>
+        <td>${item.ranking_score === null || item.ranking_score === undefined ? "-" : fmtNum(item.ranking_score, 6)}</td>
+        <td>${vm ? fmtPct(vm.total_return, 2) : "-"}</td>
+        <td>${vm ? fmtPct(vm.max_drawdown, 2) : "-"}</td>
+        <td>${vm ? fmtNum(vm.sharpe, 4) : "-"}</td>
+        <td>${fmtNum(item.walk_forward_samples || 0, 0)}</td>
+        <td>${item.walk_forward_return_std === null || item.walk_forward_return_std === undefined ? "-" : fmtNum(item.walk_forward_return_std, 6)}</td>
+        <td>${fmtNum(item.stability_penalty || 0, 6)}</td>
+        <td>${fmtNum(item.param_drift_penalty || 0, 6)}</td>
+        <td>${fmtNum(item.return_variance_penalty || 0, 6)}</td>
+        <td><code class="code-inline">${esc(JSON.stringify(item.best_params || {}))}</code></td>
+      </tr>`;
+    })
+    .join("");
+}
+
+function renderChallengeWorkbench() {
+  renderChallengeSummaryKpis();
+  renderChallengePlan();
+  renderChallengeReasonRows();
+  renderChallengeResultRows();
+}
+
 function buildRebalanceRequest({ allowEmptyPositions = false } = {}) {
   const weights = getOptimizedWeights();
   if (!weights.length) throw new Error("暂无优化权重，无法生成调仓建议。请先运行研究工作流。");
@@ -1276,6 +2541,134 @@ function buildSamplePositionsFromSignals() {
     return `${w.symbol},${rawQty},${refPrice.toFixed(2)}`;
   });
   if (el("rebalancePositionsInput")) el("rebalancePositionsInput").value = lines.join("\n");
+}
+
+function renderPortfolioEquityChart(points) {
+  const host = el("portfolioEquityChart");
+  if (!host) return;
+  if (!Array.isArray(points) || !points.length) {
+    host.innerHTML = '<p class="chart-note">暂无组合净值曲线。</p>';
+    return;
+  }
+
+  const rows = points
+    .map((x) => ({
+      date: normalizeDateString(x.date),
+      equity: Number(x.equity),
+    }))
+    .filter((x) => x.date && Number.isFinite(x.equity));
+  if (!rows.length) {
+    host.innerHTML = '<p class="chart-note">组合净值数据格式异常。</p>';
+    return;
+  }
+
+  const width = 980;
+  const height = 280;
+  const padLeft = 48;
+  const padRight = 14;
+  const padTop = 16;
+  const padBottom = 28;
+  const usableW = width - padLeft - padRight;
+  const usableH = height - padTop - padBottom;
+
+  const minV = Math.min(...rows.map((x) => x.equity));
+  const maxV = Math.max(...rows.map((x) => x.equity));
+  const span = Math.max(maxV - minV, 1e-9);
+  const xAt = (idx) => padLeft + (idx / Math.max(rows.length - 1, 1)) * usableW;
+  const yAt = (val) => padTop + ((maxV - val) / span) * usableH;
+
+  const path = rows
+    .map((row, idx) => `${idx === 0 ? "M" : "L"} ${xAt(idx).toFixed(2)} ${yAt(row.equity).toFixed(2)}`)
+    .join(" ");
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+
+  host.innerHTML = `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="组合净值曲线">
+      <line x1="${padLeft}" y1="${height - padBottom}" x2="${width - padRight}" y2="${height - padBottom}" stroke="#c3d4bc" stroke-width="1" />
+      <path d="${path}" fill="none" stroke="#0f7f4f" stroke-width="2.3" />
+      <text x="${padLeft}" y="${height - 8}" font-size="11" fill="#5f7262">${esc(first.date)}</text>
+      <text x="${width - padRight - 92}" y="${height - 8}" font-size="11" fill="#5f7262">${esc(last.date)}</text>
+      <text x="${padLeft + 2}" y="${padTop + 10}" font-size="11" fill="#2e5b44">${esc(`min=${fmtNum(minV, 2)} max=${fmtNum(maxV, 2)}`)}</text>
+    </svg>
+  `;
+}
+
+function renderPortfolioBacktest() {
+  const result = state.latestPortfolioBacktestResult;
+  const meta = el("portfolioBacktestMeta");
+  const returnKpi = el("portfolioReturnKpi");
+  const mddKpi = el("portfolioMddKpi");
+  const sharpeKpi = el("portfolioSharpeKpi");
+  const utilKpi = el("portfolioUtilKpi");
+  const tradeCountKpi = el("portfolioTradeCountKpi");
+  const weightHost = el("portfolioWeightRows");
+  const tradeHost = el("portfolioTradeRows");
+
+  if (!meta || !returnKpi || !mddKpi || !sharpeKpi || !utilKpi || !tradeCountKpi || !weightHost || !tradeHost) return;
+
+  if (!result || !result.metrics) {
+    meta.textContent = "暂无组合级回测结果。可回到“策略与参数页”点击“运行组合净值回测”。";
+    returnKpi.textContent = "-";
+    mddKpi.textContent = "-";
+    sharpeKpi.textContent = "-";
+    utilKpi.textContent = "-";
+    tradeCountKpi.textContent = "-";
+    weightHost.innerHTML = '<tr><td colspan="4" class="muted">暂无最终权重。</td></tr>';
+    tradeHost.innerHTML = '<tr><td colspan="7" class="muted">暂无组合成交记录。</td></tr>';
+    renderPortfolioEquityChart([]);
+    return;
+  }
+
+  const m = result.metrics;
+  returnKpi.textContent = fmtPct(m.total_return, 2);
+  mddKpi.textContent = fmtPct(m.max_drawdown, 2);
+  sharpeKpi.textContent = fmtNum(m.sharpe, 4);
+  utilKpi.textContent = fmtPct(m.avg_utilization, 2);
+  tradeCountKpi.textContent = fmtNum(m.trade_count, 0);
+  meta.textContent =
+    `标的数=${fmtNum((result.symbols || []).length, 0)} | 行业超限次数=${fmtNum(m.industry_breach_count || 0, 0)} | 主题超限次数=${fmtNum(m.theme_breach_count || 0, 0)} | 风控阻断日=${fmtNum(m.risk_blocked_days || 0, 0)} | 风控预警日=${fmtNum(m.risk_warning_days || 0, 0)}`;
+
+  const req = state.latestPortfolioBacktestRequest || {};
+  const industryMap = req.industry_map && typeof req.industry_map === "object" ? req.industry_map : {};
+  const themeMap = req.theme_map && typeof req.theme_map === "object" ? req.theme_map : {};
+  const finalWeights = Object.entries(result.final_weights || {})
+    .map(([symbol, weight]) => ({ symbol, weight: Number(weight || 0) }))
+    .filter((x) => x.symbol)
+    .sort((a, b) => b.weight - a.weight);
+
+  weightHost.innerHTML = finalWeights.length
+    ? finalWeights
+        .map(
+          (row) => `<tr>
+      <td>${esc(row.symbol)}</td>
+      <td>${fmtPct(row.weight, 2)}</td>
+      <td>${esc(industryMap[row.symbol] || "-")}</td>
+      <td>${esc(themeMap[row.symbol] || "-")}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="4" class="muted">暂无最终权重。</td></tr>';
+
+  const trades = Array.isArray(result.trades) ? result.trades : [];
+  tradeHost.innerHTML = trades.length
+    ? trades
+        .slice(0, 300)
+        .map(
+          (t) => `<tr>
+      <td>${esc(t.date)}</td>
+      <td>${esc(t.symbol)}</td>
+      <td>${statusChip(t.action)}</td>
+      <td>${fmtNum(t.price, 4)}</td>
+      <td>${fmtNum(t.quantity, 0)}</td>
+      <td>${fmtNum(t.fee, 2)}</td>
+      <td>${fmtPct(t.fill_ratio, 2)}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="7" class="muted">暂无组合成交记录。</td></tr>';
+
+  renderPortfolioEquityChart(Array.isArray(result.equity_curve) ? result.equity_curve : []);
 }
 
 function renderBacktestMetricsAndTrades() {
@@ -1404,6 +2797,7 @@ function renderResultsKpis() {
 
 function renderResults() {
   renderResultsKpis();
+  renderAutotuneWorkbench();
   renderSignalRows();
   renderRiskDetail();
   renderResearchRows();
@@ -1412,6 +2806,7 @@ function renderResults() {
   renderRebalanceRows();
   renderMarketBarRows();
   renderMarketKlineChart();
+  renderPortfolioBacktest();
   renderBacktestMetricsAndTrades();
   renderEquityChart();
 }
@@ -1574,10 +2969,114 @@ function renderReplayReport() {
     : '<tr><td colspan="8" class="muted">暂无复盘报表数据。</td></tr>';
 }
 
+function buildAttributionFilters() {
+  const params = new URLSearchParams();
+  const symbol = String(el("attrSymbolInput")?.value || "").trim();
+  const startDate = String(el("attrStartDateInput")?.value || "").trim();
+  const endDate = String(el("attrEndDateInput")?.value || "").trim();
+  const limit = toNumber(el("attrLimitInput")?.value, "attribution limit", { integer: true, min: 1, max: 2000 });
+  if (symbol) params.set("symbol", symbol);
+  if (startDate) params.set("start_date", startDate);
+  if (endDate) params.set("end_date", endDate);
+  params.set("limit", String(limit));
+  return { params, symbol, startDate, endDate, limit };
+}
+
+async function loadReplayAttribution() {
+  const { params } = buildAttributionFilters();
+  const report = await fetchJSON(`/replay/attribution?${params.toString()}`);
+  state.replayAttribution = report;
+  renderReplayAttribution();
+}
+
+function renderReplayAttribution() {
+  const report = state.replayAttribution;
+  const sampleEl = el("attrSample");
+  const followEl = el("attrFollowRate");
+  const delayEl = el("attrAvgDelay");
+  const slipEl = el("attrAvgSlip");
+  const reasonHost = el("attributionReasonRows");
+  const itemHost = el("attributionItemRows");
+  const suggestionHost = el("attributionSuggestionList");
+  if (!sampleEl || !followEl || !delayEl || !slipEl || !reasonHost || !itemHost || !suggestionHost) return;
+
+  if (!report) {
+    sampleEl.textContent = "-";
+    followEl.textContent = "-";
+    delayEl.textContent = "-";
+    slipEl.textContent = "-";
+    reasonHost.innerHTML = '<tr><td colspan="2" class="muted">暂无归因统计。</td></tr>';
+    itemHost.innerHTML = '<tr><td colspan="6" class="muted">暂无归因明细。</td></tr>';
+    suggestionHost.innerHTML = "<li>无</li>";
+    return;
+  }
+
+  sampleEl.textContent = fmtNum(report.sample_size || 0, 0);
+  followEl.textContent = fmtPct(report.follow_rate || 0, 2);
+  delayEl.textContent = fmtNum(report.avg_delay_days || 0, 2);
+  slipEl.textContent = fmtNum(report.avg_slippage_bps || 0, 2);
+
+  const reasons = Object.entries(report.reason_counts || {}).sort((a, b) => Number(b[1]) - Number(a[1]));
+  reasonHost.innerHTML = reasons.length
+    ? reasons.map(([reason, count]) => `<tr><td>${esc(reason)}</td><td>${fmtNum(count, 0)}</td></tr>`).join("")
+    : '<tr><td colspan="2" class="muted">暂无归因统计。</td></tr>';
+
+  const suggestions = Array.isArray(report.suggestions) ? report.suggestions : [];
+  suggestionHost.innerHTML = suggestions.length ? suggestions.map((x) => `<li>${esc(x)}</li>`).join("") : "<li>无</li>";
+
+  const items = Array.isArray(report.items) ? report.items : [];
+  itemHost.innerHTML = items.length
+    ? items
+        .slice(0, 300)
+        .map(
+          (item) => `<tr>
+      <td><code>${esc(item.signal_id || "-")}</code></td>
+      <td>${esc(item.symbol || "-")}</td>
+      <td>${esc(item.reason_code || "-")}</td>
+      <td>${statusChip(item.severity || "INFO")}</td>
+      <td>${esc(item.detail || "-")}</td>
+      <td>${esc(item.suggestion || "-")}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="6" class="muted">暂无归因明细。</td></tr>';
+}
+
+async function generateClosureReport() {
+  const { symbol, startDate, endDate, limit } = buildAttributionFilters();
+  const body = {
+    report_type: "closure",
+    symbol: symbol || null,
+    start_date: startDate || null,
+    end_date: endDate || null,
+    limit,
+    save_to_file: true,
+  };
+  const result = await postJSON("/reports/generate", body);
+  state.closureReport = result;
+  renderClosureReport();
+}
+
+function renderClosureReport() {
+  const meta = el("closureReportMeta");
+  const preview = el("closureReportPreview");
+  if (!meta || !preview) return;
+  const result = state.closureReport;
+  if (!result) {
+    meta.textContent = "尚未生成 closure 报表。";
+    preview.textContent = "-";
+    return;
+  }
+  meta.textContent = `title=${result.title || "-"} | saved_path=${result.saved_path || "(未落盘)"}`;
+  preview.textContent = String(result.content || "-");
+}
+
 function renderExecution() {
   renderPrepRows();
   renderReplaySignalsTable();
   renderReplayReport();
+  renderReplayAttribution();
+  renderClosureReport();
 }
 
 function bindResultSelectionEvents() {
@@ -1617,10 +3116,71 @@ function bindResultSelectionEvents() {
     fillExecutionFormBySignal(row);
     switchTab("execution");
   });
+
+  el("autotuneCandidateRows")?.addEventListener("click", (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement)) return;
+    const btn = target.closest("button[data-autotune-candidate-idx]");
+    if (!btn) return;
+    const idx = Number(btn.getAttribute("data-autotune-candidate-idx") || "0");
+    const rows = state.latestAutotuneResult && Array.isArray(state.latestAutotuneResult.candidates)
+      ? state.latestAutotuneResult.candidates
+      : [];
+    const item = rows[idx];
+    if (!item) return;
+    const strategyName = String(state.latestAutotuneResult?.strategy_name || el("strategySelect")?.value || "");
+    applyStrategyParamsToForm(strategyName, item.strategy_params || {}, `候选参数(rank=${item.rank || "-"})`);
+  });
+
+  el("autotuneProfileRows")?.addEventListener("click", async (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement)) return;
+    const btn = target.closest("button[data-autotune-activate-id]");
+    if (!btn) return;
+    const profileId = btn.getAttribute("data-autotune-activate-id");
+    if (!profileId) return;
+    try {
+      await activateAutotuneProfile(profileId);
+    } catch (err) {
+      showGlobalError(`切换参数画像失败：${err.message}`);
+    }
+  });
+
+  el("rolloutRuleRows")?.addEventListener("click", async (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement)) return;
+    const btn = target.closest("button[data-rollout-delete-id]");
+    if (!btn) return;
+    const ruleId = btn.getAttribute("data-rollout-delete-id");
+    if (!ruleId) return;
+    try {
+      await deleteRolloutRule(ruleId);
+    } catch (err) {
+      showGlobalError(`删除灰度规则失败：${err.message}`);
+    }
+  });
+
+  el("holdingTradeRows")?.addEventListener("click", async (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement)) return;
+    const btn = target.closest("button[data-holding-trade-delete-id]");
+    if (!btn) return;
+    const tradeId = btn.getAttribute("data-holding-trade-delete-id");
+    if (!tradeId) return;
+    try {
+      await deleteHoldingTrade(tradeId);
+    } catch (err) {
+      showGlobalError(`删除手工成交失败：${err.message}`);
+    }
+  });
 }
 
 function bindStrategyInputEvents() {
-  const selector = "#tab-strategy input, #tab-strategy select, #tab-strategy textarea";
+  const selector =
+    "#tab-strategy input, #tab-strategy select, #tab-strategy textarea, " +
+    "#tab-autotune input, #tab-autotune select, #tab-autotune textarea, " +
+    "#tab-challenge input, #tab-challenge select, #tab-challenge textarea, " +
+    "#tab-holdings input, #tab-holdings select, #tab-holdings textarea";
   document.querySelectorAll(selector).forEach((node) => {
     node.addEventListener("input", () => {
       updateRequestPreview();
@@ -1637,6 +3197,7 @@ function bindStrategyInputEvents() {
     renderStrategyParams(strategyName, null);
     updateRequestPreview();
     saveFormSnapshot();
+    loadRolloutRules({ silent: true }).catch(() => {});
   });
 
   el("strategyParamRows")?.addEventListener("input", () => {
@@ -1688,6 +3249,16 @@ function setDefaultDatesIfEmpty() {
   if (el("execDate") && !el("execDate").value) el("execDate").value = todayISO();
   if (el("reportStartDate") && !el("reportStartDate").value) el("reportStartDate").value = minusDaysISO(90);
   if (el("reportEndDate") && !el("reportEndDate").value) el("reportEndDate").value = todayISO();
+  if (el("attrStartDateInput") && !el("attrStartDateInput").value) el("attrStartDateInput").value = minusDaysISO(90);
+  if (el("attrEndDateInput") && !el("attrEndDateInput").value) el("attrEndDateInput").value = todayISO();
+  if (el("holdingTradeDateInput") && !el("holdingTradeDateInput").value) el("holdingTradeDateInput").value = todayISO();
+  if (el("holdingAsOfDateInput") && !el("holdingAsOfDateInput").value) el("holdingAsOfDateInput").value = todayISO();
+  if (el("holdingTradeFilterStartDateInput") && !el("holdingTradeFilterStartDateInput").value) {
+    el("holdingTradeFilterStartDateInput").value = minusDaysISO(180);
+  }
+  if (el("holdingTradeFilterEndDateInput") && !el("holdingTradeFilterEndDateInput").value) {
+    el("holdingTradeFilterEndDateInput").value = todayISO();
+  }
 }
 
 async function initHandlers() {
@@ -1700,13 +3271,21 @@ async function initHandlers() {
     try {
       showGlobalError("");
       await loadStrategies();
+      await loadAutotuneProfiles({ silent: true }).catch(() => {});
+      await loadAutotuneActiveProfile({ silent: true }).catch(() => {});
+      await loadRolloutRules({ silent: true }).catch(() => {});
       await loadReplaySignals().catch(() => {});
       await loadReplayReport().catch(() => {});
+      await loadReplayAttribution().catch(() => {});
+      await loadHoldingTrades({ silent: true }).catch(() => {});
+      await loadHoldingPositions({ silent: true }).catch(() => {});
       syncBarsInputsFromStrategy();
       syncRebalanceDefaults();
       await loadMarketBars({ silent: true }).catch(() => {});
       updateRequestPreview();
       renderResults();
+      renderChallengeWorkbench();
+      renderHoldings();
       renderExecution();
       el("lastUpdated").textContent = `最近更新时间：${new Date().toLocaleString()}`;
       setActionMessage("基础数据刷新完成");
@@ -1737,6 +3316,17 @@ async function initHandlers() {
     }
   });
 
+  el("runPortfolioBacktestBtn")?.addEventListener("click", async () => {
+    try {
+      await runPortfolioBacktest();
+      updateRequestPreview();
+      saveFormSnapshot();
+      el("lastUpdated").textContent = `最近更新时间：${new Date().toLocaleString()}`;
+    } catch (err) {
+      showGlobalError(`组合回测失败：${err.message}`);
+    }
+  });
+
   el("runResearchBtn")?.addEventListener("click", async () => {
     try {
       await runResearch();
@@ -1762,6 +3352,86 @@ async function initHandlers() {
       el("lastUpdated").textContent = `最近更新时间：${new Date().toLocaleString()}`;
     } catch (err) {
       showGlobalError(`一键全跑失败：${err.message}`);
+    }
+  });
+
+  el("runAutotuneBtn")?.addEventListener("click", async () => {
+    try {
+      await runAutotune();
+      updateRequestPreview();
+      saveFormSnapshot();
+      el("lastUpdated").textContent = `最近更新时间：${new Date().toLocaleString()}`;
+    } catch (err) {
+      showGlobalError(`自动调参失败：${err.message}`);
+    }
+  });
+
+  el("runChallengeBtn")?.addEventListener("click", async () => {
+    try {
+      await runStrategyChallenge();
+      updateRequestPreview();
+      saveFormSnapshot();
+      el("lastUpdated").textContent = `最近更新时间：${new Date().toLocaleString()}`;
+    } catch (err) {
+      showGlobalError(`挑战赛运行失败：${err.message}`);
+    }
+  });
+
+  el("applyChallengeChampionBtn")?.addEventListener("click", () => {
+    try {
+      applyChallengeChampionToStrategyForm();
+      switchTab("strategy");
+    } catch (err) {
+      showGlobalError(`冠军参数回填失败：${err.message}`);
+    }
+  });
+
+  el("loadAutotuneProfilesBtn")?.addEventListener("click", async () => {
+    try {
+      await loadAutotuneProfiles();
+    } catch (err) {
+      showGlobalError(`加载参数画像失败：${err.message}`);
+    }
+  });
+
+  el("loadAutotuneActiveBtn")?.addEventListener("click", async () => {
+    try {
+      await loadAutotuneActiveProfile();
+    } catch (err) {
+      showGlobalError(`读取生效画像失败：${err.message}`);
+    }
+  });
+
+  el("applyAutotuneBestParamsBtn")?.addEventListener("click", () => {
+    const result = state.latestAutotuneResult;
+    if (!result || !result.best) {
+      showGlobalError("暂无自动调参最优结果，请先运行自动调参。");
+      return;
+    }
+    applyStrategyParamsToForm(result.strategy_name, result.best.strategy_params || {}, "最优参数");
+  });
+
+  el("rollbackAutotuneBtn")?.addEventListener("click", async () => {
+    try {
+      await rollbackAutotuneProfile();
+    } catch (err) {
+      showGlobalError(`回滚参数画像失败：${err.message}`);
+    }
+  });
+
+  el("upsertRolloutRuleBtn")?.addEventListener("click", async () => {
+    try {
+      await upsertRolloutRule();
+    } catch (err) {
+      showGlobalError(`保存灰度规则失败：${err.message}`);
+    }
+  });
+
+  el("loadRolloutRulesBtn")?.addEventListener("click", async () => {
+    try {
+      await loadRolloutRules();
+    } catch (err) {
+      showGlobalError(`加载灰度规则失败：${err.message}`);
     }
   });
 
@@ -1808,7 +3478,72 @@ async function initHandlers() {
     }
   });
 
+  el("submitHoldingTradeBtn")?.addEventListener("click", async () => {
+    try {
+      await submitHoldingTrade();
+      el("lastUpdated").textContent = `最近更新时间：${new Date().toLocaleString()}`;
+    } catch (err) {
+      showGlobalError(`提交手工成交失败：${err.message}`);
+    }
+  });
+
+  el("loadHoldingTradesBtn")?.addEventListener("click", async () => {
+    try {
+      await loadHoldingTrades();
+    } catch (err) {
+      showGlobalError(`加载成交台账失败：${err.message}`);
+    }
+  });
+
+  el("applyHoldingTradeFilterBtn")?.addEventListener("click", async () => {
+    try {
+      await loadHoldingTrades();
+    } catch (err) {
+      showGlobalError(`按条件加载成交台账失败：${err.message}`);
+    }
+  });
+
+  el("loadHoldingPositionsBtn")?.addEventListener("click", async () => {
+    try {
+      await loadHoldingPositions();
+    } catch (err) {
+      showGlobalError(`加载持仓快照失败：${err.message}`);
+    }
+  });
+
+  el("runHoldingAnalyzeBtn")?.addEventListener("click", async () => {
+    try {
+      await runHoldingAnalyze();
+      switchTab("holdings");
+    } catch (err) {
+      showGlobalError(`运行持仓分析失败：${err.message}`);
+    }
+  });
+
+  el("syncHoldingStrategyBtn")?.addEventListener("click", () => {
+    const strategyName = String(el("strategySelect")?.value || "").trim();
+    if (el("holdingAnalyzeStrategyInput")) el("holdingAnalyzeStrategyInput").value = strategyName;
+    if (el("holdingAnalyzeLotSizeInput") && el("lotSizeInput")) {
+      el("holdingAnalyzeLotSizeInput").value = String(el("lotSizeInput").value || "100");
+    }
+    setHoldingMessage("已同步策略名称和 lot_size，可直接运行持仓分析。");
+  });
+
   el("jumpToStrategyBtn")?.addEventListener("click", () => switchTab("strategy"));
+  el("jumpToAutotuneBtn")?.addEventListener("click", () => switchTab("autotune"));
+  el("jumpToChallengeBtn")?.addEventListener("click", () => switchTab("challenge"));
+  el("jumpToHoldingsBtn")?.addEventListener("click", () => switchTab("holdings"));
+  el("jumpToAutotuneCardBtn")?.addEventListener("click", () => switchTab("autotune"));
+  el("jumpToAutotuneFromResultsHeadBtn")?.addEventListener("click", () => switchTab("autotune"));
+  el("jumpToAutotuneFromResultsBtn")?.addEventListener("click", () => switchTab("autotune"));
+  el("jumpToStrategyFromAutotuneBtn")?.addEventListener("click", () => switchTab("strategy"));
+  el("jumpToResultsFromAutotuneBtn")?.addEventListener("click", () => switchTab("results"));
+  el("jumpToStrategyFromChallengeBtn")?.addEventListener("click", () => switchTab("strategy"));
+  el("jumpToAutotuneFromChallengeBtn")?.addEventListener("click", () => switchTab("autotune"));
+  el("jumpToResultsFromChallengeBtn")?.addEventListener("click", () => switchTab("results"));
+  el("jumpToStrategyFromHoldingsBtn")?.addEventListener("click", () => switchTab("strategy"));
+  el("jumpToResultsFromHoldingsBtn")?.addEventListener("click", () => switchTab("results"));
+  el("jumpToExecutionFromHoldingsBtn")?.addEventListener("click", () => switchTab("execution"));
   el("jumpToExecutionBtn")?.addEventListener("click", () => switchTab("execution"));
 
   el("loadReplaySignalsBtn")?.addEventListener("click", async () => {
@@ -1837,6 +3572,24 @@ async function initHandlers() {
       showGlobalError(`加载复盘报表失败：${err.message}`);
     }
   });
+
+  el("loadReplayAttributionBtn")?.addEventListener("click", async () => {
+    try {
+      await loadReplayAttribution();
+      setExecutionMessage("偏差归因报表已刷新");
+    } catch (err) {
+      showGlobalError(`加载偏差归因失败：${err.message}`);
+    }
+  });
+
+  el("generateClosureReportBtn")?.addEventListener("click", async () => {
+    try {
+      await generateClosureReport();
+      setExecutionMessage("closure 报表已生成");
+    } catch (err) {
+      showGlobalError(`生成 closure 报表失败：${err.message}`);
+    }
+  });
 }
 
 async function bootstrap() {
@@ -1847,6 +3600,11 @@ async function bootstrap() {
     bindTabEvents();
     await loadStrategies();
     applyFormSnapshot();
+    await loadAutotuneProfiles({ silent: true }).catch(() => {});
+    await loadAutotuneActiveProfile({ silent: true }).catch(() => {});
+    await loadRolloutRules({ silent: true }).catch(() => {});
+    await loadHoldingTrades({ silent: true }).catch(() => {});
+    await loadHoldingPositions({ silent: true }).catch(() => {});
     syncBarsInputsFromStrategy();
     syncRebalanceDefaults();
     updateSmallCapitalHint();
@@ -1857,6 +3615,8 @@ async function bootstrap() {
 
     updateRequestPreview();
     renderResults();
+    renderChallengeWorkbench();
+    renderHoldings();
     renderExecution();
 
     el("lastUpdated").textContent = `最近更新时间：${new Date().toLocaleString()}`;

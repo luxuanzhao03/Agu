@@ -21,9 +21,13 @@ from trading_assistant.risk.engine import RiskEngine
 from trading_assistant.strategy.base import BaseStrategy, StrategyContext
 from trading_assistant.trading.costs import (
     calc_side_fee,
+    estimate_fill_probability,
+    estimate_market_impact_rate,
     estimate_roundtrip_cost_bps,
+    filled_quantity_by_probability,
     infer_expected_edge_bps,
     required_cash_for_min_lot,
+    tiered_slippage_rate,
 )
 from trading_assistant.trading.small_capital import apply_small_capital_overrides
 
@@ -123,6 +127,16 @@ class BacktestEngine:
             fundamental_score = (
                 float(features.iloc[-1].get("fundamental_score", 0.5)) if fundamental_available else None
             )
+            def _opt_float(value):
+                return float(value) if (value is not None and value == value) else None
+
+            tushare_disclosure_risk = _opt_float(features.iloc[-1].get("tushare_disclosure_risk_score"))
+            tushare_audit_risk = _opt_float(features.iloc[-1].get("tushare_audit_opinion_risk"))
+            tushare_forecast_mid = _opt_float(features.iloc[-1].get("tushare_forecast_pchg_mid"))
+            tushare_pledge_ratio = _opt_float(features.iloc[-1].get("tushare_pledge_ratio"))
+            tushare_unlock_ratio = _opt_float(features.iloc[-1].get("tushare_share_float_unlock_ratio"))
+            tushare_holder_crowding = _opt_float(features.iloc[-1].get("tushare_holder_crowding_ratio"))
+            tushare_overhang_risk = _opt_float(features.iloc[-1].get("tushare_overhang_risk_score"))
             stale_days_raw = int(features.iloc[-1].get("fundamental_stale_days", -1))
             small_principal = float(req.small_capital_principal or req.initial_cash)
             small_lot = max(1, int(req.lot_size))
@@ -181,13 +195,20 @@ class BacktestEngine:
                 portfolio=portfolio,
                 is_st=bool(window.iloc[-1].get("is_st", False)),
                 is_suspended=bool(window.iloc[-1].get("is_suspended", False)),
-                at_limit_up=False,
-                at_limit_down=False,
+                at_limit_up=bool(window.iloc[-1].get("at_limit_up", False)),
+                at_limit_down=bool(window.iloc[-1].get("at_limit_down", False)),
                 avg_turnover_20d=turnover20,
                 fundamental_score=fundamental_score,
                 fundamental_available=fundamental_available,
                 fundamental_pit_ok=bool(features.iloc[-1].get("fundamental_pit_ok", True)),
                 fundamental_stale_days=stale_days_raw if stale_days_raw >= 0 else None,
+                tushare_disclosure_risk_score=tushare_disclosure_risk,
+                tushare_audit_opinion_risk=tushare_audit_risk,
+                tushare_forecast_pchg_mid=tushare_forecast_mid,
+                tushare_pledge_ratio=tushare_pledge_ratio,
+                tushare_share_float_unlock_ratio=tushare_unlock_ratio,
+                tushare_holder_crowding_ratio=tushare_holder_crowding,
+                tushare_overhang_risk_score=tushare_overhang_risk,
                 enable_small_capital_mode=req.enable_small_capital_mode,
                 small_capital_principal=small_principal,
                 available_cash=state.cash,
@@ -220,6 +241,12 @@ class BacktestEngine:
                     state=state,
                     trades=trades,
                     available_qty=available_qty,
+                    turnover20=turnover20,
+                    is_suspended=bool(window.iloc[-1].get("is_suspended", False)),
+                    at_limit_up=bool(window.iloc[-1].get("at_limit_up", False)),
+                    at_limit_down=bool(window.iloc[-1].get("at_limit_down", False)),
+                    is_one_word_limit_up=bool(window.iloc[-1].get("is_one_word_limit_up", False)),
+                    is_one_word_limit_down=bool(window.iloc[-1].get("is_one_word_limit_down", False)),
                 )
                 if signal.action == SignalAction.BUY and state.quantity > 0:
                     buy_date = signal.trade_date
@@ -252,14 +279,85 @@ class BacktestEngine:
         state: BacktestState,
         trades: list[BacktestTrade],
         available_qty: int,
+        turnover20: float | None,
+        is_suspended: bool,
+        at_limit_up: bool,
+        at_limit_down: bool,
+        is_one_word_limit_up: bool,
+        is_one_word_limit_down: bool,
     ) -> None:
         if signal.action == SignalAction.BUY and state.quantity == 0:
             target_alloc = float(signal.suggested_position or req.max_single_position)
             budget = state.cash * target_alloc
             if req.enable_small_capital_mode:
                 budget = min(budget, float(req.small_capital_principal or req.initial_cash))
-            trade_price = close * (1 + req.slippage_rate)
-            qty = int(budget // trade_price // req.lot_size * req.lot_size)
+            desired_qty = int(max(0.0, budget) // close // req.lot_size * req.lot_size)
+            if desired_qty <= 0:
+                return
+
+            desired_notional = desired_qty * close
+            if req.enable_realistic_cost_model:
+                slip_rate = tiered_slippage_rate(
+                    order_notional=desired_notional,
+                    avg_turnover_20d=turnover20,
+                    base_slippage_rate=req.slippage_rate,
+                )
+                impact_rate = estimate_market_impact_rate(
+                    order_notional=desired_notional,
+                    avg_turnover_20d=turnover20,
+                    impact_coeff=req.impact_cost_coeff,
+                    impact_exponent=req.impact_cost_exponent,
+                )
+                fill_prob = estimate_fill_probability(
+                    side=SignalAction.BUY,
+                    is_suspended=is_suspended,
+                    at_limit_up=at_limit_up,
+                    at_limit_down=at_limit_down,
+                    is_one_word_limit_up=is_one_word_limit_up,
+                    is_one_word_limit_down=is_one_word_limit_down,
+                    avg_turnover_20d=turnover20,
+                    order_notional=desired_notional,
+                    probability_floor=req.fill_probability_floor,
+                )
+            else:
+                slip_rate = max(0.0, req.slippage_rate)
+                impact_rate = 0.0
+                fill_prob = 1.0
+
+            qty = filled_quantity_by_probability(
+                desired_qty=desired_qty,
+                lot_size=req.lot_size,
+                fill_probability=fill_prob,
+            )
+            if qty <= 0:
+                trades.append(
+                    BacktestTrade(
+                        date=signal.trade_date,
+                        action=SignalAction.BUY,
+                        price=round(close, 4),
+                        quantity=0,
+                        cost=0.0,
+                        reason=f"No fill: prob={fill_prob:.2f}",
+                        blocked=True,
+                    )
+                )
+                return
+
+            trade_price = close * (1 + slip_rate + impact_rate)
+            while qty > 0:
+                gross = qty * trade_price
+                fee = calc_side_fee(
+                    notional=gross,
+                    commission_rate=req.commission_rate,
+                    min_commission=req.min_commission_cny,
+                    transfer_fee_rate=req.transfer_fee_rate,
+                    stamp_duty_sell_rate=req.stamp_duty_sell_rate,
+                    is_sell=False,
+                )
+                total_cost = gross + fee
+                if total_cost <= state.cash:
+                    break
+                qty -= req.lot_size
             if qty <= 0:
                 return
 
@@ -273,27 +371,74 @@ class BacktestEngine:
                 is_sell=False,
             )
             total_cost = gross + fee
-            if total_cost > state.cash:
-                return
-
             state.cash -= total_cost
+            prev_qty = state.quantity
+            prev_cost = state.avg_cost
             state.quantity += qty
-            state.avg_cost = total_cost / qty
+            if state.quantity > 0:
+                state.avg_cost = ((prev_cost * prev_qty) + total_cost) / state.quantity
             trades.append(
                 BacktestTrade(
                     date=signal.trade_date,
                     action=SignalAction.BUY,
                     price=round(trade_price, 4),
                     quantity=qty,
-                    cost=round(total_cost, 2),
-                    reason=signal.reason,
+                    cost=round(fee, 2),
+                    reason=f"{signal.reason}; fill_prob={fill_prob:.2f}",
                 )
             )
             return
 
         if signal.action == SignalAction.SELL and state.quantity > 0 and available_qty > 0:
-            qty = state.quantity
-            trade_price = close * (1 - req.slippage_rate)
+            desired_qty = min(state.quantity, available_qty)
+            desired_notional = desired_qty * close
+            if req.enable_realistic_cost_model:
+                slip_rate = tiered_slippage_rate(
+                    order_notional=desired_notional,
+                    avg_turnover_20d=turnover20,
+                    base_slippage_rate=req.slippage_rate,
+                )
+                impact_rate = estimate_market_impact_rate(
+                    order_notional=desired_notional,
+                    avg_turnover_20d=turnover20,
+                    impact_coeff=req.impact_cost_coeff,
+                    impact_exponent=req.impact_cost_exponent,
+                )
+                fill_prob = estimate_fill_probability(
+                    side=SignalAction.SELL,
+                    is_suspended=is_suspended,
+                    at_limit_up=at_limit_up,
+                    at_limit_down=at_limit_down,
+                    is_one_word_limit_up=is_one_word_limit_up,
+                    is_one_word_limit_down=is_one_word_limit_down,
+                    avg_turnover_20d=turnover20,
+                    order_notional=desired_notional,
+                    probability_floor=req.fill_probability_floor,
+                )
+            else:
+                slip_rate = max(0.0, req.slippage_rate)
+                impact_rate = 0.0
+                fill_prob = 1.0
+            qty = filled_quantity_by_probability(
+                desired_qty=desired_qty,
+                lot_size=req.lot_size,
+                fill_probability=fill_prob,
+            )
+            if qty <= 0:
+                trades.append(
+                    BacktestTrade(
+                        date=signal.trade_date,
+                        action=SignalAction.SELL,
+                        price=round(close, 4),
+                        quantity=0,
+                        cost=0.0,
+                        reason=f"No fill: prob={fill_prob:.2f}",
+                        blocked=True,
+                    )
+                )
+                return
+
+            trade_price = close * (1 - slip_rate - impact_rate)
             gross = qty * trade_price
             fee = calc_side_fee(
                 notional=gross,
@@ -311,8 +456,10 @@ class BacktestEngine:
                 state.winning_trades += 1
 
             state.cash += net
-            state.quantity = 0
-            state.avg_cost = 0.0
+            state.quantity -= qty
+            if state.quantity <= 0:
+                state.quantity = 0
+                state.avg_cost = 0.0
             trades.append(
                 BacktestTrade(
                     date=signal.trade_date,
@@ -320,7 +467,7 @@ class BacktestEngine:
                     price=round(trade_price, 4),
                     quantity=qty,
                     cost=round(fee, 2),
-                    reason=signal.reason,
+                    reason=f"{signal.reason}; fill_prob={fill_prob:.2f}",
                 )
             )
 

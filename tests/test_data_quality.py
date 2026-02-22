@@ -25,3 +25,5 @@ def test_data_quality_detects_critical_issue() -> None:
     report = service.evaluate(req=req, bars=bars, provider="ok")
     assert report.passed is False
     assert any(i.issue_type == "invalid_high_low" for i in report.issues)
+    assert report.overall_score <= 1.0
+    assert "high" in report.field_scores

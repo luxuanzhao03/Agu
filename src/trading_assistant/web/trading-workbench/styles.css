@@ -296,6 +296,16 @@ button.secondary {
   margin: 0;
 }
 
+.inline-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px;
+  border: 1px dashed #c9d8ba;
+  border-radius: 10px;
+  background: #f8fcf2;
+}
+
 .param-rows {
   display: grid;
   gap: 8px;
@@ -329,6 +339,13 @@ button.secondary {
   max-height: 260px;
   font-family: var(--mono);
   font-size: 12px;
+}
+
+.code-inline {
+  font-family: var(--mono);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 
 .kpi-grid {

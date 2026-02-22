@@ -418,3 +418,39 @@ def test_oncall_reconcile_from_local_endpoint(tmp_path: Path) -> None:
     assert result.callbacks == 1
     assert result.acked_notifications >= 1
     assert service.list_notifications(only_unacked=True, limit=20) == []
+
+
+def test_alert_noise_reduction_rules(tmp_path: Path) -> None:
+    audit = AuditService(AuditStore(str(tmp_path / "audit.db")))
+    service = AlertService(store=AlertStore(str(tmp_path / "alert.db")), audit=audit)
+    _ = service.create_subscription(
+        AlertSubscriptionCreateRequest(
+            name="noise-filter",
+            owner="ops",
+            event_types=["event_connector_sla"],
+            min_severity=SignalLevel.WARNING,
+            dedupe_window_sec=0,
+            enabled=True,
+            channel="inbox",
+            channel_config={
+                "noise_reduction": {
+                    "min_repeat_count": 2,
+                }
+            },
+        )
+    )
+    audit.log(
+        "event_connector_sla",
+        "freshness",
+        {"connector_name": "c1", "severity": "WARNING", "repeat_count": 1, "message": "lag warning"},
+    )
+    first = service.sync_from_audit(limit=100)
+    assert first == 0
+
+    audit.log(
+        "event_connector_sla",
+        "freshness",
+        {"connector_name": "c1", "severity": "WARNING", "repeat_count": 2, "message": "lag warning"},
+    )
+    second = service.sync_from_audit(limit=100)
+    assert second == 1

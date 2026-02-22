@@ -1,6 +1,14 @@
 from datetime import date
 
-from trading_assistant.core.models import PortfolioSnapshot, Position, RiskCheckRequest, SignalAction, SignalCandidate, SignalLevel
+from trading_assistant.core.models import (
+    PortfolioRiskRequest,
+    PortfolioSnapshot,
+    Position,
+    RiskCheckRequest,
+    SignalAction,
+    SignalCandidate,
+    SignalLevel,
+)
 from trading_assistant.risk.engine import RiskEngine
 
 
@@ -155,3 +163,73 @@ def test_small_capital_edge_below_cost_warns() -> None:
     result = engine.evaluate(req)
     assert result.blocked is False
     assert result.level == SignalLevel.WARNING
+
+
+def test_tushare_disclosure_risk_blocks_buy() -> None:
+    engine = build_engine()
+    req = RiskCheckRequest(
+        signal=build_signal(SignalAction.BUY),
+        avg_turnover_20d=20_000_000,
+        fundamental_score=0.65,
+        fundamental_available=True,
+        tushare_disclosure_risk_score=0.92,
+        tushare_audit_opinion_risk=0.95,
+    )
+    result = engine.evaluate(req)
+    assert result.blocked is True
+    assert result.level == SignalLevel.CRITICAL
+
+
+def test_small_cap_tushare_overhang_blocks_on_high_pledge() -> None:
+    engine = build_engine()
+    req = RiskCheckRequest(
+        signal=build_signal(SignalAction.BUY),
+        enable_small_capital_mode=True,
+        small_capital_principal=5000,
+        available_cash=5000,
+        latest_price=12.0,
+        lot_size=100,
+        required_cash_for_min_lot=1206,
+        estimated_roundtrip_cost_bps=65,
+        expected_edge_bps=220,
+        min_expected_edge_bps=80,
+        avg_turnover_20d=20_000_000,
+        fundamental_score=0.68,
+        fundamental_available=True,
+        tushare_pledge_ratio=58.0,
+        tushare_overhang_risk_score=0.82,
+    )
+    result = engine.evaluate(req)
+    assert result.blocked is True
+    assert result.level == SignalLevel.CRITICAL
+
+
+def test_portfolio_risk_var_es_and_loss_circuit() -> None:
+    engine = build_engine()
+    result = engine.evaluate_portfolio(
+        PortfolioRiskRequest(
+            portfolio=PortfolioSnapshot(
+                total_value=100,
+                cash=20,
+                peak_value=120,
+                current_drawdown=0.1667,
+                industry_exposure={"TECH": 0.25},
+                theme_exposure={"AI": 0.34},
+            ),
+            pending_signal=None,
+            max_drawdown=0.25,
+            max_industry_exposure=0.2,
+            max_theme_exposure=0.3,
+            daily_returns=[-0.01, -0.03, -0.04, -0.05],
+            recent_trade_pnls=[-1, -2, -1, -3],
+            max_consecutive_losses=3,
+            max_daily_loss=0.03,
+            var_confidence=0.95,
+            max_var=0.03,
+            max_es=0.04,
+        )
+    )
+    assert result.var_value is not None
+    assert result.es_value is not None
+    assert result.level in {SignalLevel.WARNING, SignalLevel.CRITICAL}
+    assert any(hit.rule_name in {"loss_circuit_breaker", "portfolio_es"} for hit in result.hits)

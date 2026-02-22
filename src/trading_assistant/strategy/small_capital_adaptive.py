@@ -40,6 +40,7 @@ class SmallCapitalAdaptiveStrategy(BaseStrategy):
             "cash_buffer_ratio": "float",
             "risk_per_trade": "float",
             "max_single_position": "float",
+            "min_tushare_advanced_score_buy": "float",
         },
     )
 
@@ -62,6 +63,7 @@ class SmallCapitalAdaptiveStrategy(BaseStrategy):
         cash_buffer_ratio = max(0.0, min(0.5, float(params.get("cash_buffer_ratio", 0.10))))
         risk_per_trade = max(0.001, min(0.05, float(params.get("risk_per_trade", 0.01))))
         max_single_position = max(0.05, min(1.0, float(params.get("max_single_position", 0.35))))
+        min_tushare_advanced_score_buy = float(params.get("min_tushare_advanced_score_buy", 0.40))
 
         principal = float(market.get("small_capital_principal", params.get("small_capital_principal", 10_000.0)))
         principal = max(500.0, principal)
@@ -83,6 +85,24 @@ class SmallCapitalAdaptiveStrategy(BaseStrategy):
         negative_event_score = float(latest.get("negative_event_score", 0.0))
         fundamental_available = bool(latest.get("fundamental_available", False))
         fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
+        tushare_advanced_available = bool(latest.get("tushare_advanced_available", False))
+        tushare_advanced_score = (
+            float(latest.get("tushare_advanced_score", 0.5)) if tushare_advanced_available else 0.5
+        )
+        tushare_tradability_score = (
+            float(latest.get("tushare_tradability_score", 0.5)) if tushare_advanced_available else 0.5
+        )
+        tushare_moneyflow_score = float(latest.get("tushare_moneyflow_score", 0.5)) if tushare_advanced_available else 0.5
+        tushare_disclosure_risk = (
+            float(latest.get("tushare_disclosure_risk_score", 0.5)) if tushare_advanced_available else 0.0
+        )
+        tushare_overhang_risk = (
+            float(latest.get("tushare_overhang_risk_score", 0.5)) if tushare_advanced_available else 0.0
+        )
+        tushare_pledge_ratio = float(latest.get("tushare_pledge_ratio", 0.0)) if tushare_advanced_available else 0.0
+        tushare_unlock_ratio = (
+            float(latest.get("tushare_share_float_unlock_ratio", 0.0)) if tushare_advanced_available else 0.0
+        )
 
         min_lot_cash = required_cash_for_min_lot(
             price=close,
@@ -107,15 +127,20 @@ class SmallCapitalAdaptiveStrategy(BaseStrategy):
         event_balance_score = _clip01(0.5 + (event_score - negative_event_score) * 0.8)
 
         score = (
-            0.30 * trend_score
-            + 0.15 * pullback_score
-            + 0.20 * low_vol_score
-            + 0.15 * liquidity_score
+            0.25 * trend_score
+            + 0.12 * pullback_score
+            + 0.16 * low_vol_score
+            + 0.12 * liquidity_score
             + 0.10 * event_balance_score
             + 0.10 * fundamental_score
+            + 0.15 * tushare_advanced_score
+            - 0.07 * tushare_disclosure_risk
+            - 0.05 * tushare_overhang_risk
         )
         if fundamental_available and fundamental_score < min_fundamental_score_buy:
             score -= 0.12
+        if tushare_advanced_available and tushare_advanced_score < min_tushare_advanced_score_buy:
+            score -= 0.10
         if not affordable:
             score -= 0.25
         if not diversified_for_one_lot:
@@ -129,6 +154,12 @@ class SmallCapitalAdaptiveStrategy(BaseStrategy):
             and (volatility20 <= max_volatility20)
             and (min_momentum20_buy <= momentum20 <= max_momentum20_buy)
             and ((not fundamental_available) or (fundamental_score >= min_fundamental_score_buy))
+            and ((not tushare_advanced_available) or (tushare_advanced_score >= min_tushare_advanced_score_buy))
+            and ((not tushare_advanced_available) or (tushare_tradability_score >= 0.30))
+            and ((not tushare_advanced_available) or (tushare_disclosure_risk < 0.80))
+            and ((not tushare_advanced_available) or (tushare_overhang_risk < 0.85))
+            and ((not tushare_advanced_available) or (tushare_pledge_ratio < 50.0))
+            and ((not tushare_advanced_available) or (tushare_unlock_ratio < 0.45))
             and (negative_event_score < 0.70)
         )
 
@@ -161,6 +192,19 @@ class SmallCapitalAdaptiveStrategy(BaseStrategy):
             reason = f"Liquidity low (turnover20={turnover20:.0f} < {min_turnover20:.0f})."
         elif volatility20 > max_volatility20:
             reason = f"Volatility too high (vol20={volatility20:.3f} > {max_volatility20:.3f})."
+        elif tushare_advanced_available and tushare_advanced_score < min_tushare_advanced_score_buy:
+            reason = (
+                f"Tushare advanced score {tushare_advanced_score:.3f} "
+                f"< {min_tushare_advanced_score_buy:.3f}; skip low-quality setup."
+            )
+        elif tushare_disclosure_risk >= 0.80:
+            reason = f"Disclosure risk too high ({tushare_disclosure_risk:.2f}); skip small-cap entry."
+        elif tushare_overhang_risk >= 0.85:
+            reason = f"Overhang risk too high ({tushare_overhang_risk:.2f}); skip small-cap entry."
+        elif tushare_pledge_ratio >= 50.0:
+            reason = f"Pledge ratio too high ({tushare_pledge_ratio:.1f}%); skip small-cap entry."
+        elif tushare_unlock_ratio >= 0.45:
+            reason = f"Unlock pressure too high ({tushare_unlock_ratio:.1%}); skip small-cap entry."
 
         suggested_position = None
         if action == SignalAction.BUY and close > 0:
@@ -200,6 +244,14 @@ class SmallCapitalAdaptiveStrategy(BaseStrategy):
                     "lot_position_ratio": round(lot_position, 5),
                     "fundamental_score": round(fundamental_score, 4),
                     "fundamental_available": fundamental_available,
+                    "tushare_advanced_score": round(tushare_advanced_score, 4),
+                    "tushare_tradability_score": round(tushare_tradability_score, 4),
+                    "tushare_moneyflow_score": round(tushare_moneyflow_score, 4),
+                    "tushare_disclosure_risk_score": round(tushare_disclosure_risk, 4),
+                    "tushare_overhang_risk_score": round(tushare_overhang_risk, 4),
+                    "tushare_pledge_ratio": round(tushare_pledge_ratio, 4),
+                    "tushare_share_float_unlock_ratio": round(tushare_unlock_ratio, 4),
+                    "tushare_advanced_available": tushare_advanced_available,
                 },
             )
         ]

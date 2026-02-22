@@ -46,7 +46,10 @@
 
       <nav class="tab-nav" data-animate>
         <button type="button" class="tab active" data-tab="strategy">策略与参数页</button>
+        <button type="button" class="tab" data-tab="autotune">自动调参页</button>
+        <button type="button" class="tab" data-tab="challenge">跨策略挑战赛页</button>
         <button type="button" class="tab" data-tab="results">结果可视化页</button>
+        <button type="button" class="tab" data-tab="holdings">持仓分析页</button>
         <button type="button" class="tab" data-tab="execution">交易准备单与执行回写页</button>
       </nav>
 
@@ -105,6 +108,9 @@
               <label>
                 最低安全边际（bps）
                 <input id="smallCapitalMinEdgeInput" type="number" min="0" max="2000" step="1" value="80" />
+              </label>
+              <label class="inline">
+                <input id="useAutotuneProfileInput" type="checkbox" checked /> 启用自动调参画像覆盖（use_autotune_profile）
               </label>
             </div>
             <div id="smallCapitalTemplateActions" class="actions-row wrap">
@@ -204,6 +210,21 @@
                 最小交易手数（lot_size）
                 <input id="lotSizeInput" type="number" min="1" step="1" value="100" />
               </label>
+              <label class="inline">
+                <input id="realisticCostModelInput" type="checkbox" checked /> 启用拟真成本与成交模型
+              </label>
+              <label>
+                冲击成本系数（impact_cost_coeff）
+                <input id="impactCostCoeffInput" type="number" min="0" max="5" step="0.01" value="0.18" />
+              </label>
+              <label>
+                冲击成本指数（impact_cost_exponent）
+                <input id="impactCostExponentInput" type="number" min="0.1" max="2" step="0.01" value="0.60" />
+              </label>
+              <label>
+                最低成交概率（fill_probability_floor）
+                <input id="fillProbabilityFloorInput" type="number" min="0" max="1" step="0.01" value="0.02" />
+              </label>
 
               <label class="inline">
                 <input id="optimizePortfolioInput" type="checkbox" checked /> 研究工作流启用组合优化
@@ -221,8 +242,59 @@
                 <input id="targetGrossExposureInput" type="number" min="0.001" max="1" step="0.001" value="1" />
               </label>
               <label>
+                组合回测调仓周期（rebalance_interval_days）
+                <input id="portfolioRebalanceIntervalInput" type="number" min="1" max="250" step="1" value="5" />
+              </label>
+              <label>
+                组合现金保留（cash_reserve_ratio）
+                <input id="portfolioCashReserveRatioInput" type="number" min="0" max="0.95" step="0.01" value="0.05" />
+              </label>
+              <label>
+                主题敞口上限（max_theme_exposure）
+                <input id="maxThemeExposureInput" type="number" min="0.001" max="1" step="0.001" value="0.45" />
+              </label>
+              <label class="inline">
+                <input id="portfolioRiskControlInput" type="checkbox" checked /> 启用组合回测风险控制
+              </label>
+              <label>
+                组合回撤阈值（risk_max_drawdown）
+                <input id="portfolioRiskMaxDrawdownInput" type="number" min="0" max="1" step="0.001" value="0.12" />
+              </label>
+              <label>
+                连续亏损熔断（risk_max_consecutive_losses）
+                <input id="portfolioRiskMaxConsecutiveLossesInput" type="number" min="1" max="200" step="1" value="3" />
+              </label>
+              <label>
+                单日最大亏损（risk_max_daily_loss）
+                <input id="portfolioRiskMaxDailyLossInput" type="number" min="0" max="1" step="0.001" value="0.03" />
+              </label>
+              <label>
+                VaR置信度（risk_var_confidence）
+                <input id="portfolioRiskVarConfidenceInput" type="number" min="0.5" max="0.999" step="0.001" value="0.95" />
+              </label>
+              <label>
+                VaR阈值（risk_max_var）
+                <input id="portfolioRiskMaxVarInput" type="number" min="0" max="1" step="0.001" value="0.04" />
+              </label>
+              <label>
+                ES阈值（risk_max_es）
+                <input id="portfolioRiskMaxEsInput" type="number" min="0" max="1" step="0.001" value="0.06" />
+              </label>
+              <label>
+                收益回看天数（risk_return_lookback_days）
+                <input id="portfolioRiskReturnLookbackInput" type="number" min="20" max="5000" step="1" value="252" />
+              </label>
+              <label>
+                亏损序列回看成交数（risk_loss_streak_lookback_trades）
+                <input id="portfolioRiskTradeLookbackInput" type="number" min="10" max="10000" step="1" value="300" />
+              </label>
+              <label>
                 行业映射（每行：代码=行业）
                 <textarea id="industryMapInput" rows="3" placeholder="000001=银行\n600000=银行"></textarea>
+              </label>
+              <label>
+                主题映射（每行：代码=主题）
+                <textarea id="themeMapInput" rows="3" placeholder="000001=中字头\n600000=高股息"></textarea>
               </label>
             </div>
           </article>
@@ -233,14 +305,487 @@
           <div class="actions-row wrap">
             <button id="runSignalBtn" type="button">运行信号生成</button>
             <button id="runBacktestBtn" type="button">运行回测</button>
+            <button id="runPortfolioBacktestBtn" type="button">运行组合净值回测</button>
             <button id="runResearchBtn" type="button">运行研究工作流</button>
             <button id="runAllBtn" type="button" class="secondary">一键全跑（信号+回测+研究）</button>
+            <button id="jumpToAutotuneBtn" type="button" class="secondary">前往自动调参页</button>
+            <button id="jumpToChallengeBtn" type="button" class="secondary">前往挑战赛页</button>
+            <button id="jumpToHoldingsBtn" type="button" class="secondary">前往持仓分析页</button>
           </div>
           <p id="strategyActionMsg" class="muted">-</p>
           <details>
             <summary>请求体预览（便于核对字段）</summary>
             <pre id="requestPreview" class="code-block">{}</pre>
           </details>
+        </article>
+
+        <article class="card">
+          <h3>自动调参闭环</h3>
+          <p class="muted">自动调参迁移到独立页签，支持任务运行、候选榜、基线对比、画像激活/回滚与灰度规则。</p>
+          <div class="actions-row wrap">
+            <button id="jumpToAutotuneCardBtn" type="button" class="secondary">打开自动调参页</button>
+          </div>
+        </article>
+      </section>
+
+      <section id="tab-autotune" class="tab-panel" data-animate>
+        <div class="panel-head">
+          <h2>自动调参页</h2>
+          <p>运行调参任务、查看候选榜与基线对比，并管理参数画像回滚与按标的/按策略灰度启用。</p>
+          <div class="actions-row wrap panel-jumps">
+            <button id="jumpToStrategyFromAutotuneBtn" type="button" class="secondary">回到策略参数页</button>
+            <button id="jumpToResultsFromAutotuneBtn" type="button" class="secondary">查看结果可视化</button>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>调参任务配置（/autotune/run）</h3>
+            <div class="form-grid">
+              <label>
+                run_by
+                <input id="autotuneRunByInput" type="text" value="workbench_user" />
+              </label>
+              <label class="inline">
+                <input id="autotuneAutoApplyInput" type="checkbox" checked /> 自动应用最优画像（auto_apply）
+              </label>
+              <label>
+                apply_scope
+                <select id="autotuneApplyScopeInput">
+                  <option value="GLOBAL">GLOBAL</option>
+                  <option value="SYMBOL">SYMBOL</option>
+                </select>
+              </label>
+              <label>
+                max_combinations
+                <input id="autotuneMaxCombInput" type="number" min="1" max="5000" value="120" />
+              </label>
+              <label>
+                validation_ratio
+                <input id="autotuneValidationRatioInput" type="number" min="0" max="0.8" step="0.01" value="0.2" />
+              </label>
+              <label>
+                validation_weight
+                <input id="autotuneValidationWeightInput" type="number" min="0" max="1" step="0.01" value="0.4" />
+              </label>
+              <label>
+                min_train_bars
+                <input id="autotuneMinTrainBarsInput" type="number" min="20" max="5000" value="120" />
+              </label>
+              <label>
+                min_validation_bars
+                <input id="autotuneMinValidationBarsInput" type="number" min="10" max="5000" value="40" />
+              </label>
+              <label>
+                min_trade_count
+                <input id="autotuneMinTradeCountInput" type="number" min="0" max="5000" value="1" />
+              </label>
+              <label>
+                low_trade_penalty
+                <input id="autotuneLowTradePenaltyInput" type="number" min="0" max="5" step="0.01" value="0.15" />
+              </label>
+              <label>
+                objective_weight_overfit_gap
+                <input id="autotuneOverfitWeightInput" type="number" min="0" max="5" step="0.01" value="0.2" />
+              </label>
+              <label>
+                objective_weight_stability
+                <input id="autotuneStabilityWeightInput" type="number" min="0" max="5" step="0.01" value="0.15" />
+              </label>
+              <label>
+                objective_weight_param_drift
+                <input id="autotuneParamDriftWeightInput" type="number" min="0" max="5" step="0.01" value="0.1" />
+              </label>
+              <label>
+                objective_weight_return_variance
+                <input id="autotuneReturnVarWeightInput" type="number" min="0" max="5" step="0.01" value="0.08" />
+              </label>
+              <label>
+                stability_eval_top_n
+                <input id="autotuneStabilityTopNInput" type="number" min="0" max="500" value="24" />
+              </label>
+              <label>
+                walk_forward_slices
+                <input id="autotuneWalkForwardSlicesInput" type="number" min="0" max="12" value="4" />
+              </label>
+              <label>
+                low_sample_penalty
+                <input id="autotuneLowSamplePenaltyInput" type="number" min="0" max="5" step="0.01" value="0.1" />
+              </label>
+              <label>
+                min_improvement_to_apply
+                <input id="autotuneMinImprovementInput" type="number" min="-5" max="5" step="0.001" value="0" />
+              </label>
+              <label class="inline">
+                <input id="autotuneRequireValidationInput" type="checkbox" checked /> apply_require_validation
+              </label>
+              <label>
+                apply_min_validation_total_return
+                <input id="autotuneMinValidationReturnInput" type="number" min="-1" max="5" step="0.001" value="0" />
+              </label>
+              <label>
+                apply_max_train_validation_gap
+                <input id="autotuneMaxGapInput" type="number" min="0" max="5" step="0.001" value="0.45" />
+              </label>
+              <label>
+                apply_min_walk_forward_samples
+                <input id="autotuneMinWfSamplesInput" type="number" min="0" max="20" value="2" />
+              </label>
+              <label class="inline">
+                <input id="autotuneCreateGovDraftInput" type="checkbox" checked /> create_governance_draft
+              </label>
+              <label class="inline">
+                <input id="autotuneSubmitReviewInput" type="checkbox" /> governance_submit_review
+              </label>
+              <label class="inline">
+                <input id="autotuneRealisticCostInput" type="checkbox" checked /> enable_realistic_cost_model
+              </label>
+              <label>
+                impact_cost_coeff
+                <input id="autotuneImpactCoeffInput" type="number" min="0" max="5" step="0.01" value="0.18" />
+              </label>
+              <label>
+                impact_cost_exponent
+                <input id="autotuneImpactExponentInput" type="number" min="0.1" max="2" step="0.01" value="0.6" />
+              </label>
+              <label>
+                fill_probability_floor
+                <input id="autotuneFillProbFloorInput" type="number" min="0" max="1" step="0.01" value="0.02" />
+              </label>
+              <label>
+                search_space(JSON，可选)
+                <textarea id="autotuneSearchSpaceInput" rows="5" placeholder="{&#10;  &quot;entry_ma_fast&quot;: [10, 15, 20],&#10;  &quot;entry_ma_slow&quot;: [40, 60, 80]&#10;}"></textarea>
+              </label>
+            </div>
+            <div class="actions-row wrap">
+              <button id="runAutotuneBtn" type="button">运行自动调参</button>
+              <button id="loadAutotuneActiveBtn" type="button" class="secondary">读取当前生效画像</button>
+              <button id="loadAutotuneProfilesBtn" type="button" class="secondary">加载画像列表</button>
+              <button id="applyAutotuneBestParamsBtn" type="button" class="secondary">将最优参数回填到策略区</button>
+            </div>
+            <div class="actions-row wrap">
+              <label>
+                回滚 scope
+                <select id="autotuneRollbackScopeInput">
+                  <option value="AUTO">AUTO</option>
+                  <option value="GLOBAL">GLOBAL</option>
+                  <option value="SYMBOL">SYMBOL</option>
+                </select>
+              </label>
+              <button id="rollbackAutotuneBtn" type="button" class="secondary">一键回滚上一个画像</button>
+            </div>
+            <p id="autotuneMsg" class="muted">-</p>
+            <div class="kpi-grid compact">
+              <article class="kpi-card"><p>评估候选数</p><h3 id="autotuneEvalCount">-</h3></article>
+              <article class="kpi-card"><p>最优目标值</p><h3 id="autotuneBestObjective">-</h3></article>
+              <article class="kpi-card"><p>相对基线提升</p><h3 id="autotuneImprovement">-</h3></article>
+              <article class="kpi-card"><p>应用决策</p><h3 id="autotuneApplyDecision">-</h3></article>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>画像灰度规则（/autotune/rollout/rules）</h3>
+            <p class="muted">留空 symbol 表示按策略全局灰度；填写 symbol 表示仅该标的命中规则。</p>
+            <div class="form-grid">
+              <label>
+                strategy_name（自动取当前策略）
+                <input id="rolloutRuleStrategyInput" type="text" placeholder="留空=使用当前策略" />
+              </label>
+              <label>
+                symbol（可选）
+                <input id="rolloutRuleSymbolInput" type="text" placeholder="留空=策略级" />
+              </label>
+              <label class="inline">
+                <input id="rolloutRuleEnabledInput" type="checkbox" checked /> enabled（true=启用画像，false=禁用画像）
+              </label>
+              <label>
+                note
+                <textarea id="rolloutRuleNoteInput" rows="3" placeholder="灰度说明，例如：先在000001试运行3天"></textarea>
+              </label>
+            </div>
+            <div class="actions-row wrap">
+              <button id="upsertRolloutRuleBtn" type="button">保存灰度规则</button>
+              <button id="loadRolloutRulesBtn" type="button" class="secondary">加载灰度规则</button>
+            </div>
+            <p id="rolloutRuleMsg" class="muted">-</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>id</th>
+                    <th>strategy</th>
+                    <th>symbol</th>
+                    <th>enabled</th>
+                    <th>updated_at</th>
+                    <th>note</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="rolloutRuleRows"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>候选排行榜</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>rank</th>
+                    <th>objective</th>
+                    <th>train_score</th>
+                    <th>validation_score</th>
+                    <th>overfit_penalty</th>
+                    <th>stability_penalty</th>
+                    <th>param_drift_penalty</th>
+                    <th>return_variance_penalty</th>
+                    <th>wf_samples</th>
+                    <th>apply_guard</th>
+                    <th>params</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="autotuneCandidateRows"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>参数画像列表（支持激活/回退）</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>id</th>
+                    <th>strategy</th>
+                    <th>scope</th>
+                    <th>symbol</th>
+                    <th>objective</th>
+                    <th>active</th>
+                    <th>updated_at</th>
+                    <th>source_run_id</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="autotuneProfileRows"></tbody>
+              </table>
+            </div>
+            <h4>基线 vs 最优 对比</h4>
+            <p id="autotuneCompareMeta" class="muted">暂无自动调参结果。</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>维度</th>
+                    <th>基线</th>
+                    <th>最优</th>
+                  </tr>
+                </thead>
+                <tbody id="autotuneCompareRows"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="tab-challenge" class="tab-panel" data-animate>
+        <div class="panel-head">
+          <h2>跨策略挑战赛页</h2>
+          <p>一键并行评测六策略：先调参，再按样本外硬门槛筛选，最后按综合分产出冠军/亚军与灰度上线建议。</p>
+          <div class="actions-row wrap panel-jumps">
+            <button id="jumpToStrategyFromChallengeBtn" type="button" class="secondary">回到策略参数页</button>
+            <button id="jumpToAutotuneFromChallengeBtn" type="button" class="secondary">打开自动调参页</button>
+            <button id="jumpToResultsFromChallengeBtn" type="button" class="secondary">查看结果可视化</button>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>挑战赛配置（/challenge/run）</h3>
+            <div class="form-grid">
+              <label>
+                run_by
+                <input id="challengeRunByInput" type="text" value="workbench_user" />
+              </label>
+              <label>
+                per_strategy_max_combinations
+                <input id="challengePerStrategyMaxCombInput" type="number" min="1" max="5000" value="120" />
+              </label>
+              <label>
+                validation_ratio
+                <input id="challengeValidationRatioInput" type="number" min="0" max="0.8" step="0.01" value="0.2" />
+              </label>
+              <label>
+                validation_weight
+                <input id="challengeValidationWeightInput" type="number" min="0" max="1" step="0.01" value="0.4" />
+              </label>
+              <label>
+                min_train_bars
+                <input id="challengeMinTrainBarsInput" type="number" min="20" max="5000" value="120" />
+              </label>
+              <label>
+                min_validation_bars
+                <input id="challengeMinValidationBarsInput" type="number" min="10" max="5000" value="40" />
+              </label>
+              <label>
+                min_trade_count
+                <input id="challengeMinTradeCountInput" type="number" min="0" max="5000" value="1" />
+              </label>
+              <label>
+                walk_forward_slices
+                <input id="challengeWalkForwardSlicesInput" type="number" min="0" max="12" value="4" />
+              </label>
+              <label>
+                stability_eval_top_n
+                <input id="challengeStabilityTopNInput" type="number" min="0" max="500" value="24" />
+              </label>
+              <label>
+                low_sample_penalty
+                <input id="challengeLowSamplePenaltyInput" type="number" min="0" max="5" step="0.01" value="0.1" />
+              </label>
+
+              <label class="inline">
+                <input id="challengeGateRequireValidationInput" type="checkbox" checked /> gate_require_validation
+              </label>
+              <label>
+                gate_min_validation_total_return
+                <input id="challengeGateMinValidationReturnInput" type="number" min="-1" max="5" step="0.001" value="0" />
+              </label>
+              <label>
+                gate_max_validation_drawdown
+                <input id="challengeGateMaxValidationDrawdownInput" type="number" min="0" max="1" step="0.001" value="0.25" />
+              </label>
+              <label>
+                gate_min_validation_sharpe
+                <input id="challengeGateMinValidationSharpeInput" type="number" min="-10" max="20" step="0.01" value="0" />
+              </label>
+              <label>
+                gate_min_validation_trade_count
+                <input id="challengeGateMinValidationTradeCountInput" type="number" min="0" max="10000" value="1" />
+              </label>
+              <label>
+                gate_min_walk_forward_samples
+                <input id="challengeGateMinWfSamplesInput" type="number" min="0" max="50" value="2" />
+              </label>
+              <label>
+                gate_max_walk_forward_return_std
+                <input id="challengeGateMaxWfStdInput" type="number" min="0" max="5" step="0.001" value="0.2" />
+              </label>
+
+              <label>
+                rank_weight_validation_return
+                <input id="challengeRankWeightReturnInput" type="number" min="0" max="5" step="0.01" value="0.55" />
+              </label>
+              <label>
+                rank_weight_validation_sharpe
+                <input id="challengeRankWeightSharpeInput" type="number" min="0" max="5" step="0.01" value="0.25" />
+              </label>
+              <label>
+                rank_weight_stability
+                <input id="challengeRankWeightStabilityInput" type="number" min="0" max="5" step="0.01" value="0.2" />
+              </label>
+              <label>
+                rank_weight_drawdown_penalty
+                <input id="challengeRankWeightDrawdownInput" type="number" min="0" max="5" step="0.01" value="0.35" />
+              </label>
+              <label>
+                rank_weight_variance_penalty
+                <input id="challengeRankWeightVarianceInput" type="number" min="0" max="5" step="0.01" value="0.2" />
+              </label>
+              <label>
+                rollout_gray_days
+                <input id="challengeRolloutGrayDaysInput" type="number" min="7" max="20" value="10" />
+              </label>
+
+              <div>
+                <p class="muted">参赛策略（全不勾选=后端按默认6策略）</p>
+                <div id="challengeStrategyPickers" class="inline-picks">
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="trend_following" checked /> trend_following</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="mean_reversion" checked /> mean_reversion</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="multi_factor" checked /> multi_factor</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="sector_rotation" checked /> sector_rotation</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="event_driven" checked /> event_driven</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="small_capital_adaptive" checked /> small_capital_adaptive</label>
+                </div>
+              </div>
+              <label>
+                base_strategy_params_map(JSON，可选)
+                <textarea id="challengeBaseParamsMapInput" rows="4" placeholder="{&#10;  &quot;trend_following&quot;: { &quot;entry_ma_fast&quot;: 20, &quot;entry_ma_slow&quot;: 60, &quot;atr_multiplier&quot;: 2.0 }&#10;}"></textarea>
+              </label>
+              <label>
+                search_space_map(JSON，可选)
+                <textarea id="challengeSearchSpaceMapInput" rows="6" placeholder="{&#10;  &quot;trend_following&quot;: {&quot;entry_ma_fast&quot;:[10,15,20],&quot;entry_ma_slow&quot;:[40,60,80]},&#10;  &quot;mean_reversion&quot;: {&quot;z_enter&quot;:[1.8,2.0,2.2]}&#10;}"></textarea>
+              </label>
+            </div>
+            <div class="actions-row wrap">
+              <button id="runChallengeBtn" type="button">运行跨策略挑战赛</button>
+              <button id="applyChallengeChampionBtn" type="button" class="secondary">冠军参数回填到策略页</button>
+            </div>
+            <p id="challengeMsg" class="muted">-</p>
+            <div class="kpi-grid compact">
+              <article class="kpi-card"><p>评估总候选</p><h3 id="challengeEvaluatedCount">-</h3></article>
+              <article class="kpi-card"><p>入围策略数</p><h3 id="challengeQualifiedCount">-</h3></article>
+              <article class="kpi-card"><p>冠军策略</p><h3 id="challengeChampion">-</h3></article>
+              <article class="kpi-card"><p>亚军策略</p><h3 id="challengeRunnerUp">-</h3></article>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>挑战赛结论与灰度计划</h3>
+            <p id="challengeSummaryMeta" class="muted">尚未运行挑战赛。</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>计划项</th>
+                    <th>值</th>
+                  </tr>
+                </thead>
+                <tbody id="challengePlanRows"></tbody>
+              </table>
+            </div>
+            <h4>淘汰原因汇总</h4>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>策略</th>
+                    <th>是否入围</th>
+                    <th>原因</th>
+                  </tr>
+                </thead>
+                <tbody id="challengeReasonRows"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <article class="card">
+          <h3>挑战赛候选榜（按入围优先+综合分排序）</h3>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>策略</th>
+                  <th>入围</th>
+                  <th>综合分</th>
+                  <th>validation_return</th>
+                  <th>validation_mdd</th>
+                  <th>validation_sharpe</th>
+                  <th>wf_samples</th>
+                  <th>wf_return_std</th>
+                  <th>stability_penalty</th>
+                  <th>param_drift_penalty</th>
+                  <th>return_variance_penalty</th>
+                  <th>best_params</th>
+                </tr>
+              </thead>
+              <tbody id="challengeResultRows"></tbody>
+            </table>
+          </div>
         </article>
       </section>
 
@@ -250,6 +795,7 @@
           <p>展示候选信号、风控命中、K线叠加、组合权重与回测关键指标。</p>
           <div class="actions-row wrap panel-jumps">
             <button id="jumpToStrategyBtn" type="button" class="secondary">回到策略参数页</button>
+            <button id="jumpToAutotuneFromResultsHeadBtn" type="button" class="secondary">前往自动调参页</button>
             <button id="jumpToExecutionBtn" type="button" class="secondary">前往执行回写页</button>
           </div>
         </div>
@@ -263,6 +809,14 @@
           <article class="kpi-card"><p>夏普比率</p><h3 id="kpiBacktestSharpe">-</h3></article>
           <article class="kpi-card"><p>研究候选数</p><h3 id="kpiResearchSignals">-</h3></article>
         </div>
+
+        <article class="card">
+          <h3>自动调参工作台入口</h3>
+          <p id="autotuneResultsMeta" class="muted">自动调参详细候选榜、基线对比、画像回滚和灰度规则请在“自动调参页”查看。</p>
+          <div class="actions-row wrap">
+            <button id="jumpToAutotuneFromResultsBtn" type="button" class="secondary">打开自动调参页</button>
+          </div>
+        </article>
 
         <div class="grid two">
           <article class="card">
@@ -450,6 +1004,50 @@
         </div>
 
         <article class="card">
+          <h3>组合净值回测（/backtest/portfolio-run）</h3>
+          <p id="portfolioBacktestMeta" class="muted">暂无组合级回测结果。可回到“策略与参数页”点击“运行组合净值回测”。</p>
+          <div class="kpi-grid compact">
+            <article class="kpi-card"><p>总收益</p><h3 id="portfolioReturnKpi">-</h3></article>
+            <article class="kpi-card"><p>最大回撤</p><h3 id="portfolioMddKpi">-</h3></article>
+            <article class="kpi-card"><p>夏普</p><h3 id="portfolioSharpeKpi">-</h3></article>
+            <article class="kpi-card"><p>平均资金利用率</p><h3 id="portfolioUtilKpi">-</h3></article>
+            <article class="kpi-card"><p>成交笔数</p><h3 id="portfolioTradeCountKpi">-</h3></article>
+          </div>
+          <div id="portfolioEquityChart" class="chart-wrap"></div>
+          <div class="grid two">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>symbol</th>
+                    <th>最终权重</th>
+                    <th>行业</th>
+                    <th>主题</th>
+                  </tr>
+                </thead>
+                <tbody id="portfolioWeightRows"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>date</th>
+                    <th>symbol</th>
+                    <th>action</th>
+                    <th>price</th>
+                    <th>qty</th>
+                    <th>fee</th>
+                    <th>fill</th>
+                  </tr>
+                </thead>
+                <tbody id="portfolioTradeRows"></tbody>
+              </table>
+            </div>
+          </div>
+        </article>
+
+        <article class="card">
           <h3>回测曲线</h3>
           <div id="equityChart" class="chart-wrap"></div>
         </article>
@@ -489,6 +1087,236 @@
             </div>
           </article>
         </div>
+      </section>
+
+      <section id="tab-holdings" class="tab-panel" data-animate>
+        <div class="panel-head">
+          <h2>持仓分析页</h2>
+          <p>手工录入每笔交易，系统基于总体持仓生成当日行情分析、次日预测和策略建议。</p>
+          <div class="actions-row wrap panel-jumps">
+            <button id="jumpToStrategyFromHoldingsBtn" type="button" class="secondary">回到策略参数页</button>
+            <button id="jumpToResultsFromHoldingsBtn" type="button" class="secondary">查看结果可视化</button>
+            <button id="jumpToExecutionFromHoldingsBtn" type="button" class="secondary">前往执行回写页</button>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>手工成交录入（/holdings/trades）</h3>
+            <div class="form-grid">
+              <label>
+                trade_date
+                <input id="holdingTradeDateInput" type="date" />
+              </label>
+              <label>
+                symbol
+                <input id="holdingTradeSymbolInput" type="text" placeholder="例如：000001" />
+              </label>
+              <label>
+                symbol_name
+                <input id="holdingTradeNameInput" type="text" placeholder="例如：平安银行" />
+              </label>
+              <label>
+                side
+                <select id="holdingTradeSideInput">
+                  <option value="BUY">BUY</option>
+                  <option value="SELL">SELL</option>
+                </select>
+              </label>
+              <label>
+                price
+                <input id="holdingTradePriceInput" type="number" min="0.0001" step="0.0001" value="0" />
+              </label>
+              <label>
+                lots
+                <input id="holdingTradeLotsInput" type="number" min="1" step="1" value="1" />
+              </label>
+              <label>
+                lot_size
+                <input id="holdingTradeLotSizeInput" type="number" min="1" step="1" value="100" />
+              </label>
+              <label>
+                fee
+                <input id="holdingTradeFeeInput" type="number" min="0" step="0.0001" value="0" />
+              </label>
+              <label>
+                note
+                <textarea id="holdingTradeNoteInput" rows="3" placeholder="记录手工成交补充说明"></textarea>
+              </label>
+            </div>
+            <div class="actions-row wrap">
+              <button id="submitHoldingTradeBtn" type="button">提交成交</button>
+              <button id="loadHoldingTradesBtn" type="button" class="secondary">刷新成交台账</button>
+              <button id="loadHoldingPositionsBtn" type="button" class="secondary">刷新持仓快照</button>
+            </div>
+            <p id="holdingMsg" class="muted">-</p>
+          </article>
+
+          <article class="card">
+            <h3>次日预测与建议参数（/holdings/analyze）</h3>
+            <p class="muted">默认读取“策略与参数页”的 strategy_name 与 strategy_params，也可在此页单独覆盖。</p>
+            <div class="form-grid">
+              <label>
+                as_of_date
+                <input id="holdingAsOfDateInput" type="date" />
+              </label>
+              <label>
+                strategy_name（可选覆盖）
+                <input id="holdingAnalyzeStrategyInput" type="text" placeholder="留空=使用当前策略" />
+              </label>
+              <label>
+                available_cash
+                <input id="holdingAvailableCashInput" type="number" min="0" step="0.01" value="0" />
+              </label>
+              <label>
+                max_new_buys
+                <input id="holdingMaxNewBuysInput" type="number" min="0" max="50" step="1" value="3" />
+              </label>
+              <label>
+                max_single_position_ratio
+                <input id="holdingMaxSingleRatioInput" type="number" min="0.01" max="1" step="0.01" value="0.35" />
+              </label>
+              <label>
+                lot_size
+                <input id="holdingAnalyzeLotSizeInput" type="number" min="1" step="1" value="100" />
+              </label>
+              <label>
+                candidate_symbols（逗号/空格/换行分隔）
+                <textarea id="holdingCandidateSymbolsInput" rows="4" placeholder="000001,600000,000333"></textarea>
+              </label>
+            </div>
+            <div class="actions-row wrap">
+              <button id="syncHoldingStrategyBtn" type="button" class="secondary">同步策略页参数</button>
+              <button id="runHoldingAnalyzeBtn" type="button">生成次日建议</button>
+            </div>
+            <p class="muted">建议表会给出：买入/加仓/减仓/退出动作、目标手数、置信度、预期收益与风险标签。</p>
+          </article>
+        </div>
+
+        <article class="card">
+          <h3>成交台账</h3>
+          <div class="actions-row wrap">
+            <label>
+              symbol
+              <input id="holdingTradeFilterSymbolInput" type="text" placeholder="留空=全部" />
+            </label>
+            <label>
+              start_date
+              <input id="holdingTradeFilterStartDateInput" type="date" />
+            </label>
+            <label>
+              end_date
+              <input id="holdingTradeFilterEndDateInput" type="date" />
+            </label>
+            <label>
+              limit
+              <input id="holdingTradeFilterLimitInput" type="number" min="1" max="5000" value="500" />
+            </label>
+            <button id="applyHoldingTradeFilterBtn" type="button" class="secondary">按条件刷新</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>id</th>
+                  <th>trade_date</th>
+                  <th>symbol</th>
+                  <th>name</th>
+                  <th>side</th>
+                  <th>price</th>
+                  <th>lots</th>
+                  <th>qty</th>
+                  <th>fee</th>
+                  <th>note</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="holdingTradeRows"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <div class="kpi-grid compact">
+          <article class="kpi-card"><p>持仓标的数</p><h3 id="holdingPositionCountKpi">-</h3></article>
+          <article class="kpi-card"><p>持仓总股数</p><h3 id="holdingQuantityKpi">-</h3></article>
+          <article class="kpi-card"><p>总成本</p><h3 id="holdingCostKpi">-</h3></article>
+          <article class="kpi-card"><p>总市值</p><h3 id="holdingMarketValueKpi">-</h3></article>
+          <article class="kpi-card"><p>浮动盈亏</p><h3 id="holdingPnlKpi">-</h3></article>
+          <article class="kpi-card"><p>浮动收益率</p><h3 id="holdingPnlPctKpi">-</h3></article>
+        </div>
+
+        <article class="card">
+          <h3>当前持仓快照（/holdings/positions）</h3>
+          <p id="holdingPositionMeta" class="muted">-</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>symbol</th>
+                  <th>name</th>
+                  <th>qty</th>
+                  <th>lots</th>
+                  <th>avg_cost</th>
+                  <th>latest</th>
+                  <th>day_change</th>
+                  <th>cost_value</th>
+                  <th>market_value</th>
+                  <th>unrealized</th>
+                  <th>weight</th>
+                  <th>momentum20</th>
+                  <th>volatility20</th>
+                  <th>fundamental</th>
+                  <th>comment</th>
+                </tr>
+              </thead>
+              <tbody id="holdingPositionRows"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>次日预测与交易建议（/holdings/analyze）</h3>
+          <p id="holdingOverviewMeta" class="muted">尚未运行持仓分析。</p>
+          <h4>持仓分析明细</h4>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>symbol</th>
+                  <th>name</th>
+                  <th>signal</th>
+                  <th>expected_ret</th>
+                  <th>up_prob</th>
+                  <th>suggested_action</th>
+                  <th>delta_lots</th>
+                  <th>analysis_note</th>
+                </tr>
+              </thead>
+              <tbody id="holdingAnalyzePositionRows"></tbody>
+            </table>
+          </div>
+          <h4>推荐动作清单</h4>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>symbol</th>
+                  <th>name</th>
+                  <th>action</th>
+                  <th>target_lots</th>
+                  <th>delta_lots</th>
+                  <th>confidence</th>
+                  <th>expected_ret</th>
+                  <th>up_prob</th>
+                  <th>next_trade_date</th>
+                  <th>risk_flags</th>
+                  <th>rationale</th>
+                </tr>
+              </thead>
+              <tbody id="holdingRecommendationRows"></tbody>
+            </table>
+          </div>
+        </article>
       </section>
 
       <section id="tab-execution" class="tab-panel" data-animate>
@@ -644,6 +1472,75 @@
               <tbody id="replayReportRows"></tbody>
             </table>
           </div>
+        </article>
+
+        <article class="card">
+          <h3>偏差归因与闭环复盘（/replay/attribution + /reports/generate）</h3>
+          <div class="actions-row wrap">
+            <label>
+              symbol
+              <input id="attrSymbolInput" type="text" placeholder="留空=全部" />
+            </label>
+            <label>
+              start_date
+              <input id="attrStartDateInput" type="date" />
+            </label>
+            <label>
+              end_date
+              <input id="attrEndDateInput" type="date" />
+            </label>
+            <label>
+              limit
+              <input id="attrLimitInput" type="number" min="1" max="2000" value="500" />
+            </label>
+            <button id="loadReplayAttributionBtn" type="button">加载偏差归因</button>
+            <button id="generateClosureReportBtn" type="button" class="secondary">生成 closure 报表</button>
+          </div>
+          <div class="kpi-grid compact">
+            <article class="kpi-card"><p>样本数</p><h3 id="attrSample">-</h3></article>
+            <article class="kpi-card"><p>跟随率</p><h3 id="attrFollowRate">-</h3></article>
+            <article class="kpi-card"><p>平均延迟(天)</p><h3 id="attrAvgDelay">-</h3></article>
+            <article class="kpi-card"><p>平均滑点(bps)</p><h3 id="attrAvgSlip">-</h3></article>
+          </div>
+          <div class="grid two">
+            <div>
+              <h4>偏差原因统计</h4>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>reason_code</th>
+                      <th>count</th>
+                    </tr>
+                  </thead>
+                  <tbody id="attributionReasonRows"></tbody>
+                </table>
+              </div>
+            </div>
+            <div>
+              <h4>参数修正建议</h4>
+              <ul id="attributionSuggestionList" class="list"></ul>
+            </div>
+          </div>
+          <h4>归因明细</h4>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>signal_id</th>
+                  <th>symbol</th>
+                  <th>reason</th>
+                  <th>severity</th>
+                  <th>detail</th>
+                  <th>suggestion</th>
+                </tr>
+              </thead>
+              <tbody id="attributionItemRows"></tbody>
+            </table>
+          </div>
+          <h4>Closure 报表输出</h4>
+          <p id="closureReportMeta" class="muted">尚未生成 closure 报表。</p>
+          <pre id="closureReportPreview" class="code-block">-</pre>
         </article>
       </section>
     </main>

@@ -5,8 +5,10 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, HTTPException
 
 from trading_assistant.audit.service import AuditService
+from trading_assistant.autotune.service import AutoTuneService
 from trading_assistant.core.container import (
     get_audit_service,
+    get_autotune_service,
     get_data_license_service,
     get_data_provider,
     get_event_service,
@@ -75,6 +77,7 @@ def generate_signals(
     pit: PITValidator = Depends(get_pit_validator),
     events: EventService = Depends(get_event_service),
     registry: StrategyRegistry = Depends(get_strategy_registry),
+    autotune: AutoTuneService = Depends(get_autotune_service),
     risk_engine: RiskEngine = Depends(get_risk_engine),
     signal_service: SignalService = Depends(get_signal_service),
     snapshots: DataSnapshotService = Depends(get_snapshot_service),
@@ -93,6 +96,12 @@ def generate_signals(
             status_code=403,
             detail=f"Strategy '{req.strategy_name}' has no approved version.",
         )
+    strategy_params, autotune_profile = autotune.resolve_runtime_params(
+        strategy_name=req.strategy_name,
+        symbol=req.symbol,
+        explicit_params=req.strategy_params,
+        use_profile=req.use_autotune_profile,
+    )
 
     try:
         used_provider, bars = provider.get_daily_bars_with_source(req.symbol, req.start_date, req.end_date)
@@ -168,7 +177,7 @@ def generate_signals(
     small_capital_principal = float(req.small_capital_principal or settings.small_capital_principal_cny)
     small_lot_size = max(1, int(settings.small_capital_lot_size))
     context = StrategyContext(
-        params=req.strategy_params,
+        params=strategy_params,
         market_state={
             "enable_small_capital_mode": small_capital_enabled,
             "small_capital_principal": small_capital_principal,
@@ -212,6 +221,17 @@ def generate_signals(
     )
 
     results: list[TradePrepSheet] = []
+    def _opt_float(value):
+        return float(value) if (value is not None and value == value) else None
+
+    latest_tushare_disclosure_risk = _opt_float(latest.get("tushare_disclosure_risk_score"))
+    latest_tushare_audit_risk = _opt_float(latest.get("tushare_audit_opinion_risk"))
+    latest_tushare_forecast_mid = _opt_float(latest.get("tushare_forecast_pchg_mid"))
+    latest_tushare_pledge_ratio = _opt_float(latest.get("tushare_pledge_ratio"))
+    latest_tushare_unlock_ratio = _opt_float(latest.get("tushare_share_float_unlock_ratio"))
+    latest_tushare_holder_crowding = _opt_float(latest.get("tushare_holder_crowding_ratio"))
+    latest_tushare_overhang_risk = _opt_float(latest.get("tushare_overhang_risk_score"))
+
     for signal in candidates:
         signal_id = uuid4().hex
         signal.metadata["signal_id"] = signal_id
@@ -228,7 +248,7 @@ def generate_signals(
             transfer_fee_rate=settings.fee_transfer_rate,
             cash_buffer_ratio=settings.small_capital_cash_buffer_ratio,
             max_single_position=settings.max_single_position,
-            max_positions=max(1, int(float(req.strategy_params.get("max_positions", 3)))),
+            max_positions=max(1, int(float(strategy_params.get("max_positions", 3)))),
         )
         available_cash = (
             float(req.portfolio_snapshot.cash)
@@ -270,6 +290,13 @@ def generate_signals(
                 if int(latest.get("fundamental_stale_days", -1)) >= 0
                 else None
             ),
+            tushare_disclosure_risk_score=latest_tushare_disclosure_risk,
+            tushare_audit_opinion_risk=latest_tushare_audit_risk,
+            tushare_forecast_pchg_mid=latest_tushare_forecast_mid,
+            tushare_pledge_ratio=latest_tushare_pledge_ratio,
+            tushare_share_float_unlock_ratio=latest_tushare_unlock_ratio,
+            tushare_holder_crowding_ratio=latest_tushare_holder_crowding,
+            tushare_overhang_risk_score=latest_tushare_overhang_risk,
             enable_small_capital_mode=small_capital_enabled,
             small_capital_principal=small_capital_principal,
             available_cash=available_cash,
@@ -317,9 +344,19 @@ def generate_signals(
             "fundamental_score": round(float(latest.get("fundamental_score", 0.5)), 6)
             if bool(latest.get("fundamental_available", False))
             else None,
+            "tushare_advanced_score": round(float(latest.get("tushare_advanced_score", 0.5)), 6)
+            if bool(latest.get("tushare_advanced_available", False))
+            else None,
+            "tushare_disclosure_risk_score": round(float(latest_tushare_disclosure_risk), 6)
+            if latest_tushare_disclosure_risk is not None
+            else None,
+            "tushare_overhang_risk_score": round(float(latest_tushare_overhang_risk), 6)
+            if latest_tushare_overhang_risk is not None
+            else None,
             "small_capital_mode": small_capital_enabled,
             "small_capital_principal": round(small_capital_principal, 2),
             "small_capital_roundtrip_cost_bps": round(roundtrip_cost_bps, 3),
+            "autotune_profile_id": (autotune_profile.id if autotune_profile is not None else None),
         },
         status="OK" if (license_check.allowed or not settings.enforce_data_license) else "ERROR",
     )

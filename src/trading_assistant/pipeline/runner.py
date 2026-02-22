@@ -13,6 +13,7 @@ from trading_assistant.core.models import (
     RiskCheckRequest,
     SignalLevel,
 )
+from trading_assistant.autotune.service import AutoTuneService
 from trading_assistant.data.composite_provider import CompositeDataProvider
 from trading_assistant.data.utils import dataframe_content_hash
 from trading_assistant.factors.engine import FactorEngine
@@ -45,6 +46,7 @@ class DailyPipelineRunner:
         quality_service: DataQualityService,
         pit_validator: PITValidator,
         snapshot_service: DataSnapshotService,
+        autotune_service: AutoTuneService | None = None,
         event_service: EventService | None = None,
         license_service: DataLicenseService | None = None,
         enforce_data_license: bool = False,
@@ -69,6 +71,7 @@ class DailyPipelineRunner:
         self.quality_service = quality_service
         self.pit_validator = pit_validator
         self.event_service = event_service
+        self.autotune_service = autotune_service
         self.snapshot_service = snapshot_service
         self.license_service = license_service
         self.enforce_data_license = enforce_data_license
@@ -191,10 +194,20 @@ class DailyPipelineRunner:
             small_capital_mode = bool(self.small_capital_mode_enabled or req.enable_small_capital_mode)
             small_capital_principal = float(req.small_capital_principal or self.small_capital_principal_cny)
             small_lot = max(1, self.small_capital_lot_size)
+            strategy_params, _ = (
+                self.autotune_service.resolve_runtime_params(
+                    strategy_name=req.strategy_name,
+                    symbol=symbol,
+                    explicit_params=req.strategy_params,
+                    use_profile=req.use_autotune_profile,
+                )
+                if self.autotune_service is not None
+                else (dict(req.strategy_params), None)
+            )
             candidates = strategy.generate(
                 features,
                 StrategyContext(
-                    params=req.strategy_params,
+                    params=strategy_params,
                     market_state={
                         "enable_small_capital_mode": small_capital_mode,
                         "small_capital_principal": small_capital_principal,
@@ -230,6 +243,16 @@ class DailyPipelineRunner:
             )
             small_capital_note: str | None = None
             small_capital_blocked = False
+            def _opt_float(value):
+                return float(value) if (value is not None and value == value) else None
+
+            latest_tushare_disclosure_risk = _opt_float(latest.get("tushare_disclosure_risk_score"))
+            latest_tushare_audit_risk = _opt_float(latest.get("tushare_audit_opinion_risk"))
+            latest_tushare_forecast_mid = _opt_float(latest.get("tushare_forecast_pchg_mid"))
+            latest_tushare_pledge_ratio = _opt_float(latest.get("tushare_pledge_ratio"))
+            latest_tushare_unlock_ratio = _opt_float(latest.get("tushare_share_float_unlock_ratio"))
+            latest_tushare_holder_crowding = _opt_float(latest.get("tushare_holder_crowding_ratio"))
+            latest_tushare_overhang_risk = _opt_float(latest.get("tushare_overhang_risk_score"))
             for signal in candidates:
                 _ = apply_small_capital_overrides(
                     signal=signal,
@@ -242,7 +265,7 @@ class DailyPipelineRunner:
                     transfer_fee_rate=self.fee_transfer_rate,
                     cash_buffer_ratio=self.small_capital_cash_buffer_ratio,
                     max_single_position=0.35,
-                    max_positions=max(1, int(float(req.strategy_params.get("max_positions", 3)))),
+                    max_positions=max(1, int(float(strategy_params.get("max_positions", 3)))),
                 )
                 expected_edge_bps = infer_expected_edge_bps(
                     confidence=float(signal.confidence),
@@ -268,6 +291,13 @@ class DailyPipelineRunner:
                         if int(latest.get("fundamental_stale_days", -1)) >= 0
                         else None
                     ),
+                    tushare_disclosure_risk_score=latest_tushare_disclosure_risk,
+                    tushare_audit_opinion_risk=latest_tushare_audit_risk,
+                    tushare_forecast_pchg_mid=latest_tushare_forecast_mid,
+                    tushare_pledge_ratio=latest_tushare_pledge_ratio,
+                    tushare_share_float_unlock_ratio=latest_tushare_unlock_ratio,
+                    tushare_holder_crowding_ratio=latest_tushare_holder_crowding,
+                    tushare_overhang_risk_score=latest_tushare_overhang_risk,
                     enable_small_capital_mode=small_capital_mode,
                     small_capital_principal=small_capital_principal,
                     available_cash=small_capital_principal,

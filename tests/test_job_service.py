@@ -91,6 +91,21 @@ class FakeAlertService:
         )
 
 
+class FakeAutoTuneService:
+    def run(self, req):
+        _ = req
+        return SimpleNamespace(
+            run_id="autotune-1",
+            strategy_name="trend_following",
+            symbol="000001",
+            evaluated_count=8,
+            applied=True,
+            apply_decision="applied",
+            best=SimpleNamespace(objective_score=0.88),
+            improvement_vs_baseline=0.12,
+        )
+
+
 def _service(tmp_path: Path) -> JobService:
     return JobService(
         store=JobStore(str(tmp_path / "job.db")),
@@ -127,6 +142,16 @@ def _service_with_alerts(tmp_path: Path) -> JobService:
         research=FakeResearchWorkflowService(),
         reporting=FakeReportingService(),
         alerts=FakeAlertService(),
+    )
+
+
+def _service_with_autotune(tmp_path: Path) -> JobService:
+    return JobService(
+        store=JobStore(str(tmp_path / "job.db")),
+        pipeline=FakePipelineRunner(),
+        research=FakeResearchWorkflowService(),
+        reporting=FakeReportingService(),
+        autotune=FakeAutoTuneService(),
     )
 
 
@@ -235,3 +260,50 @@ def test_job_trigger_oncall_reconcile_success(tmp_path: Path) -> None:
     assert run.result_summary["provider"] == "pagerduty"
     assert run.result_summary["callbacks"] == 2
     assert run.result_summary["acked_notifications"] == 2
+
+
+def test_job_trigger_autotune_success(tmp_path: Path) -> None:
+    service = _service_with_autotune(tmp_path)
+    job_id = service.register(
+        JobRegisterRequest(
+            name="autotune trend",
+            job_type=JobType.AUTO_TUNE,
+            owner="qa",
+            payload={
+                "request": {
+                    "symbol": "000001",
+                    "start_date": "2024-01-01",
+                    "end_date": "2025-01-31",
+                    "strategy_name": "trend_following",
+                    "base_strategy_params": {},
+                    "search_space": {"entry_ma_fast": [15, 20], "entry_ma_slow": [40, 60]},
+                }
+            },
+        )
+    )
+    run = service.trigger(job_id=job_id, triggered_by="qa_user")
+    assert run.status.value == "SUCCESS"
+    assert run.result_summary["autotune_run_id"] == "autotune-1"
+    assert run.result_summary["applied"] is True
+    assert run.result_summary["apply_decision"] == "applied"
+    assert run.result_summary["evaluated_count"] == 8
+
+
+def test_job_trigger_execution_review_success(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    job_id = service.register(
+        JobRegisterRequest(
+            name="execution review",
+            job_type=JobType.EXECUTION_REVIEW,
+            owner="qa",
+            payload={
+                "symbol": "000001",
+                "limit": 200,
+                "save_to_file": False,
+            },
+        )
+    )
+    run = service.trigger(job_id=job_id, triggered_by="qa_user")
+    assert run.status.value == "SUCCESS"
+    assert run.result_summary["title"] == "closure report"
+    assert run.result_summary["content_size"] > 0

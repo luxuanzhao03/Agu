@@ -7,13 +7,16 @@ from fastapi.staticfiles import StaticFiles
 
 from trading_assistant.api.audit import router as audit_router
 from trading_assistant.api.alerts import router as alerts_router
+from trading_assistant.api.autotune import router as autotune_router
 from trading_assistant.api.backtest import router as backtest_router
+from trading_assistant.api.challenge import router as challenge_router
 from trading_assistant.api.compliance import router as compliance_router
 from trading_assistant.api.data_governance import router as data_governance_router
 from trading_assistant.api.data_license import router as data_license_router
 from trading_assistant.api.events import router as events_router
 from trading_assistant.api.factors import router as factors_router
 from trading_assistant.api.health import router as health_router
+from trading_assistant.api.holdings import router as holdings_router
 from trading_assistant.api.jobs import router as jobs_router
 from trading_assistant.api.market import router as market_router
 from trading_assistant.api.metrics import router as metrics_router
@@ -58,7 +61,7 @@ async def _lifespan(_: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.8.0",
+    version="0.8.6",
     description="A-share semi-automated trading assistant foundation. Research and decision support only.",
     lifespan=_lifespan,
 )
@@ -75,12 +78,15 @@ app.include_router(events_router)
 app.include_router(factors_router)
 app.include_router(strategies_router)
 app.include_router(strategy_governance_router)
+app.include_router(autotune_router)
+app.include_router(challenge_router)
 app.include_router(signals_router)
 app.include_router(risk_router)
 app.include_router(portfolio_router)
 app.include_router(backtest_router)
 app.include_router(pipeline_router)
 app.include_router(replay_router)
+app.include_router(holdings_router)
 app.include_router(research_router)
 app.include_router(reports_router)
 app.include_router(compliance_router)

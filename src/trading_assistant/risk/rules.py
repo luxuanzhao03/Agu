@@ -239,6 +239,103 @@ class FundamentalQualityRule(RiskRule):
         return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Fundamental quality passed.")
 
 
+class TushareDisclosureAndOverhangRule(RiskRule):
+    name = "tushare_disclosure_overhang"
+
+    def __init__(
+        self,
+        *,
+        disclosure_warning_score: float = 0.75,
+        disclosure_critical_score: float = 0.90,
+        forecast_warning_pct: float = -35.0,
+        forecast_critical_pct: float = -60.0,
+        small_cap_pledge_critical_ratio: float = 50.0,
+        small_cap_unlock_warning_ratio: float = 0.20,
+        small_cap_unlock_critical_ratio: float = 0.45,
+        small_cap_overhang_warning_score: float = 0.75,
+    ) -> None:
+        self.disclosure_warning_score = float(disclosure_warning_score)
+        self.disclosure_critical_score = float(disclosure_critical_score)
+        self.forecast_warning_pct = float(forecast_warning_pct)
+        self.forecast_critical_pct = float(forecast_critical_pct)
+        self.small_cap_pledge_critical_ratio = float(small_cap_pledge_critical_ratio)
+        self.small_cap_unlock_warning_ratio = float(small_cap_unlock_warning_ratio)
+        self.small_cap_unlock_critical_ratio = float(small_cap_unlock_critical_ratio)
+        self.small_cap_overhang_warning_score = float(small_cap_overhang_warning_score)
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        if req.signal.action != SignalAction.BUY:
+            return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Not a BUY action.")
+
+        critical_reasons: list[str] = []
+        warning_reasons: list[str] = []
+
+        if req.tushare_audit_opinion_risk is not None and req.tushare_audit_opinion_risk >= self.disclosure_critical_score:
+            critical_reasons.append(
+                f"Audit opinion risk {req.tushare_audit_opinion_risk:.2f} >= {self.disclosure_critical_score:.2f}."
+            )
+
+        if req.tushare_forecast_pchg_mid is not None:
+            if req.tushare_forecast_pchg_mid <= self.forecast_critical_pct:
+                critical_reasons.append(
+                    f"Forecast mid growth {req.tushare_forecast_pchg_mid:.1f}% <= {self.forecast_critical_pct:.1f}%."
+                )
+            elif req.tushare_forecast_pchg_mid <= self.forecast_warning_pct:
+                warning_reasons.append(
+                    f"Forecast mid growth {req.tushare_forecast_pchg_mid:.1f}% <= {self.forecast_warning_pct:.1f}%."
+                )
+
+        if req.tushare_disclosure_risk_score is not None:
+            if req.tushare_disclosure_risk_score >= self.disclosure_critical_score:
+                critical_reasons.append(
+                    f"Disclosure risk score {req.tushare_disclosure_risk_score:.2f} >= {self.disclosure_critical_score:.2f}."
+                )
+            elif req.tushare_disclosure_risk_score >= self.disclosure_warning_score:
+                warning_reasons.append(
+                    f"Disclosure risk score {req.tushare_disclosure_risk_score:.2f} >= {self.disclosure_warning_score:.2f}."
+                )
+
+        if req.enable_small_capital_mode:
+            if req.tushare_pledge_ratio is not None and req.tushare_pledge_ratio >= self.small_cap_pledge_critical_ratio:
+                critical_reasons.append(
+                    f"Pledge ratio {req.tushare_pledge_ratio:.1f}% >= {self.small_cap_pledge_critical_ratio:.1f}% (small-cap)."
+                )
+
+            unlock_ratio = req.tushare_share_float_unlock_ratio
+            if unlock_ratio is not None:
+                if unlock_ratio >= self.small_cap_unlock_critical_ratio:
+                    critical_reasons.append(
+                        f"Unlock pressure {unlock_ratio:.1%} >= {self.small_cap_unlock_critical_ratio:.1%} (small-cap)."
+                    )
+                elif unlock_ratio >= self.small_cap_unlock_warning_ratio:
+                    warning_reasons.append(
+                        f"Unlock pressure {unlock_ratio:.1%} >= {self.small_cap_unlock_warning_ratio:.1%} (small-cap)."
+                    )
+
+            overhang = req.tushare_overhang_risk_score
+            if overhang is not None and overhang >= self.small_cap_overhang_warning_score:
+                warning_reasons.append(
+                    f"Overhang risk score {overhang:.2f} >= {self.small_cap_overhang_warning_score:.2f} (small-cap)."
+                )
+
+        if critical_reasons:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.CRITICAL,
+                message="; ".join(critical_reasons),
+            )
+        if warning_reasons:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.WARNING,
+                message="; ".join(warning_reasons),
+            )
+
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Tushare disclosure/overhang passed.")
+
+
 class SmallCapitalTradabilityRule(RiskRule):
     name = "small_capital_tradability"
 

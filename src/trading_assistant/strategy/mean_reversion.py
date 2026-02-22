@@ -29,6 +29,11 @@ class MeanReversionStrategy(BaseStrategy):
         turnover = float(latest.get("turnover20", 0.0))
         fundamental_available = bool(latest.get("fundamental_available", False))
         fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
+        tushare_advanced_available = bool(latest.get("tushare_advanced_available", False))
+        tushare_advanced_score = float(latest.get("tushare_advanced_score", 0.5)) if tushare_advanced_available else 0.5
+        disclosure_risk = (
+            float(latest.get("tushare_disclosure_risk_score", 0.5)) if tushare_advanced_available else 0.5
+        )
 
         if turnover < min_turnover:
             action = SignalAction.WATCH
@@ -49,9 +54,24 @@ class MeanReversionStrategy(BaseStrategy):
                 f"Mean-reversion setup exists, but fundamental score {fundamental_score:.3f} is too weak; "
                 "downgraded to WATCH."
             )
+        if action == SignalAction.BUY and tushare_advanced_available and tushare_advanced_score < 0.30:
+            action = SignalAction.WATCH
+            reason = (
+                f"Mean-reversion setup exists, but tushare advanced score {tushare_advanced_score:.3f} is too weak; "
+                "downgraded to WATCH."
+            )
+        if action == SignalAction.BUY and disclosure_risk >= 0.80:
+            action = SignalAction.WATCH
+            reason = f"Mean-reversion setup blocked by disclosure risk ({disclosure_risk:.2f})."
 
         base_confidence = min(0.95, max(0.2, abs(z) / 3))
-        confidence = base_confidence if not fundamental_available else min(0.95, max(0.2, 0.7 * base_confidence + 0.3 * fundamental_score))
+        if not fundamental_available and not tushare_advanced_available:
+            confidence = base_confidence
+        else:
+            confidence = min(
+                0.95,
+                max(0.2, 0.60 * base_confidence + 0.25 * fundamental_score + 0.15 * (1.0 - disclosure_risk)),
+            )
         return [
             SignalCandidate(
                 symbol=str(latest["symbol"]),
@@ -66,6 +86,8 @@ class MeanReversionStrategy(BaseStrategy):
                     "turnover20": round(turnover, 2),
                     "fundamental_score": round(fundamental_score, 4),
                     "fundamental_available": fundamental_available,
+                    "tushare_advanced_score": round(tushare_advanced_score, 4),
+                    "tushare_disclosure_risk_score": round(disclosure_risk, 4),
                 },
             )
         ]

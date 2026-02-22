@@ -10,6 +10,7 @@ from urllib import parse, request
 import zipfile
 from uuid import uuid4
 
+from trading_assistant.autotune.service import AutoTuneService
 from trading_assistant.audit.service import AuditService
 from trading_assistant.core.models import (
     ComplianceEvidenceBundleSignature,
@@ -35,6 +36,7 @@ class ComplianceEvidenceService:
         strategy_gov: StrategyGovernanceService,
         event_connector: EventConnectorService,
         event_nlp: EventNLPGovernanceService,
+        autotune: AutoTuneService | None = None,
         default_signing_secret: str = "",
         default_vault_dir: str = "reports/compliance_vault",
         default_external_worm_endpoint: str = "",
@@ -47,6 +49,7 @@ class ComplianceEvidenceService:
         self.strategy_gov = strategy_gov
         self.event_connector = event_connector
         self.event_nlp = event_nlp
+        self.autotune = autotune
         self.default_signing_secret = (default_signing_secret or "").strip()
         self.default_vault_dir = default_vault_dir
         self.default_external_worm_endpoint = (default_external_worm_endpoint or "").strip()
@@ -107,6 +110,35 @@ class ComplianceEvidenceService:
         )
         summary["audit_events"] = len(audit_events)
         summary["audit_chain_valid"] = chain.valid
+
+        autotune_events = self.audit.query(event_type="autotune", limit=min(req.audit_event_limit, 5000))
+        files.append(
+            self._write_jsonl(
+                bundle_dir=bundle_dir,
+                relative_path="autotune_events.jsonl",
+                rows=[row.model_dump(mode="json") for row in autotune_events],
+            )
+        )
+        summary["autotune_events"] = len(autotune_events)
+        if self.autotune is not None:
+            profiles = self.autotune.list_profiles(limit=2000)
+            rollout_rules = self.autotune.list_rollout_rules(limit=2000)
+            files.append(
+                self._write_json(
+                    bundle_dir=bundle_dir,
+                    relative_path="autotune_profiles.json",
+                    payload=[x.model_dump(mode="json") for x in profiles],
+                )
+            )
+            files.append(
+                self._write_json(
+                    bundle_dir=bundle_dir,
+                    relative_path="autotune_rollout_rules.json",
+                    payload=[x.model_dump(mode="json") for x in rollout_rules],
+                )
+            )
+            summary["autotune_profiles"] = len(profiles)
+            summary["autotune_rollout_rules"] = len(rollout_rules)
 
         versions = self.strategy_gov.list_versions(
             strategy_name=req.strategy_name,

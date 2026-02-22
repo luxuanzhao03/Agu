@@ -11,15 +11,18 @@
 ## 已实现能力范围
 
 1. 数据层（多数据源回退）
-- `akshare` 优先，`tushare` 回退。
+- `tushare` 优先，`akshare` 回退（当 `tushare` token 缺失或接口失败时自动降级）。
 - 统一日线数据结构。
 - 交易日历接口。
 - 财报快照接口（按标的 + as_of 获取最近可用财务指标）。
+- 高级数据能力目录（按积分可用性）与批量预取接口（支持逐数据集成功/失败/跳过状态）。
 
 2. 因子引擎
 - 趋势、动量、波动率、ATR、z-score、流动性等因子。
 - 基本面因子（ROE、营收同比、净利同比、毛利率、负债率、现金流质量）。
 - 基本面综合评分（`fundamental_score`）与完整度评分（`fundamental_completeness`）。
+- `tushare` 高级字段因子：估值/资金流/可交易性子分（`tushare_valuation_score`, `tushare_moneyflow_score`, `tushare_tradability_score`）。
+- 高级综合分：`tushare_advanced_score`（含可用度 `tushare_advanced_completeness`）。
 
 3. 策略引擎
 - `trend_following`
@@ -50,8 +53,10 @@
 - 单标的 long-only 基线回测。
 - 滑点 + 手续费建模。
 - A股费用细化（最低佣金、卖出印花税、过户费）。
+- 拟真执行成本模型（分档滑点、冲击成本、停牌/涨跌停/一字板成交概率、部分成交）。
 - T+1 可卖数量逻辑。
 - 权益曲线、成交记录与关键指标。
+- 多标的组合级净值回测（调仓周期、仓位上限、行业/主题约束、资金利用率）。
 
 7. 审计链路
 - 基于 SQLite 的审计事件存储。
@@ -74,6 +79,8 @@
 - 信号记录持久化。
 - 人工执行回写。
 - 回放报表：跟随率、延迟、执行追踪。
+- 偏差归因报表：`NO_EXECUTION` / `ACTION_MISMATCH` / `EXECUTION_DELAY` / `HIGH_SLIPPAGE`。
+- 研究到执行闭环报表（`closure`）：原因统计 + 参数修正建议。
 
 12. 研究工作流编排
 - 多标的批量信号生成。
@@ -104,7 +111,7 @@
 - 事件时间戳 PIT 校验接口。
 
 17. 报告中心
-- 信号/风控/回放报告生成。
+- 信号/风控/回放/closure 报告生成。
 - 支持带水印 Markdown 导出及可选文件落盘。
 
 18. 数据许可证治理
@@ -113,7 +120,7 @@
 - market/signal/backtest/pipeline/research/report/audit 路径均接入许可证校验与审计元数据。
 
 19. 运维作业中心
-- 作业定义注册（`pipeline_daily` / `research_workflow` / `report_generate` / `event_connector_sync` / `event_connector_replay` / `compliance_evidence_export` / `alert_oncall_reconcile`）。
+- 作业定义注册（`pipeline_daily` / `research_workflow` / `report_generate` / `event_connector_sync` / `event_connector_replay` / `compliance_evidence_export` / `alert_oncall_reconcile` / `auto_tune` / `execution_review`）。
 - 手工触发、运行历史、结构化运行摘要。
 - register/trigger 全链路审计。
 
@@ -157,10 +164,13 @@
 23. 前端投研交易工作台
 - 页面入口：`GET /trading/workbench`。
 - 静态资源：`/ui/trading-workbench/*`。
-- 三段工作流：策略参数、结果可视化、执行回写。
+- 四段工作流：策略参数、自动调参、结果可视化、执行回写。
 - 集成 `/strategies`, `/signals/generate`, `/backtest/run`, `/research/run`, `/replay/*`。
+- 集成 `/autotune/*` 完整闭环（运行、候选榜、基线对比、画像激活/回滚、灰度规则）。
 - 增加 K 线/价格趋势叠加信号（`/market/bars`）。
 - 增加组合权重 + 行业暴露可视化与调仓联动（`/portfolio/rebalance/plan`）。
+- 增加组合净值回测展示（`/backtest/portfolio-run`）。
+- 增加偏差归因与 closure 报表展示（`/replay/attribution`, `/reports/generate`）。
 - 增加“财报评分”列（信号表 + 研究候选表），展示每个标的当前基本面评分。
 - 新增“小资金模式”参数区（本金、安全边际、费用参数）与结果提示列。
 - 页头可跳主界面（`/ui/`）与运维看板（`/ops/dashboard`）。
@@ -181,6 +191,26 @@
 26. 部署清单
 - 单机 Docker 部署（`deploy/docker-compose.single-node.yml`）。
 - 私有云 Kubernetes 基线（`deploy/k8s/private-cloud/trading-assistant.yaml`）。
+
+27. 自动调参闭环
+- 自动参数搜索（默认策略模板 + 自定义搜索空间）。
+- 训练/验证分段回测评分（收益/回撤/夏普/成交活跃度综合目标函数）。
+- walk-forward 多窗口稳定性评估（`walk_forward_slices`）。
+- 过拟合抑制项：训练-验证 gap 惩罚、收益稳定性方差惩罚、参数漂移惩罚。
+- 产出候选排行榜与最优参数，支持阈值门槛自动生效。
+- 自动参数画像（global 或 symbol 作用域）持久化。
+- 画像操作支持：一键激活、回滚到上一版本、按策略/按标的灰度启停规则。
+- 运行时自动覆盖：`signals/backtest/research/pipeline` 可自动读取活动画像，再由请求参数做最终覆盖（显式参数优先）。
+- 可选自动创建策略治理草稿（参数哈希 + 版本号），衔接审批流程。
+
+28. 数据层增量缓存
+- 本地时序缓存（SQLite）+ 增量补拉，避免重复拉取行情数据。
+- 支持缓存覆盖查询与缺口补齐，提升批量回测和调参吞吐。
+- 数据质量报告新增字段级评分与总体评分。
+
+29. 合规证据包增强
+- 证据包新增自动调参实验与生效记录（审计事件、画像快照、灰度规则）。
+- 支持后续审计追踪“实验 -> 生效 -> 回滚”全链路证据。
 
 ## 快速开始
 
@@ -209,6 +239,8 @@ start_system_windows.bat
 - `docs/system_user_guide_zh.md`
 - `docs/system_quick_start_10min_zh.md`（10 分钟快速上手）
 - `docs/system_pretrade_checklist_zh.md`（开盘前/盘中/收盘后检查清单）
+- `docs/tushare_2120_capability_map_zh.md`（2120 积分数据能力映射与接入说明）
+- `docs/runbooks/autotune_experiment_rollout.md`（自动调参与灰度生效 runbook）
 
 一键启动行为：
 - 自动切换到项目根目录（`%~dp0`）
@@ -286,6 +318,8 @@ AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admi
 - `GET /health`
 - `GET /market/bars`
 - `GET /market/calendar`
+- `GET /market/tushare/capabilities`
+- `POST /market/tushare/prefetch`
 - `POST /data/quality/report`
 - `POST /data/pit/validate`
 - `POST /data/pit/validate-events`
@@ -350,6 +384,14 @@ AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admi
 - `GET /strategy-governance/latest-approved`
 - `GET /strategy-governance/decisions`
 - `GET /strategy-governance/policy`
+- `POST /autotune/run`
+- `GET /autotune/profiles`
+- `GET /autotune/profiles/active`
+- `POST /autotune/profiles/{profile_id}/activate`
+- `POST /autotune/profiles/rollback`
+- `POST /autotune/rollout/rules/upsert`
+- `GET /autotune/rollout/rules`
+- `DELETE /autotune/rollout/rules/{rule_id}`
 - `POST /signals/generate`
 - `POST /risk/check`
 - `POST /portfolio/risk/check`
@@ -357,11 +399,13 @@ AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admi
 - `POST /portfolio/rebalance/plan`
 - `POST /portfolio/stress-test`
 - `POST /backtest/run`
+- `POST /backtest/portfolio-run`
 - `POST /pipeline/daily-run`
 - `POST /replay/signals/record`
 - `GET /replay/signals`
 - `POST /replay/executions/record`
 - `GET /replay/report`
+- `GET /replay/attribution`
 - `POST /research/run`
 - `GET /audit/events`
 - `GET /audit/export`
@@ -431,6 +475,17 @@ FUNDAMENTAL_REQUIRE_DATA_FOR_BUY=false
 - `FUNDAMENTAL_BUY_WARNING_SCORE` / `FUNDAMENTAL_BUY_CRITICAL_SCORE`：买入信号的财报质量分级门槛。
 - `FUNDAMENTAL_REQUIRE_DATA_FOR_BUY`：若开启且取不到财报快照，买入信号会进入人工确认路径（WARNING）。
 
+## 市场数据缓存配置
+
+```text
+MARKET_DATA_CACHE_ENABLED=true
+MARKET_DATA_CACHE_DB_PATH=data/market_cache.db
+```
+
+说明：
+- `MARKET_DATA_CACHE_ENABLED=true` 时，数据层会先命中本地缓存，再按缺失日期区间增量补拉。
+- 对同一 `symbol + date range` 的回测/调参可显著减少重复外部请求。
+
 ## 小资金模式与费用模型配置
 
 ```text
@@ -444,6 +499,8 @@ DEFAULT_SLIPPAGE_RATE=0.0005
 FEE_MIN_COMMISSION_CNY=5
 FEE_STAMP_DUTY_SELL_RATE=0.0005
 FEE_TRANSFER_RATE=0.00001
+AUTOTUNE_RUNTIME_OVERRIDE_ENABLED=true
+AUTOTUNE_DB_PATH=data/autotune.db
 ```
 
 说明：
@@ -453,6 +510,7 @@ FEE_TRANSFER_RATE=0.00001
 - 前端策略页新增三档一键模板：`2000 / 5000 / 8000`，自动填充小资金策略与关键参数。
 - 回测中费用模型会计入最低佣金、卖出印花税、过户费，避免小本金回测被过度乐观高估。
 - 前端“策略与参数页”可按请求覆盖全局设置（`enable_small_capital_mode` / `small_capital_principal` / `small_capital_min_expected_edge_bps`）。
+- `AUTOTUNE_RUNTIME_OVERRIDE_ENABLED=true` 时，系统会自动读取当前策略的活动调参画像；请求里显式传入的 `strategy_params` 优先级更高，会覆盖自动画像的同名参数。
 
 ## 告警派发配置
 

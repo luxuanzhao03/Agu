@@ -37,3 +37,23 @@ def test_reporting_service_generates_replay_report(tmp_path: Path) -> None:
     service = ReportingService(replay=replay, audit=audit, output_dir=str(tmp_path / "reports"))
     result = service.generate(ReportGenerateRequest(report_type="replay", save_to_file=False))
     assert "Execution Replay Report" in result.content
+
+
+def test_reporting_service_generates_closure_report(tmp_path: Path) -> None:
+    audit = AuditService(AuditStore(str(tmp_path / "audit.db")))
+    replay = ReplayService(ReplayStore(str(tmp_path / "replay.db")))
+    replay.record_signal(
+        SignalDecisionRecord(
+            signal_id="sig-2",
+            symbol="000001",
+            strategy_name="trend_following",
+            trade_date=date(2025, 1, 2),
+            action=SignalAction.BUY,
+            confidence=0.8,
+            reason="x",
+            suggested_position=0.05,
+        )
+    )
+    service = ReportingService(replay=replay, audit=audit, output_dir=str(tmp_path / "reports"))
+    result = service.generate(ReportGenerateRequest(report_type="closure", save_to_file=False))
+    assert "Execution Closure Report" in result.content

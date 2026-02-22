@@ -16,7 +16,7 @@
 
 ```mermaid
 flowchart TD
-    A[数据源：akshare 优先，tushare 回退] --> B[因子引擎]
+    A[数据源：tushare 优先，akshare 回退] --> B[因子引擎]
     B --> C[策略注册中心 + 策略运行时]
     C --> D[风险引擎]
     D --> E[信号服务 / 交易准备单]
@@ -28,8 +28,8 @@ flowchart TD
 
 ### 3.1 数据层
 - `data/base.py`：数据提供器抽象。
-- `data/akshare_provider.py`：主数据提供器实现。
-- `data/tushare_provider.py`：回退数据提供器实现。
+- `data/tushare_provider.py`：主数据提供器实现（支持高级积分数据目录、批量预取、日线自动融合）。
+- `data/akshare_provider.py`：回退数据提供器实现。
 - `data/composite_provider.py`：优先级路由 + 来源追踪。
 - 新增财报快照读取能力：`get_fundamental_snapshot(symbol, as_of)`。
 - `fundamentals/service.py`：财报快照标准化注入 + PIT 可用性 + 陈旧度标记。
@@ -48,6 +48,7 @@ flowchart TD
   - 基本面特征：`roe`, `revenue_yoy`, `net_profit_yoy`, `gross_margin`, `debt_to_asset`, `ocf_to_profit`
   - 基本面子评分：`fundamental_profitability_score`, `fundamental_growth_score`, `fundamental_quality_score`, `fundamental_leverage_score`
   - 基本面总评分：`fundamental_score` + `fundamental_completeness`
+  - Tushare 高级特征评分：`tushare_valuation_score`, `tushare_moneyflow_score`, `tushare_tradability_score`, `tushare_advanced_score`
 
 ### 3.3 策略层
 - `strategy/base.py`：策略契约与上下文。
@@ -194,6 +195,8 @@ flowchart TD
 - `/health`
 - `/market/bars`
 - `/market/calendar`
+- `/market/tushare/capabilities`
+- `/market/tushare/prefetch`
 - `/data/quality/report`
 - `/data/pit/validate`
 - `/data/pit/validate-events`

@@ -46,6 +46,7 @@ class PortfolioSnapshot(BaseModel):
     peak_value: float = Field(default=0.0, ge=0.0)
     current_drawdown: float = Field(default=0.0, ge=0.0, le=1.0)
     industry_exposure: dict[str, float] = Field(default_factory=dict)
+    theme_exposure: dict[str, float] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _normalize_drawdown(self) -> "PortfolioSnapshot":
@@ -70,6 +71,13 @@ class RiskCheckRequest(BaseModel):
     fundamental_available: bool = False
     fundamental_pit_ok: bool | None = None
     fundamental_stale_days: int | None = Field(default=None, ge=0)
+    tushare_disclosure_risk_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    tushare_audit_opinion_risk: float | None = Field(default=None, ge=0.0, le=1.0)
+    tushare_forecast_pchg_mid: float | None = None
+    tushare_pledge_ratio: float | None = Field(default=None, ge=0.0)
+    tushare_share_float_unlock_ratio: float | None = None
+    tushare_holder_crowding_ratio: float | None = None
+    tushare_overhang_risk_score: float | None = Field(default=None, ge=0.0, le=1.0)
     enable_small_capital_mode: bool = False
     small_capital_principal: float | None = Field(default=None, gt=0)
     available_cash: float | None = Field(default=None, ge=0)
@@ -122,6 +130,7 @@ class GenerateSignalRequest(BaseModel):
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
     event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
+    use_autotune_profile: bool = True
     current_position: Position | None = None
     portfolio_snapshot: PortfolioSnapshot | None = None
     industry: str | None = None
@@ -230,6 +239,7 @@ class BacktestRequest(BaseModel):
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
     event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
+    use_autotune_profile: bool = True
     initial_cash: float = Field(default=1_000_000.0, gt=0)
     commission_rate: float = Field(default=0.0003, ge=0.0, le=0.02)
     slippage_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
@@ -238,6 +248,10 @@ class BacktestRequest(BaseModel):
     transfer_fee_rate: float = Field(default=0.00001, ge=0.0, le=0.01)
     lot_size: int = Field(default=100, ge=1)
     max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
+    enable_realistic_cost_model: bool = True
+    impact_cost_coeff: float = Field(default=0.18, ge=0.0, le=5.0)
+    impact_cost_exponent: float = Field(default=0.60, ge=0.1, le=2.0)
+    fill_probability_floor: float = Field(default=0.02, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def _validate_dates(self) -> "BacktestRequest":
@@ -284,11 +298,388 @@ class BacktestResult(BaseModel):
     equity_curve: list[EquityPoint]
 
 
+class PortfolioBacktestRequest(BaseModel):
+    symbols: list[str] = Field(default_factory=list)
+    start_date: date
+    end_date: date
+    strategy_name: str = Field(default="multi_factor")
+    strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
+    industry_map: dict[str, str] = Field(default_factory=dict)
+    theme_map: dict[str, str] = Field(default_factory=dict)
+    rebalance_interval_days: int = Field(default=5, ge=1, le=250)
+    initial_cash: float = Field(default=1_000_000.0, gt=0)
+    target_gross_exposure: float = Field(default=0.95, gt=0.0, le=1.0)
+    cash_reserve_ratio: float = Field(default=0.05, ge=0.0, le=0.95)
+    max_single_position: float = Field(default=0.15, gt=0.0, le=1.0)
+    max_industry_exposure: float = Field(default=0.35, gt=0.0, le=1.0)
+    max_theme_exposure: float = Field(default=0.45, gt=0.0, le=1.0)
+    lot_size: int = Field(default=100, ge=1)
+    commission_rate: float = Field(default=0.0003, ge=0.0, le=0.02)
+    slippage_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
+    min_commission_cny: float = Field(default=5.0, ge=0.0, le=500.0)
+    stamp_duty_sell_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
+    transfer_fee_rate: float = Field(default=0.00001, ge=0.0, le=0.01)
+    enable_realistic_cost_model: bool = True
+    impact_cost_coeff: float = Field(default=0.18, ge=0.0, le=5.0)
+    impact_cost_exponent: float = Field(default=0.60, ge=0.1, le=2.0)
+    fill_probability_floor: float = Field(default=0.02, ge=0.0, le=1.0)
+    enable_portfolio_risk_control: bool = True
+    risk_max_drawdown: float = Field(default=0.12, ge=0.0, le=1.0)
+    risk_max_consecutive_losses: int = Field(default=3, ge=1, le=200)
+    risk_max_daily_loss: float = Field(default=0.03, ge=0.0, le=1.0)
+    risk_var_confidence: float = Field(default=0.95, ge=0.5, le=0.999)
+    risk_max_var: float = Field(default=0.04, ge=0.0, le=1.0)
+    risk_max_es: float = Field(default=0.06, ge=0.0, le=1.0)
+    risk_return_lookback_days: int = Field(default=252, ge=20, le=5000)
+    risk_loss_streak_lookback_trades: int = Field(default=300, ge=10, le=10000)
+    use_autotune_profile: bool = True
+    enable_event_enrichment: bool = False
+    enable_fundamental_enrichment: bool = True
+    fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
+    event_lookback_days: int = Field(default=30, ge=1, le=3650)
+    event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
+
+    @model_validator(mode="after")
+    def _validate_dates(self) -> "PortfolioBacktestRequest":
+        if self.start_date > self.end_date:
+            raise ValueError("start_date must be <= end_date")
+        if not self.symbols:
+            raise ValueError("symbols must not be empty")
+        return self
+
+
+class PortfolioBacktestTrade(BaseModel):
+    date: date
+    symbol: str
+    action: SignalAction
+    price: float
+    quantity: int
+    notional: float
+    fee: float
+    fill_ratio: float
+    reason: str
+
+
+class PortfolioEquityPoint(BaseModel):
+    date: date
+    equity: float
+    cash: float
+    gross_exposure: float
+    utilization: float
+    drawdown: float
+
+
+class PortfolioBacktestMetrics(BaseModel):
+    total_return: float
+    annualized_return: float
+    max_drawdown: float
+    sharpe: float
+    trade_count: int
+    avg_utilization: float
+    avg_cash_ratio: float
+    industry_breach_count: int = 0
+    theme_breach_count: int = 0
+    risk_blocked_days: int = 0
+    risk_warning_days: int = 0
+
+
+class PortfolioBacktestResult(BaseModel):
+    strategy_name: str
+    symbols: list[str] = Field(default_factory=list)
+    start_date: date
+    end_date: date
+    metrics: PortfolioBacktestMetrics
+    trades: list[PortfolioBacktestTrade] = Field(default_factory=list)
+    equity_curve: list[PortfolioEquityPoint] = Field(default_factory=list)
+    final_weights: dict[str, float] = Field(default_factory=dict)
+    industry_exposure: dict[str, float] = Field(default_factory=dict)
+    theme_exposure: dict[str, float] = Field(default_factory=dict)
+
+
+class AutoTuneApplyScope(str, Enum):
+    GLOBAL = "GLOBAL"
+    SYMBOL = "SYMBOL"
+
+
+class AutoTuneRunRequest(BaseModel):
+    symbol: str
+    start_date: date
+    end_date: date
+    strategy_name: str = Field(default="trend_following")
+    base_strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
+    search_space: dict[str, list[float | int | str | bool]] = Field(default_factory=dict)
+    max_combinations: int = Field(default=120, ge=1, le=5000)
+    validation_ratio: float = Field(default=0.20, ge=0.0, le=0.8)
+    validation_weight: float = Field(default=0.40, ge=0.0, le=1.0)
+    min_train_bars: int = Field(default=120, ge=20, le=5000)
+    min_validation_bars: int = Field(default=40, ge=10, le=5000)
+    min_trade_count: int = Field(default=1, ge=0, le=5000)
+    low_trade_penalty: float = Field(default=0.15, ge=0.0, le=5.0)
+    objective_weight_total_return: float = Field(default=0.55, ge=0.0, le=5.0)
+    objective_weight_annualized_return: float = Field(default=0.20, ge=0.0, le=5.0)
+    objective_weight_sharpe: float = Field(default=0.20, ge=0.0, le=5.0)
+    objective_weight_win_rate: float = Field(default=0.10, ge=0.0, le=5.0)
+    objective_weight_trade_count: float = Field(default=0.05, ge=0.0, le=5.0)
+    objective_weight_max_drawdown: float = Field(default=0.35, ge=0.0, le=5.0)
+    objective_weight_blocked_ratio: float = Field(default=0.05, ge=0.0, le=5.0)
+    objective_weight_overfit_gap: float = Field(default=0.20, ge=0.0, le=5.0)
+    objective_weight_stability: float = Field(default=0.15, ge=0.0, le=5.0)
+    objective_weight_param_drift: float = Field(default=0.10, ge=0.0, le=5.0)
+    objective_weight_return_variance: float = Field(default=0.08, ge=0.0, le=5.0)
+    enable_event_enrichment: bool = False
+    enable_fundamental_enrichment: bool = True
+    enable_small_capital_mode: bool = False
+    small_capital_principal: float | None = Field(default=None, gt=0)
+    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
+    fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
+    event_lookback_days: int = Field(default=30, ge=1, le=3650)
+    event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
+    initial_cash: float = Field(default=1_000_000.0, gt=0)
+    commission_rate: float = Field(default=0.0003, ge=0.0, le=0.02)
+    slippage_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
+    min_commission_cny: float = Field(default=5.0, ge=0.0, le=500.0)
+    stamp_duty_sell_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
+    transfer_fee_rate: float = Field(default=0.00001, ge=0.0, le=0.01)
+    lot_size: int = Field(default=100, ge=1)
+    max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
+    enable_realistic_cost_model: bool = True
+    impact_cost_coeff: float = Field(default=0.18, ge=0.0, le=5.0)
+    impact_cost_exponent: float = Field(default=0.60, ge=0.1, le=2.0)
+    fill_probability_floor: float = Field(default=0.02, ge=0.0, le=1.0)
+    stability_eval_top_n: int = Field(default=24, ge=0, le=500)
+    walk_forward_slices: int = Field(default=4, ge=0, le=12)
+    low_sample_penalty: float = Field(default=0.10, ge=0.0, le=5.0)
+    auto_apply: bool = True
+    apply_scope: AutoTuneApplyScope = AutoTuneApplyScope.GLOBAL
+    min_improvement_to_apply: float = Field(default=0.0, ge=-5.0, le=5.0)
+    apply_require_validation: bool = True
+    apply_min_validation_total_return: float = Field(default=0.0, ge=-1.0, le=5.0)
+    apply_max_train_validation_gap: float = Field(default=0.45, ge=0.0, le=5.0)
+    apply_min_walk_forward_samples: int = Field(default=2, ge=0, le=20)
+    create_governance_draft: bool = True
+    governance_submit_review: bool = False
+    run_by: str = "autotune"
+
+    @model_validator(mode="after")
+    def _validate_dates(self) -> "AutoTuneRunRequest":
+        if self.start_date > self.end_date:
+            raise ValueError("start_date must be <= end_date")
+        return self
+
+
+class AutoTuneCandidateResult(BaseModel):
+    rank: int
+    strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
+    objective_score: float
+    train_metrics: BacktestMetrics
+    validation_metrics: BacktestMetrics | None = None
+    train_score: float
+    validation_score: float | None = None
+    overfit_gap: float = 0.0
+    overfit_penalty: float = 0.0
+    stability_score_std: float | None = None
+    stability_penalty: float = 0.0
+    walk_forward_return_std: float | None = None
+    return_variance_penalty: float = 0.0
+    param_drift_score: float | None = None
+    param_drift_penalty: float = 0.0
+    low_sample_penalty: float = 0.0
+    walk_forward_samples: int = 0
+    apply_eligible: bool = True
+    apply_guard_reason: str | None = None
+
+
+class AutoTuneProfileRecord(BaseModel):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    strategy_name: str
+    scope: AutoTuneApplyScope
+    symbol: str | None = None
+    strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
+    objective_score: float
+    validation_total_return: float | None = None
+    source_run_id: str
+    active: bool = True
+    note: str = ""
+
+
+class AutoTuneRunResult(BaseModel):
+    run_id: str
+    strategy_name: str
+    symbol: str
+    start_date: date
+    end_date: date
+    provider: str
+    evaluated_count: int
+    candidates: list[AutoTuneCandidateResult] = Field(default_factory=list)
+    baseline: AutoTuneCandidateResult | None = None
+    best: AutoTuneCandidateResult | None = None
+    improvement_vs_baseline: float | None = None
+    applied: bool = False
+    applied_profile: AutoTuneProfileRecord | None = None
+    governance_draft_id: int | None = None
+    governance_version: str | None = None
+    apply_decision: str = ""
+    message: str = ""
+
+
+class StrategyChallengeRequest(BaseModel):
+    symbol: str
+    start_date: date
+    end_date: date
+    strategy_names: list[str] = Field(default_factory=list)
+    base_strategy_params_map: dict[str, dict[str, float | int | str | bool]] = Field(default_factory=dict)
+    search_space_map: dict[str, dict[str, list[float | int | str | bool]]] = Field(default_factory=dict)
+
+    per_strategy_max_combinations: int = Field(default=120, ge=1, le=5000)
+    validation_ratio: float = Field(default=0.20, ge=0.0, le=0.8)
+    validation_weight: float = Field(default=0.40, ge=0.0, le=1.0)
+    min_train_bars: int = Field(default=120, ge=20, le=5000)
+    min_validation_bars: int = Field(default=40, ge=10, le=5000)
+    min_trade_count: int = Field(default=1, ge=0, le=5000)
+    low_trade_penalty: float = Field(default=0.15, ge=0.0, le=5.0)
+    objective_weight_total_return: float = Field(default=0.55, ge=0.0, le=5.0)
+    objective_weight_annualized_return: float = Field(default=0.20, ge=0.0, le=5.0)
+    objective_weight_sharpe: float = Field(default=0.20, ge=0.0, le=5.0)
+    objective_weight_win_rate: float = Field(default=0.10, ge=0.0, le=5.0)
+    objective_weight_trade_count: float = Field(default=0.05, ge=0.0, le=5.0)
+    objective_weight_max_drawdown: float = Field(default=0.35, ge=0.0, le=5.0)
+    objective_weight_blocked_ratio: float = Field(default=0.05, ge=0.0, le=5.0)
+    objective_weight_overfit_gap: float = Field(default=0.20, ge=0.0, le=5.0)
+    objective_weight_stability: float = Field(default=0.15, ge=0.0, le=5.0)
+    objective_weight_param_drift: float = Field(default=0.10, ge=0.0, le=5.0)
+    objective_weight_return_variance: float = Field(default=0.08, ge=0.0, le=5.0)
+    stability_eval_top_n: int = Field(default=24, ge=0, le=500)
+    walk_forward_slices: int = Field(default=4, ge=0, le=12)
+    low_sample_penalty: float = Field(default=0.10, ge=0.0, le=5.0)
+
+    enable_event_enrichment: bool = False
+    enable_fundamental_enrichment: bool = True
+    enable_small_capital_mode: bool = False
+    small_capital_principal: float | None = Field(default=None, gt=0)
+    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
+    fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
+    event_lookback_days: int = Field(default=30, ge=1, le=3650)
+    event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
+    initial_cash: float = Field(default=1_000_000.0, gt=0)
+    commission_rate: float = Field(default=0.0003, ge=0.0, le=0.02)
+    slippage_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
+    min_commission_cny: float = Field(default=5.0, ge=0.0, le=500.0)
+    stamp_duty_sell_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
+    transfer_fee_rate: float = Field(default=0.00001, ge=0.0, le=0.01)
+    lot_size: int = Field(default=100, ge=1)
+    max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
+    enable_realistic_cost_model: bool = True
+    impact_cost_coeff: float = Field(default=0.18, ge=0.0, le=5.0)
+    impact_cost_exponent: float = Field(default=0.60, ge=0.1, le=2.0)
+    fill_probability_floor: float = Field(default=0.02, ge=0.0, le=1.0)
+
+    gate_require_validation: bool = True
+    gate_min_validation_total_return: float = Field(default=0.0, ge=-1.0, le=5.0)
+    gate_max_validation_drawdown: float = Field(default=0.25, ge=0.0, le=1.0)
+    gate_min_validation_sharpe: float = Field(default=0.0, ge=-10.0, le=20.0)
+    gate_min_validation_trade_count: int = Field(default=1, ge=0, le=10000)
+    gate_min_walk_forward_samples: int = Field(default=2, ge=0, le=50)
+    gate_max_walk_forward_return_std: float = Field(default=0.20, ge=0.0, le=5.0)
+
+    rank_weight_validation_return: float = Field(default=0.55, ge=0.0, le=5.0)
+    rank_weight_validation_sharpe: float = Field(default=0.25, ge=0.0, le=5.0)
+    rank_weight_stability: float = Field(default=0.20, ge=0.0, le=5.0)
+    rank_weight_drawdown_penalty: float = Field(default=0.35, ge=0.0, le=5.0)
+    rank_weight_variance_penalty: float = Field(default=0.20, ge=0.0, le=5.0)
+
+    rollout_gray_days: int = Field(default=10, ge=7, le=20)
+    run_by: str = "strategy_challenge"
+
+    @model_validator(mode="after")
+    def _validate_dates(self) -> "StrategyChallengeRequest":
+        if self.start_date > self.end_date:
+            raise ValueError("start_date must be <= end_date")
+        return self
+
+
+class StrategyChallengeStrategyResult(BaseModel):
+    strategy_name: str
+    provider: str = ""
+    autotune_run_id: str | None = None
+    evaluated_count: int = 0
+    best_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
+    best_objective_score: float | None = None
+    validation_metrics: BacktestMetrics | None = None
+    full_backtest_metrics: BacktestMetrics | None = None
+    walk_forward_samples: int = 0
+    walk_forward_return_std: float | None = None
+    stability_penalty: float = 0.0
+    return_variance_penalty: float = 0.0
+    param_drift_penalty: float = 0.0
+    qualified: bool = False
+    qualification_reasons: list[str] = Field(default_factory=list)
+    ranking_score: float | None = None
+    error: str | None = None
+
+
+class StrategyChallengeRolloutPlan(BaseModel):
+    enabled: bool = False
+    strategy_name: str | None = None
+    symbol: str | None = None
+    gray_days: int = 0
+    activation_scope: AutoTuneApplyScope = AutoTuneApplyScope.SYMBOL
+    rollback_triggers: list[str] = Field(default_factory=list)
+
+
+class StrategyChallengeResult(BaseModel):
+    run_id: str
+    generated_at: datetime
+    symbol: str
+    start_date: date
+    end_date: date
+    strategy_names: list[str] = Field(default_factory=list)
+    evaluated_count: int = 0
+    qualified_count: int = 0
+    champion_strategy: str | None = None
+    runner_up_strategy: str | None = None
+    market_fit_summary: str = ""
+    rollout_plan: StrategyChallengeRolloutPlan | None = None
+    results: list[StrategyChallengeStrategyResult] = Field(default_factory=list)
+
+
+class AutoTuneRollbackRequest(BaseModel):
+    strategy_name: str
+    symbol: str | None = None
+    scope: AutoTuneApplyScope | None = None
+
+
+class AutoTuneRolloutRuleUpsertRequest(BaseModel):
+    strategy_name: str
+    symbol: str | None = None
+    enabled: bool = True
+    note: str = ""
+
+
+class AutoTuneRolloutRuleRecord(BaseModel):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    strategy_name: str
+    symbol: str | None = None
+    enabled: bool = True
+    note: str = ""
+
+
 class PortfolioRiskRequest(BaseModel):
     portfolio: PortfolioSnapshot
     pending_signal: SignalCandidate | None = None
     max_drawdown: float = Field(default=0.12, ge=0.0, le=1.0)
     max_industry_exposure: float = Field(default=0.2, ge=0.0, le=1.0)
+    max_theme_exposure: float = Field(default=0.3, ge=0.0, le=1.0)
+    daily_returns: list[float] = Field(default_factory=list)
+    recent_trade_pnls: list[float] = Field(default_factory=list)
+    max_consecutive_losses: int = Field(default=3, ge=1, le=200)
+    max_daily_loss: float = Field(default=0.03, ge=0.0, le=1.0)
+    var_confidence: float = Field(default=0.95, ge=0.5, le=0.999)
+    max_var: float = Field(default=0.04, ge=0.0, le=1.0)
+    max_es: float = Field(default=0.06, ge=0.0, le=1.0)
 
 
 class PortfolioRiskResult(BaseModel):
@@ -296,6 +687,8 @@ class PortfolioRiskResult(BaseModel):
     level: SignalLevel
     summary: str
     hits: list[RuleHit] = Field(default_factory=list)
+    var_value: float | None = None
+    es_value: float | None = None
 
 
 class AuditEventCreate(BaseModel):
@@ -330,6 +723,7 @@ class PipelineRunRequest(BaseModel):
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
     event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
+    use_autotune_profile: bool = True
     industry_map: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -414,6 +808,8 @@ class DataQualityReport(BaseModel):
     row_count: int
     issues: list[DataQualityIssue] = Field(default_factory=list)
     passed: bool
+    field_scores: dict[str, float] = Field(default_factory=dict)
+    overall_score: float = 0.0
 
 
 class PITValidationIssue(BaseModel):
@@ -563,6 +959,162 @@ class ExecutionReplayReport(BaseModel):
     avg_delay_days: float = 0.0
 
 
+class ExecutionAttributionItem(BaseModel):
+    signal_id: str
+    symbol: str
+    reason_code: str
+    severity: SignalLevel
+    detail: str
+    suggestion: str = ""
+
+
+class ExecutionAttributionReport(BaseModel):
+    sample_size: int = 0
+    follow_rate: float = 0.0
+    avg_delay_days: float = 0.0
+    avg_slippage_bps: float = 0.0
+    reason_counts: dict[str, int] = Field(default_factory=dict)
+    suggestions: list[str] = Field(default_factory=list)
+    items: list[ExecutionAttributionItem] = Field(default_factory=list)
+
+
+class ManualHoldingSide(str, Enum):
+    BUY = "BUY"
+    SELL = "SELL"
+
+
+class ManualHoldingTradeCreate(BaseModel):
+    trade_date: date
+    symbol: str
+    symbol_name: str = ""
+    side: ManualHoldingSide
+    price: float = Field(gt=0.0)
+    lots: int = Field(ge=1, le=1_000_000)
+    lot_size: int = Field(default=100, ge=1, le=10_000)
+    fee: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
+    note: str = ""
+
+
+class ManualHoldingTradeRecord(BaseModel):
+    id: int
+    created_at: datetime
+    trade_date: date
+    symbol: str
+    symbol_name: str = ""
+    side: ManualHoldingSide
+    price: float
+    lots: int
+    lot_size: int
+    quantity: int
+    fee: float = 0.0
+    note: str = ""
+
+
+class ManualHoldingPositionItem(BaseModel):
+    symbol: str
+    symbol_name: str = ""
+    quantity: int = 0
+    lots: int = 0
+    avg_cost: float = 0.0
+    latest_price: float = 0.0
+    latest_close_date: date | None = None
+    day_change_pct: float | None = None
+    cost_value: float = 0.0
+    market_value: float = 0.0
+    unrealized_pnl: float = 0.0
+    unrealized_pnl_pct: float = 0.0
+    weight: float = 0.0
+    momentum20: float | None = None
+    volatility20: float | None = None
+    fundamental_score: float | None = None
+    tushare_advanced_score: float | None = None
+    market_comment: str = ""
+
+
+class ManualHoldingPortfolioSummary(BaseModel):
+    as_of_date: date
+    position_count: int = 0
+    total_quantity: int = 0
+    total_cost_value: float = 0.0
+    total_market_value: float = 0.0
+    total_unrealized_pnl: float = 0.0
+    total_unrealized_pnl_pct: float = 0.0
+
+
+class ManualHoldingPositionsResult(BaseModel):
+    as_of_date: date
+    provider: str = ""
+    summary: ManualHoldingPortfolioSummary
+    positions: list[ManualHoldingPositionItem] = Field(default_factory=list)
+
+
+class HoldingRecommendationAction(str, Enum):
+    HOLD = "HOLD"
+    ADD = "ADD"
+    REDUCE = "REDUCE"
+    EXIT = "EXIT"
+    BUY_NEW = "BUY_NEW"
+    WATCH = "WATCH"
+
+
+class ManualHoldingAnalysisRequest(BaseModel):
+    as_of_date: date
+    strategy_name: str = Field(default="multi_factor")
+    strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
+    use_autotune_profile: bool = True
+    available_cash: float = Field(default=0.0, ge=0.0)
+    candidate_symbols: list[str] = Field(default_factory=list)
+    max_new_buys: int = Field(default=3, ge=0, le=50)
+    max_single_position_ratio: float = Field(default=0.35, gt=0.0, le=1.0)
+    lot_size: int = Field(default=100, ge=1, le=10_000)
+
+
+class ManualHoldingAnalysisPosition(BaseModel):
+    symbol: str
+    symbol_name: str = ""
+    quantity: int = 0
+    lots: int = 0
+    latest_price: float = 0.0
+    day_change_pct: float | None = None
+    market_value: float = 0.0
+    weight: float = 0.0
+    momentum20: float | None = None
+    volatility20: float | None = None
+    fundamental_score: float | None = None
+    expected_next_day_return: float = 0.0
+    up_probability: float = 0.5
+    strategy_signal: SignalAction = SignalAction.WATCH
+    suggested_action: HoldingRecommendationAction = HoldingRecommendationAction.HOLD
+    suggested_delta_lots: int = 0
+    analysis_note: str = ""
+
+
+class ManualHoldingRecommendationItem(BaseModel):
+    symbol: str
+    symbol_name: str = ""
+    action: HoldingRecommendationAction
+    target_lots: int = 0
+    delta_lots: int = 0
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    expected_next_day_return: float = 0.0
+    up_probability: float = 0.5
+    next_trade_date: date | None = None
+    rationale: str = ""
+    risk_flags: list[str] = Field(default_factory=list)
+
+
+class ManualHoldingAnalysisResult(BaseModel):
+    generated_at: datetime
+    as_of_date: date
+    next_trade_date: date | None = None
+    strategy_name: str
+    provider: str = ""
+    market_overview: str = ""
+    summary: ManualHoldingPortfolioSummary
+    positions: list[ManualHoldingAnalysisPosition] = Field(default_factory=list)
+    recommendations: list[ManualHoldingRecommendationItem] = Field(default_factory=list)
+
+
 class WorkflowSignalItem(BaseModel):
     symbol: str
     provider: str
@@ -595,6 +1147,7 @@ class ResearchWorkflowRequest(BaseModel):
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
     event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
+    use_autotune_profile: bool = True
     industry_map: dict[str, str] = Field(default_factory=dict)
     optimize_portfolio: bool = True
     max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
@@ -667,7 +1220,7 @@ class AuditChainVerifyResult(BaseModel):
 
 
 class ReportGenerateRequest(BaseModel):
-    report_type: str = Field(pattern="^(signal|replay|risk)$")
+    report_type: str = Field(pattern="^(signal|replay|risk|closure)$")
     symbol: str | None = None
     start_date: date | None = None
     end_date: date | None = None
@@ -2019,6 +2572,8 @@ class JobType(str, Enum):
     EVENT_CONNECTOR_REPLAY = "event_connector_replay"
     COMPLIANCE_EVIDENCE_EXPORT = "compliance_evidence_export"
     ALERT_ONCALL_RECONCILE = "alert_oncall_reconcile"
+    AUTO_TUNE = "auto_tune"
+    EXECUTION_REVIEW = "execution_review"
 
 
 class EventConnectorSyncJobPayload(BaseModel):
@@ -2043,6 +2598,18 @@ class OncallReconcileJobPayload(BaseModel):
     mapping_template: str | None = None
     limit: int = Field(default=200, ge=1, le=5000)
     dry_run: bool = False
+
+
+class AutoTuneJobPayload(BaseModel):
+    request: AutoTuneRunRequest
+
+
+class ExecutionReviewJobPayload(BaseModel):
+    symbol: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    limit: int = Field(default=500, ge=1, le=2000)
+    save_to_file: bool = True
 
 
 class JobStatus(str, Enum):

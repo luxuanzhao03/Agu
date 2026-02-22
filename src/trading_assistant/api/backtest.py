@@ -1,23 +1,35 @@
 from __future__ import annotations
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException
 
 from trading_assistant.audit.service import AuditService
+from trading_assistant.autotune.service import AutoTuneService
 from trading_assistant.backtest.engine import BacktestEngine
+from trading_assistant.backtest.portfolio_engine import PortfolioBacktestEngine
 from trading_assistant.core.config import Settings, get_settings
 from trading_assistant.core.container import (
     get_audit_service,
+    get_autotune_service,
     get_data_license_service,
     get_data_provider,
     get_event_service,
     get_factor_engine,
     get_fundamental_service,
     get_pit_validator,
+    get_portfolio_backtest_engine,
     get_snapshot_service,
     get_strategy_governance_service,
     get_strategy_registry,
 )
-from trading_assistant.core.models import BacktestRequest, BacktestResult, DataLicenseCheckRequest, DataSnapshotRegisterRequest
+from trading_assistant.core.models import (
+    BacktestRequest,
+    BacktestResult,
+    DataLicenseCheckRequest,
+    DataSnapshotRegisterRequest,
+    PortfolioBacktestRequest,
+    PortfolioBacktestResult,
+)
 from trading_assistant.core.security import AuthContext, UserRole, require_roles
 from trading_assistant.data.composite_provider import CompositeDataProvider
 from trading_assistant.data.exceptions import DataProviderError
@@ -45,6 +57,7 @@ def run_backtest(
     pit: PITValidator = Depends(get_pit_validator),
     events: EventService = Depends(get_event_service),
     registry: StrategyRegistry = Depends(get_strategy_registry),
+    autotune: AutoTuneService = Depends(get_autotune_service),
     strategy_gov: StrategyGovernanceService = Depends(get_strategy_governance_service),
     snapshots: DataSnapshotService = Depends(get_snapshot_service),
     settings: Settings = Depends(get_settings),
@@ -80,6 +93,13 @@ def run_backtest(
             status_code=403,
             detail=f"Strategy '{effective_req.strategy_name}' has no approved version.",
         )
+    resolved_params, autotune_profile = autotune.resolve_runtime_params(
+        strategy_name=effective_req.strategy_name,
+        symbol=effective_req.symbol,
+        explicit_params=effective_req.strategy_params,
+        use_profile=effective_req.use_autotune_profile,
+    )
+    effective_req = effective_req.model_copy(update={"strategy_params": resolved_params})
 
     try:
         used_provider, bars = provider.get_daily_bars_with_source(effective_req.symbol, effective_req.start_date, effective_req.end_date)
@@ -186,7 +206,108 @@ def run_backtest(
             "fee_min_commission_cny": effective_req.min_commission_cny,
             "fee_stamp_duty_sell_rate": effective_req.stamp_duty_sell_rate,
             "fee_transfer_rate": effective_req.transfer_fee_rate,
+            "autotune_profile_id": (autotune_profile.id if autotune_profile is not None else None),
         },
         status="OK" if (license_check.allowed or not settings.enforce_data_license) else "ERROR",
+    )
+    return result
+
+
+@router.post("/portfolio-run", response_model=PortfolioBacktestResult)
+def run_portfolio_backtest(
+    req: PortfolioBacktestRequest,
+    provider: CompositeDataProvider = Depends(get_data_provider),
+    license_service: DataLicenseService = Depends(get_data_license_service),
+    fundamentals: FundamentalService = Depends(get_fundamental_service),
+    pit: PITValidator = Depends(get_pit_validator),
+    events: EventService = Depends(get_event_service),
+    registry: StrategyRegistry = Depends(get_strategy_registry),
+    autotune: AutoTuneService = Depends(get_autotune_service),
+    strategy_gov: StrategyGovernanceService = Depends(get_strategy_governance_service),
+    engine: PortfolioBacktestEngine = Depends(get_portfolio_backtest_engine),
+    settings: Settings = Depends(get_settings),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.RESEARCH, UserRole.RISK, UserRole.PORTFOLIO)),
+) -> PortfolioBacktestResult:
+    try:
+        strategy = registry.get(req.strategy_name)
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if settings.enforce_approved_strategy and not strategy_gov.is_approved(req.strategy_name):
+        raise HTTPException(status_code=403, detail=f"Strategy '{req.strategy_name}' has no approved version.")
+
+    bars_by_symbol: dict[str, pd.DataFrame] = {}
+    params_by_symbol: dict[str, dict[str, float | int | str | bool]] = {}
+    provider_sources: dict[str, str] = {}
+    for symbol in req.symbols:
+        try:
+            used_provider, bars = provider.get_daily_bars_with_source(symbol, req.start_date, req.end_date)
+        except DataProviderError as exc:
+            raise HTTPException(status_code=502, detail=f"{symbol}: {exc}") from exc
+        if bars.empty:
+            continue
+        license_check = license_service.check(
+            DataLicenseCheckRequest(
+                dataset_name="daily_bars",
+                provider=used_provider,
+                requested_usage="internal_research",
+                export_requested=False,
+                expected_rows=len(bars),
+                as_of=req.end_date,
+            )
+        )
+        if settings.enforce_data_license and not license_check.allowed:
+            continue
+
+        pit_result = pit.validate_bars(symbol=symbol, provider=used_provider, bars=bars, as_of=req.end_date)
+        if not pit_result.passed:
+            continue
+        status = provider.get_security_status(symbol)
+        bars["is_st"] = bool(status.get("is_st", False))
+        bars["is_suspended"] = bool(status.get("is_suspended", False))
+        if req.enable_event_enrichment or req.strategy_name == "event_driven":
+            bars, _ = events.enrich_bars(
+                symbol=symbol,
+                bars=bars,
+                lookback_days=req.event_lookback_days,
+                decay_half_life_days=req.event_decay_half_life_days,
+            )
+        if req.enable_fundamental_enrichment:
+            bars, _ = fundamentals.enrich_bars(
+                symbol=symbol,
+                bars=bars,
+                as_of=req.end_date,
+                max_staleness_days=req.fundamental_max_staleness_days,
+            )
+
+        params, _ = autotune.resolve_runtime_params(
+            strategy_name=req.strategy_name,
+            symbol=symbol,
+            explicit_params=req.strategy_params,
+            use_profile=req.use_autotune_profile,
+        )
+        params_by_symbol[symbol] = params
+        provider_sources[symbol] = used_provider
+        bars_by_symbol[symbol] = bars
+
+    if not bars_by_symbol:
+        raise HTTPException(status_code=404, detail="No valid bars available for portfolio backtest.")
+
+    result = engine.run(bars_by_symbol=bars_by_symbol, req=req, strategy=strategy, params_by_symbol=params_by_symbol)
+    audit.log(
+        event_type="backtest",
+        action="portfolio_run",
+        payload={
+            "strategy_name": req.strategy_name,
+            "symbols": len(req.symbols),
+            "symbols_loaded": len(bars_by_symbol),
+            "providers": ",".join(sorted(set(provider_sources.values()))),
+            "trade_count": result.metrics.trade_count,
+            "total_return": result.metrics.total_return,
+            "max_drawdown": result.metrics.max_drawdown,
+            "avg_utilization": result.metrics.avg_utilization,
+            "risk_blocked_days": result.metrics.risk_blocked_days,
+            "risk_warning_days": result.metrics.risk_warning_days,
+        },
     )
     return result
