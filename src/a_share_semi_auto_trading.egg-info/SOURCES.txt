@@ -10,6 +10,7 @@ src/trading_assistant/__init__.py
 src/trading_assistant/cli.py
 src/trading_assistant/main.py
 src/trading_assistant/alerts/__init__.py
+src/trading_assistant/alerts/dispatcher.py
 src/trading_assistant/alerts/service.py
 src/trading_assistant/alerts/store.py
 src/trading_assistant/api/__init__.py
@@ -26,6 +27,7 @@ src/trading_assistant/api/jobs.py
 src/trading_assistant/api/market.py
 src/trading_assistant/api/metrics.py
 src/trading_assistant/api/model_risk.py
+src/trading_assistant/api/ops_ui.py
 src/trading_assistant/api/pipeline.py
 src/trading_assistant/api/portfolio.py
 src/trading_assistant/api/replay.py
@@ -58,7 +60,15 @@ src/trading_assistant/data/utils.py
 src/trading_assistant/factors/__init__.py
 src/trading_assistant/factors/engine.py
 src/trading_assistant/governance/__init__.py
+src/trading_assistant/governance/announcement_connectors.py
+src/trading_assistant/governance/compliance_evidence.py
 src/trading_assistant/governance/data_quality.py
+src/trading_assistant/governance/event_connector_service.py
+src/trading_assistant/governance/event_connector_store.py
+src/trading_assistant/governance/event_feature_compare.py
+src/trading_assistant/governance/event_nlp.py
+src/trading_assistant/governance/event_nlp_governance.py
+src/trading_assistant/governance/event_nlp_store.py
 src/trading_assistant/governance/event_service.py
 src/trading_assistant/governance/event_store.py
 src/trading_assistant/governance/license_service.py
@@ -106,9 +116,13 @@ tests/test_alert_service.py
 tests/test_audit_chain.py
 tests/test_audit_store.py
 tests/test_backtest_engine.py
+tests/test_compliance_evidence.py
 tests/test_data_license.py
 tests/test_data_quality.py
+tests/test_event_connector_service.py
 tests/test_event_enrichment_workflow.py
+tests/test_event_feature_compare.py
+tests/test_event_nlp_governance.py
 tests/test_event_service.py
 tests/test_job_scheduler.py
 tests/test_job_service.py

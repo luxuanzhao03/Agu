@@ -1,9 +1,9 @@
 ﻿<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Ops Event Governance Dashboard</title>
+    <title>运维与事件治理看板</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -17,14 +17,18 @@
     <main class="page">
       <header class="hero" data-animate>
         <div>
-          <p class="eyebrow">A-Share Semi-Auto Trading Assistant</p>
-          <h1>Ops + Event Governance Dashboard</h1>
-          <p class="sub">Jobs | SLA | Alerts | Event NLP | Replay Workbench</p>
+          <p class="eyebrow">A股半自动交易辅助系统</p>
+          <h1>运维 + 事件治理看板</h1>
+          <p class="sub">作业 | SLA | 告警 | 事件NLP | 回放工作台</p>
         </div>
         <div class="hero-actions">
-          <button id="refreshBtn" type="button">Refresh</button>
-          <button id="syncSlaBtn" type="button" class="secondary">Sync SLA Alerts</button>
-          <p id="lastUpdated">Last update: -</p>
+          <div class="hero-links">
+            <a href="/ui/">主界面</a>
+            <a href="/trading/workbench">投研工作台</a>
+          </div>
+          <button id="refreshBtn" type="button">刷新</button>
+          <button id="syncSlaBtn" type="button" class="secondary">同步 SLA 告警</button>
+          <p id="lastUpdated">最近更新时间：-</p>
         </div>
       </header>
 
@@ -32,46 +36,46 @@
 
       <section class="kpi-grid" data-animate>
         <article class="kpi-card">
-          <p>Job Runs (24h)</p>
+          <p>作业运行次数（24h）</p>
           <h2 id="kpiRuns24h">-</h2>
         </article>
         <article class="kpi-card">
-          <p>Scheduler SLA Breaches</p>
+          <p>调度器 SLA 违约数</p>
           <h2 id="kpiJobSlaBreaches">-</h2>
         </article>
         <article class="kpi-card">
-          <p>Connector SLA Critical</p>
+          <p>连接器 SLA 严重告警</p>
           <h2 id="kpiConnectorSlaCritical">-</h2>
         </article>
         <article class="kpi-card">
-          <p>Connector SLA Open</p>
+          <p>连接器 SLA 未恢复</p>
           <h2 id="kpiConnectorSlaOpen">-</h2>
         </article>
         <article class="kpi-card">
-          <p>Connector SLA Escalated Open</p>
+          <p>连接器 SLA 升级中</p>
           <h2 id="kpiConnectorSlaEscalatedOpen">-</h2>
         </article>
         <article class="kpi-card">
-          <p>Unacked Critical Alerts</p>
+          <p>未确认严重告警</p>
           <h2 id="kpiCriticalAlerts">-</h2>
         </article>
         <article class="kpi-card">
-          <p>Event Symbols (30d)</p>
+          <p>事件覆盖标的（30d）</p>
           <h2 id="kpiEventSymbols">-</h2>
         </article>
       </section>
 
       <section class="panel" data-animate>
         <div class="panel-head">
-          <h3>Event Coverage Overview</h3>
+          <h3>事件覆盖总览</h3>
           <p id="coverageMeta">-</p>
         </div>
         <div class="coverage-grid">
           <div class="coverage-cards">
-            <article><p>Total Events</p><h4 id="coverageTotal">-</h4></article>
-            <article><p>Positive</p><h4 id="coveragePositive">-</h4></article>
-            <article><p>Negative</p><h4 id="coverageNegative">-</h4></article>
-            <article><p>Sources Covered</p><h4 id="coverageSources">-</h4></article>
+            <article><p>事件总量</p><h4 id="coverageTotal">-</h4></article>
+            <article><p>正向事件</p><h4 id="coveragePositive">-</h4></article>
+            <article><p>负向事件</p><h4 id="coverageNegative">-</h4></article>
+            <article><p>覆盖数据源</p><h4 id="coverageSources">-</h4></article>
           </div>
           <div class="coverage-chart-wrap">
             <div id="coverageChart" class="coverage-chart"></div>
@@ -81,21 +85,21 @@
 
       <section class="panel" data-animate>
         <div class="panel-head">
-          <h3>Connector Health + Backlog</h3>
-          <p>checkpoint / freshness / pending / dead</p>
+          <h3>连接器健康与积压</h3>
+          <p>检查点 / 新鲜度 / 待重试 / 死信</p>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Connector</th>
-                <th>Source</th>
-                <th>Last Run</th>
-                <th>Status</th>
-                <th>Freshness(min)</th>
-                <th>Pending</th>
-                <th>Dead</th>
-                <th>Checkpoint</th>
+                <th>连接器</th>
+                <th>来源</th>
+                <th>最近运行</th>
+                <th>状态</th>
+                <th>新鲜度(分钟)</th>
+                <th>待重试</th>
+                <th>死信</th>
+                <th>检查点</th>
               </tr>
             </thead>
             <tbody id="connectorRows"></tbody>
@@ -105,23 +109,23 @@
 
       <section class="panel" data-animate>
         <div class="panel-head">
-          <h3>Connector Source Matrix Health</h3>
-          <p>multi-source DR health scoring + active auto-switch state</p>
+          <h3>连接器多源矩阵健康</h3>
+          <p>多源容灾健康评分 + 当前自动切换状态</p>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Connector</th>
-                <th>Source Key</th>
-                <th>Type</th>
-                <th>Role</th>
-                <th>Health</th>
-                <th>Effective</th>
-                <th>Failures</th>
-                <th>Success</th>
-                <th>Last Success</th>
-                <th>Last Error</th>
+                <th>连接器</th>
+                <th>来源键</th>
+                <th>类型</th>
+                <th>角色</th>
+                <th>健康分</th>
+                <th>有效分</th>
+                <th>连续失败</th>
+                <th>成功次数</th>
+                <th>最近成功</th>
+                <th>最近错误</th>
               </tr>
             </thead>
             <tbody id="sourceHealthRows"></tbody>
@@ -131,41 +135,41 @@
 
       <section class="panel" data-animate>
         <div class="panel-head">
-          <h3>Connector SLA Breaches + Escalation State Machine</h3>
+          <h3>连接器 SLA 违约与升级状态机</h3>
           <p id="connectorSlaSummaryMeta">-</p>
         </div>
         <div class="split-grid">
           <div class="table-wrap">
-            <h4>SLA Breaches</h4>
+            <h4>SLA 违约列表</h4>
             <table>
               <thead>
                 <tr>
-                  <th>Connector</th>
-                  <th>Breach</th>
-                  <th>Stage</th>
-                  <th>Severity</th>
-                  <th>Freshness</th>
-                  <th>Pending</th>
-                  <th>Dead</th>
-                  <th>Message</th>
+                  <th>连接器</th>
+                  <th>违约类型</th>
+                  <th>阶段</th>
+                  <th>严重级别</th>
+                  <th>新鲜度</th>
+                  <th>待重试</th>
+                  <th>死信</th>
+                  <th>说明</th>
                 </tr>
               </thead>
               <tbody id="connectorSlaRows"></tbody>
             </table>
           </div>
           <div class="table-wrap">
-            <h4>Open States</h4>
+            <h4>未恢复状态</h4>
             <table>
               <thead>
                 <tr>
-                  <th>Connector</th>
-                  <th>Breach</th>
-                  <th>Stage</th>
-                  <th>Severity</th>
-                  <th>Repeat</th>
-                  <th>Escalation</th>
-                  <th>Last Seen</th>
-                  <th>Last Emitted</th>
+                  <th>连接器</th>
+                  <th>违约类型</th>
+                  <th>阶段</th>
+                  <th>严重级别</th>
+                  <th>重复次数</th>
+                  <th>升级</th>
+                  <th>最近出现</th>
+                  <th>最近发出</th>
                 </tr>
               </thead>
               <tbody id="connectorSlaStateRows"></tbody>
@@ -176,36 +180,36 @@
 
       <section class="panel" data-animate>
         <div class="panel-head">
-          <h3>NLP Ruleset + Drift Monitor</h3>
-          <p>hit rate / score distribution / contribution / feedback drift</p>
+          <h3>NLP 规则集与漂移监控</h3>
+          <p>命中率 / 分值分布 / 回测贡献 / 反馈漂移</p>
         </div>
         <div class="monitor-grid">
           <article class="monitor-card">
-            <p>Active Ruleset</p>
+            <p>当前规则集</p>
             <h4 id="nlpActiveRuleset">-</h4>
           </article>
           <article class="monitor-card">
-            <p>Latest Risk</p>
+            <p>最新风险等级</p>
             <h4 id="nlpLatestRisk">-</h4>
           </article>
           <article class="monitor-card">
-            <p>Latest Snapshot</p>
+            <p>最新快照</p>
             <h4 id="nlpLatestSnapshot">-</h4>
           </article>
           <article class="monitor-card">
-            <p>Hit Delta Trend</p>
+            <p>命中率变化趋势</p>
             <h4 id="nlpTrendHitRate">-</h4>
           </article>
           <article class="monitor-card">
-            <p>Score Delta Trend</p>
+            <p>分值变化趋势</p>
             <h4 id="nlpTrendScore">-</h4>
           </article>
           <article class="monitor-card">
-            <p>Contribution Trend</p>
+            <p>贡献变化趋势</p>
             <h4 id="nlpTrendContribution">-</h4>
           </article>
           <article class="monitor-card">
-            <p>Feedback Polarity Trend</p>
+            <p>反馈极性趋势</p>
             <h4 id="nlpTrendFeedbackPolarity">-</h4>
           </article>
         </div>
@@ -213,14 +217,14 @@
           <table>
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Ruleset</th>
-                <th>Hit Delta</th>
-                <th>Score Delta</th>
-                <th>Contribution</th>
-                <th>Feedback Polarity</th>
-                <th>Feedback Type</th>
-                <th>Alerts</th>
+                <th>时间</th>
+                <th>规则集版本</th>
+                <th>命中率变化</th>
+                <th>分值变化</th>
+                <th>贡献变化</th>
+                <th>反馈极性</th>
+                <th>反馈类型</th>
+                <th>告警</th>
               </tr>
             </thead>
             <tbody id="nlpSnapshotRows"></tbody>
@@ -230,34 +234,34 @@
 
       <section class="panel" data-animate>
         <div class="panel-head">
-          <h3>SLO Burn-rate History</h3>
-          <p>connector reliability + NLP drift governance budget consumption</p>
+          <h3>SLO 消耗率历史</h3>
+          <p>连接器可靠性 + NLP 漂移治理预算消耗</p>
         </div>
         <div class="monitor-grid">
           <article class="monitor-card">
-            <p>Connector Burn(W)</p>
+            <p>连接器消耗(W)</p>
             <h4 id="connectorSloLatestWarn">-</h4>
           </article>
           <article class="monitor-card">
-            <p>Connector Burn(C)</p>
+            <p>连接器消耗(C)</p>
             <h4 id="connectorSloLatestCritical">-</h4>
           </article>
           <article class="monitor-card">
-            <p>NLP Burn(W)</p>
+            <p>NLP消耗(W)</p>
             <h4 id="nlpSloLatestWarn">-</h4>
           </article>
           <article class="monitor-card">
-            <p>NLP Burn(C)</p>
+            <p>NLP消耗(C)</p>
             <h4 id="nlpSloLatestCritical">-</h4>
           </article>
         </div>
         <div class="split-grid">
           <div>
-            <h4>Connector Burn Trend</h4>
+            <h4>连接器消耗趋势</h4>
             <div id="connectorSloChart" class="coverage-chart"></div>
           </div>
           <div>
-            <h4>NLP Burn Trend</h4>
+            <h4>NLP消耗趋势</h4>
             <div id="nlpSloChart" class="coverage-chart"></div>
           </div>
         </div>
@@ -265,13 +269,13 @@
           <table>
             <thead>
               <tr>
-                <th>Window End</th>
-                <th>Runs</th>
-                <th>Run Success</th>
-                <th>Connector Burn(W)</th>
-                <th>Connector Burn(C)</th>
-                <th>NLP Burn(W)</th>
-                <th>NLP Burn(C)</th>
+                <th>窗口结束</th>
+                <th>运行次数</th>
+                <th>运行成功率</th>
+                <th>连接器消耗(W)</th>
+                <th>连接器消耗(C)</th>
+                <th>NLP消耗(W)</th>
+                <th>NLP消耗(C)</th>
               </tr>
             </thead>
             <tbody id="sloHistoryRows"></tbody>
@@ -281,33 +285,33 @@
 
       <section class="panel" data-animate>
         <div class="panel-head">
-          <h3>Jobs + Scheduler SLA</h3>
-          <p>recent jobs and scheduler breaches</p>
+          <h3>作业与调度器 SLA</h3>
+          <p>近期作业运行与调度器违约</p>
         </div>
         <div class="split-grid">
           <div class="table-wrap">
-            <h4>Recent Job Runs</h4>
+            <h4>近期作业运行</h4>
             <table>
               <thead>
                 <tr>
-                  <th>Run ID</th>
-                  <th>Job ID</th>
-                  <th>Status</th>
-                  <th>Started</th>
+                  <th>运行ID</th>
+                  <th>作业ID</th>
+                  <th>状态</th>
+                  <th>开始时间</th>
                 </tr>
               </thead>
               <tbody id="runRows"></tbody>
             </table>
           </div>
           <div class="table-wrap">
-            <h4>Scheduler SLA Breaches</h4>
+            <h4>调度器 SLA 违约</h4>
             <table>
               <thead>
                 <tr>
-                  <th>Job</th>
-                  <th>Type</th>
-                  <th>Severity</th>
-                  <th>Message</th>
+                  <th>作业</th>
+                  <th>类型</th>
+                  <th>严重级别</th>
+                  <th>说明</th>
                 </tr>
               </thead>
               <tbody id="slaRows"></tbody>
@@ -318,17 +322,17 @@
 
       <section class="panel" data-animate>
         <div class="panel-head">
-          <h3>Unacked Alerts</h3>
-          <p>risk / sla / governance chain</p>
+          <h3>未确认告警</h3>
+          <p>风险 / SLA / 治理链路</p>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Severity</th>
-                <th>Source</th>
-                <th>Message</th>
+                <th>时间</th>
+                <th>严重级别</th>
+                <th>来源</th>
+                <th>内容</th>
               </tr>
             </thead>
             <tbody id="alertRows"></tbody>
@@ -338,20 +342,20 @@
 
       <section class="panel" data-animate>
         <div class="panel-head">
-          <h3>On-call Callback Timeline</h3>
-          <p>incident ACK / ticket sync / callback audit trail</p>
+          <h3>值班回调时间线</h3>
+          <p>事件 ACK / 工单同步 / 回调审计轨迹</p>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
-                <th>Time</th>
-                <th>Provider</th>
-                <th>Incident</th>
-                <th>Ticket</th>
-                <th>Status</th>
-                <th>ACK</th>
-                <th>Note</th>
+                <th>时间</th>
+                <th>服务商</th>
+                <th>事件单</th>
+                <th>工单</th>
+                <th>状态</th>
+                <th>确认</th>
+                <th>备注</th>
               </tr>
             </thead>
             <tbody id="oncallRows"></tbody>
@@ -359,18 +363,18 @@
         </div>
       </section>
 
-      <section class="panel" data-animate>
+      <section id="replay-workbench" class="panel" data-animate>
         <div class="panel-head">
-          <h3>Replay Workbench</h3>
-          <p>manual repair + replay for failed rows</p>
+          <h3>回放处理工作台</h3>
+          <p>失败条目人工修复 + 选择性重放</p>
         </div>
         <div class="workbench-controls">
           <label>
-            Connector
+            连接器
             <select id="wbConnectorSelect"></select>
           </label>
           <label>
-            Status
+            状态
             <select id="wbStatusFilter">
               <option value="PENDING">PENDING</option>
               <option value="DEAD">DEAD</option>
@@ -379,13 +383,13 @@
             </select>
           </label>
           <label>
-            Error Keyword
-            <input id="wbErrorKeyword" type="text" placeholder="contains..." />
+            错误关键词
+            <input id="wbErrorKeyword" type="text" placeholder="包含..." />
           </label>
-          <button id="loadFailuresBtn" type="button">Load Failures</button>
-          <button id="selectAllFailuresBtn" type="button" class="secondary">Select All</button>
-          <button id="replaySelectedBtn" type="button">Replay Selected</button>
-          <button id="repairReplaySelectedBtn" type="button">Save + Replay Selected</button>
+          <button id="loadFailuresBtn" type="button">加载失败列表</button>
+          <button id="selectAllFailuresBtn" type="button" class="secondary">全选/反选</button>
+          <button id="replaySelectedBtn" type="button">重放选中项</button>
+          <button id="repairReplaySelectedBtn" type="button">保存并重放选中项</button>
         </div>
         <p id="wbActionResult" class="muted">-</p>
         <div class="workbench-grid">
@@ -393,40 +397,40 @@
             <table>
               <thead>
                 <tr>
-                  <th>Pick</th>
+                  <th>选择</th>
                   <th>ID</th>
-                  <th>Status</th>
-                  <th>Retry</th>
-                  <th>Next Retry</th>
-                  <th>Last Error</th>
-                  <th>Action</th>
+                  <th>状态</th>
+                  <th>重试次数</th>
+                  <th>下次重试</th>
+                  <th>最近错误</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody id="wbFailureRows"></tbody>
             </table>
           </div>
           <div class="workbench-editor">
-            <p id="wbSelectedMeta" class="muted">Pick one row to edit payload.</p>
+            <p id="wbSelectedMeta" class="muted">请选择一行后编辑 payload。</p>
             <label>raw_record (JSON)</label>
             <textarea id="wbRawEditor" rows="8" spellcheck="false"></textarea>
             <label>event (JSON)</label>
             <textarea id="wbEventEditor" rows="8" spellcheck="false"></textarea>
-            <label>repair note</label>
-            <input id="wbRepairNote" type="text" placeholder="what was fixed" />
+            <label>修复说明</label>
+            <input id="wbRepairNote" type="text" placeholder="说明修复了什么" />
             <label class="inline">
-              <input id="wbResetRetry" type="checkbox" /> reset retry_count to 0
+              <input id="wbResetRetry" type="checkbox" /> 将 retry_count 重置为 0
             </label>
-            <button id="saveRepairBtn" type="button">Save Repair</button>
+            <button id="saveRepairBtn" type="button">保存修复</button>
           </div>
         </div>
         <div class="table-wrap">
-          <h4>Replay Results</h4>
+          <h4>重放结果</h4>
           <table>
             <thead>
               <tr>
-                <th>Failure ID</th>
-                <th>Status</th>
-                <th>Message</th>
+                <th>失败ID</th>
+                <th>状态</th>
+                <th>说明</th>
               </tr>
             </thead>
             <tbody id="wbReplayResultRows"></tbody>

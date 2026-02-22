@@ -1,0 +1,619 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>投研交易工作台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/ui/trading-workbench/styles.css" />
+  </head>
+  <body>
+    <div class="backdrop"></div>
+    <main class="app-shell">
+      <header class="app-head" data-animate>
+        <div>
+          <p class="eyebrow">A股半自动交易辅助系统</p>
+          <h1>投研交易工作台</h1>
+          <p class="subtitle">策略参数配置 | 结果可视化 | 交易准备与执行回写</p>
+        </div>
+        <div class="head-actions">
+          <div class="quick-links">
+            <a href="/ui/">主界面</a>
+            <a href="/ops/dashboard">运维看板</a>
+          </div>
+          <label>
+            认证请求头
+            <input id="authHeaderName" type="text" value="X-API-Key" />
+          </label>
+          <label>
+            API Key（可选）
+            <input id="authApiKey" type="password" placeholder="未启用鉴权可留空" />
+          </label>
+          <div class="actions-row">
+            <button id="saveAuthBtn" type="button" class="secondary">保存认证</button>
+            <button id="refreshAllBtn" type="button">刷新基础数据</button>
+          </div>
+          <p id="lastUpdated">最近更新时间：-</p>
+        </div>
+      </header>
+
+      <div id="globalError" class="global-error hidden"></div>
+
+      <nav class="tab-nav" data-animate>
+        <button type="button" class="tab active" data-tab="strategy">策略与参数页</button>
+        <button type="button" class="tab" data-tab="results">结果可视化页</button>
+        <button type="button" class="tab" data-tab="execution">交易准备单与执行回写页</button>
+      </nav>
+
+      <section id="tab-strategy" class="tab-panel active" data-animate>
+        <div class="panel-head">
+          <h2>策略与参数页</h2>
+          <p>选择策略、录入参数，执行信号生成 / 回测 / 多标的研究工作流。</p>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>基础配置</h3>
+            <div class="form-grid">
+              <label>
+                单标的代码
+                <input id="symbolInput" type="text" value="000001" />
+              </label>
+              <label>
+                多标的代码（逗号/空格/换行分隔）
+                <textarea id="symbolsInput" rows="3">000001,000002,600000</textarea>
+              </label>
+              <label>
+                开始日期
+                <input id="startDateInput" type="date" />
+              </label>
+              <label>
+                结束日期
+                <input id="endDateInput" type="date" />
+              </label>
+              <label>
+                策略
+                <select id="strategySelect"></select>
+              </label>
+              <label>
+                行业（单标的可选）
+                <input id="industryInput" type="text" placeholder="例如：银行" />
+              </label>
+              <label class="inline">
+                <input id="eventEnrichInput" type="checkbox" /> 启用事件增强（event_enrichment）
+              </label>
+              <label>
+                事件回看天数
+                <input id="eventLookbackInput" type="number" min="1" max="3650" value="30" />
+              </label>
+              <label>
+                事件衰减半衰期（天）
+                <input id="eventDecayInput" type="number" min="0.1" step="0.1" value="7" />
+              </label>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>策略参数（动态）</h3>
+            <p id="strategyMeta" class="muted">-</p>
+            <div id="strategyParamRows" class="param-rows"></div>
+          </article>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>信号风控上下文（可选）</h3>
+            <div class="form-grid">
+              <label class="inline">
+                <input id="usePositionCtx" type="checkbox" /> 启用 current_position
+              </label>
+              <label>
+                持仓数量（quantity）
+                <input id="positionQty" type="number" min="0" value="0" />
+              </label>
+              <label>
+                可卖数量（available_quantity）
+                <input id="positionAvailQty" type="number" min="0" value="0" />
+              </label>
+              <label>
+                持仓成本（avg_cost）
+                <input id="positionAvgCost" type="number" min="0" step="0.0001" value="0" />
+              </label>
+              <label>
+                持仓市值（market_value）
+                <input id="positionMarketValue" type="number" min="0" step="0.01" value="0" />
+              </label>
+              <label>
+                最近买入日（last_buy_date）
+                <input id="positionLastBuyDate" type="date" />
+              </label>
+
+              <label class="inline">
+                <input id="usePortfolioCtx" type="checkbox" /> 启用 portfolio_snapshot
+              </label>
+              <label>
+                组合总资产（total_value）
+                <input id="portfolioTotalValue" type="number" min="0" step="0.01" value="1000000" />
+              </label>
+              <label>
+                现金（cash）
+                <input id="portfolioCash" type="number" min="0" step="0.01" value="1000000" />
+              </label>
+              <label>
+                峰值资产（peak_value）
+                <input id="portfolioPeakValue" type="number" min="0" step="0.01" value="1000000" />
+              </label>
+              <label>
+                当前回撤（current_drawdown）
+                <input id="portfolioDrawdown" type="number" min="0" max="1" step="0.0001" value="0" />
+              </label>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>回测与研究参数</h3>
+            <div class="form-grid">
+              <label>
+                初始资金（initial_cash）
+                <input id="initialCashInput" type="number" min="1000" step="1000" value="1000000" />
+              </label>
+              <label>
+                手续费率（commission_rate）
+                <input id="commissionRateInput" type="number" min="0" max="0.02" step="0.0001" value="0.0003" />
+              </label>
+              <label>
+                滑点率（slippage_rate）
+                <input id="slippageRateInput" type="number" min="0" max="0.02" step="0.0001" value="0.0005" />
+              </label>
+              <label>
+                最小交易手数（lot_size）
+                <input id="lotSizeInput" type="number" min="1" step="1" value="100" />
+              </label>
+
+              <label class="inline">
+                <input id="optimizePortfolioInput" type="checkbox" checked /> 研究工作流启用组合优化
+              </label>
+              <label>
+                单标的上限（max_single_position）
+                <input id="maxSinglePositionInput" type="number" min="0.001" max="1" step="0.001" value="0.05" />
+              </label>
+              <label>
+                行业敞口上限（max_industry_exposure）
+                <input id="maxIndustryExposureInput" type="number" min="0.001" max="1" step="0.001" value="0.2" />
+              </label>
+              <label>
+                目标总仓位（target_gross_exposure）
+                <input id="targetGrossExposureInput" type="number" min="0.001" max="1" step="0.001" value="1" />
+              </label>
+              <label>
+                行业映射（每行：代码=行业）
+                <textarea id="industryMapInput" rows="3" placeholder="000001=银行\n600000=银行"></textarea>
+              </label>
+            </div>
+          </article>
+        </div>
+
+        <article class="card">
+          <h3>运行操作</h3>
+          <div class="actions-row wrap">
+            <button id="runSignalBtn" type="button">运行信号生成</button>
+            <button id="runBacktestBtn" type="button">运行回测</button>
+            <button id="runResearchBtn" type="button">运行研究工作流</button>
+            <button id="runAllBtn" type="button" class="secondary">一键全跑（信号+回测+研究）</button>
+          </div>
+          <p id="strategyActionMsg" class="muted">-</p>
+          <details>
+            <summary>请求体预览（便于核对字段）</summary>
+            <pre id="requestPreview" class="code-block">{}</pre>
+          </details>
+        </article>
+      </section>
+
+      <section id="tab-results" class="tab-panel" data-animate>
+        <div class="panel-head">
+          <h2>结果可视化页</h2>
+          <p>展示候选信号、风控命中、K线叠加、组合权重与回测关键指标。</p>
+          <div class="actions-row wrap panel-jumps">
+            <button id="jumpToStrategyBtn" type="button" class="secondary">回到策略参数页</button>
+            <button id="jumpToExecutionBtn" type="button" class="secondary">前往执行回写页</button>
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <article class="kpi-card"><p>信号数量</p><h3 id="kpiSignalCount">-</h3></article>
+          <article class="kpi-card"><p>买入建议</p><h3 id="kpiBuyCount">-</h3></article>
+          <article class="kpi-card"><p>阻断数量</p><h3 id="kpiBlockedCount">-</h3></article>
+          <article class="kpi-card"><p>回测总收益</p><h3 id="kpiBacktestReturn">-</h3></article>
+          <article class="kpi-card"><p>最大回撤</p><h3 id="kpiBacktestMdd">-</h3></article>
+          <article class="kpi-card"><p>夏普比率</p><h3 id="kpiBacktestSharpe">-</h3></article>
+          <article class="kpi-card"><p>研究候选数</p><h3 id="kpiResearchSignals">-</h3></article>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>信号与交易准备单</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>标的</th>
+                    <th>日期</th>
+                    <th>动作</th>
+                    <th>置信度</th>
+                    <th>风控等级</th>
+                    <th>阻断</th>
+                    <th>原因</th>
+                    <th>signal_id</th>
+                  </tr>
+                </thead>
+                <tbody id="signalRows"></tbody>
+              </table>
+            </div>
+          </article>
+          <article class="card">
+            <h3>风控命中明细</h3>
+            <p id="riskSummary" class="muted">-</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>规则</th>
+                    <th>通过</th>
+                    <th>等级</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody id="riskHitRows"></tbody>
+              </table>
+            </div>
+            <h4>建议动作</h4>
+            <ul id="recommendationList" class="list"></ul>
+            <h4>免责声明</h4>
+            <p id="disclaimerText" class="muted">-</p>
+          </article>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>研究工作流候选列表</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>标的</th>
+                    <th>来源</th>
+                    <th>动作</th>
+                    <th>置信度</th>
+                    <th>阻断</th>
+                    <th>等级</th>
+                    <th>事件行数</th>
+                    <th>signal_id</th>
+                  </tr>
+                </thead>
+                <tbody id="researchRows"></tbody>
+              </table>
+            </div>
+          </article>
+          <article class="card">
+            <h3>组合优化结果</h3>
+            <div id="optimizeMeta" class="muted">-</div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>标的</th>
+                    <th>权重</th>
+                    <th>行业</th>
+                    <th>评分</th>
+                  </tr>
+                </thead>
+                <tbody id="optWeightRows"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <article class="card">
+          <h3>K线 / 价格走势叠加信号点位（/market/bars）</h3>
+          <div class="actions-row wrap">
+            <label>
+              symbol
+              <input id="barsSymbolInput" type="text" value="000001" />
+            </label>
+            <label>
+              start_date
+              <input id="barsStartDateInput" type="date" />
+            </label>
+            <label>
+              end_date
+              <input id="barsEndDateInput" type="date" />
+            </label>
+            <label>
+              limit
+              <input id="barsLimitInput" type="number" min="1" max="200" value="120" />
+            </label>
+            <button id="syncBarsParamsBtn" type="button" class="secondary">同步策略参数</button>
+            <button id="loadBarsBtn" type="button">加载K线并叠加信号</button>
+          </div>
+          <p id="barsMeta" class="muted">-</p>
+          <div id="marketKlineChart" class="chart-wrap"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>open</th>
+                  <th>high</th>
+                  <th>low</th>
+                  <th>close</th>
+                  <th>volume</th>
+                </tr>
+              </thead>
+              <tbody id="barRows"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>研究结果组合权重可视化</h3>
+            <p id="weightVisualMeta" class="muted">运行研究工作流后自动展示目标权重与行业暴露。</p>
+            <div class="grid two compact">
+              <div>
+                <h4>目标权重（按symbol）</h4>
+                <div id="targetWeightChart" class="chart-wrap compact"></div>
+              </div>
+              <div>
+                <h4>行业暴露</h4>
+                <div id="industryExposureChart" class="chart-wrap compact"></div>
+              </div>
+            </div>
+          </article>
+          <article class="card">
+            <h3>调仓建议联动（/portfolio/rebalance/plan）</h3>
+            <p class="muted">使用研究结果中的优化权重生成调仓建议。当前持仓每行格式：symbol,quantity,last_price</p>
+            <div class="form-grid">
+              <label>
+                total_equity
+                <input id="rebalanceTotalEquityInput" type="number" min="1" step="0.01" value="1000000" />
+              </label>
+              <label>
+                lot_size
+                <input id="rebalanceLotSizeInput" type="number" min="1" step="1" value="100" />
+              </label>
+              <label>
+                current_positions（每行）
+                <textarea id="rebalancePositionsInput" rows="5" placeholder="000001,2000,12.35&#10;600000,1000,8.66"></textarea>
+              </label>
+            </div>
+            <div class="actions-row wrap">
+              <button id="syncRebalanceParamsBtn" type="button" class="secondary">同步默认资金/手数</button>
+              <button id="runRebalanceBtn" type="button">生成调仓建议</button>
+              <button id="useBuySignalsAsPositionBtn" type="button" class="secondary">用买入信号构造持仓样例</button>
+            </div>
+            <p id="rebalanceMeta" class="muted">-</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>symbol</th>
+                    <th>side</th>
+                    <th>target_weight</th>
+                    <th>delta_weight</th>
+                    <th>quantity</th>
+                    <th>estimated_notional</th>
+                  </tr>
+                </thead>
+                <tbody id="rebalanceRows"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <article class="card">
+          <h3>回测曲线</h3>
+          <div id="equityChart" class="chart-wrap"></div>
+        </article>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>回测指标明细</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>指标</th>
+                    <th>数值</th>
+                  </tr>
+                </thead>
+                <tbody id="backtestMetricRows"></tbody>
+              </table>
+            </div>
+          </article>
+          <article class="card">
+            <h3>成交记录</h3>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>日期</th>
+                    <th>动作</th>
+                    <th>价格</th>
+                    <th>数量</th>
+                    <th>费用</th>
+                    <th>阻断</th>
+                    <th>原因</th>
+                  </tr>
+                </thead>
+                <tbody id="tradeRows"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section id="tab-execution" class="tab-panel" data-animate>
+        <div class="panel-head">
+          <h2>交易准备单与执行回写页</h2>
+          <p>把建议动作落到人工下单，再回写执行结果并生成复盘报表。</p>
+        </div>
+
+        <article class="card">
+          <h3>交易准备单（最近一次信号生成）</h3>
+          <p class="muted">点击“填入执行单”可自动把 signal_id / symbol / side 带入执行回写表单。</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>标的</th>
+                  <th>动作</th>
+                  <th>置信度</th>
+                  <th>风险摘要</th>
+                  <th>建议条数</th>
+                  <th>signal_id</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="prepRows"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>信号记录库（/replay/signals）</h3>
+            <div class="actions-row wrap">
+              <label>
+                symbol
+                <input id="replaySignalSymbol" type="text" placeholder="留空=全部" />
+              </label>
+              <label>
+                limit
+                <input id="replaySignalLimit" type="number" min="1" max="2000" value="200" />
+              </label>
+              <button id="loadReplaySignalsBtn" type="button">加载信号记录</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>signal_id</th>
+                    <th>标的</th>
+                    <th>策略</th>
+                    <th>日期</th>
+                    <th>动作</th>
+                    <th>置信度</th>
+                    <th>原因</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody id="replaySignalRows"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>执行回写（/replay/executions/record）</h3>
+            <div class="form-grid">
+              <label>
+                signal_id
+                <input id="execSignalId" type="text" />
+              </label>
+              <label>
+                symbol
+                <input id="execSymbol" type="text" />
+              </label>
+              <label>
+                execution_date
+                <input id="execDate" type="date" />
+              </label>
+              <label>
+                side
+                <select id="execSide">
+                  <option value="BUY">BUY</option>
+                  <option value="SELL">SELL</option>
+                  <option value="WATCH">WATCH</option>
+                </select>
+              </label>
+              <label>
+                quantity
+                <input id="execQty" type="number" min="0" value="100" />
+              </label>
+              <label>
+                price
+                <input id="execPrice" type="number" min="0" step="0.0001" value="0" />
+              </label>
+              <label>
+                fee
+                <input id="execFee" type="number" min="0" step="0.0001" value="0" />
+              </label>
+              <label>
+                note
+                <textarea id="execNote" rows="3" placeholder="记录人工下单说明"></textarea>
+              </label>
+            </div>
+            <div class="actions-row">
+              <button id="submitExecutionBtn" type="button">提交执行回写</button>
+            </div>
+            <p id="execSubmitMsg" class="muted">-</p>
+          </article>
+        </div>
+
+        <article class="card">
+          <h3>执行复盘报表（/replay/report）</h3>
+          <div class="actions-row wrap">
+            <label>
+              symbol
+              <input id="reportSymbol" type="text" placeholder="留空=全部" />
+            </label>
+            <label>
+              start_date
+              <input id="reportStartDate" type="date" />
+            </label>
+            <label>
+              end_date
+              <input id="reportEndDate" type="date" />
+            </label>
+            <label>
+              limit
+              <input id="reportLimit" type="number" min="1" max="2000" value="500" />
+            </label>
+            <button id="loadReplayReportBtn" type="button">加载复盘报表</button>
+          </div>
+
+          <div class="kpi-grid compact">
+            <article class="kpi-card"><p>样本数</p><h3 id="reportSample">-</h3></article>
+            <article class="kpi-card"><p>跟随率</p><h3 id="reportFollowRate">-</h3></article>
+            <article class="kpi-card"><p>平均延迟(天)</p><h3 id="reportAvgDelay">-</h3></article>
+            <article class="kpi-card"><p>平均滑点(bps)</p><h3 id="reportAvgSlip">-</h3></article>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>signal_id</th>
+                  <th>标的</th>
+                  <th>信号动作</th>
+                  <th>执行动作</th>
+                  <th>执行数量</th>
+                  <th>执行价格</th>
+                  <th>延迟(天)</th>
+                  <th>跟随</th>
+                </tr>
+              </thead>
+              <tbody id="replayReportRows"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </main>
+
+    <script src="/ui/trading-workbench/app.js"></script>
+  </body>
+</html>

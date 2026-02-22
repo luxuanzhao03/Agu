@@ -29,6 +29,7 @@ from trading_assistant.api.signals import router as signals_router
 from trading_assistant.api.strategies import router as strategies_router
 from trading_assistant.api.strategy_governance import router as strategy_governance_router
 from trading_assistant.api.system import router as system_router
+from trading_assistant.api.trading_ui import router as trading_ui_router
 from trading_assistant.core.config import get_settings
 from trading_assistant.core.container import get_job_scheduler_worker
 from trading_assistant.core.logging import setup_logging
@@ -90,6 +91,7 @@ app.include_router(model_risk_router)
 app.include_router(system_router)
 app.include_router(jobs_router)
 app.include_router(ops_ui_router)
+app.include_router(trading_ui_router)
 
 
 @app.get("/")

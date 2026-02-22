@@ -144,8 +144,23 @@ Design boundary:
 - Visualizes jobs/SLA/alerts/connectors/event coverage/NLP drift in one page.
 - Includes replay workbench for manual failure repair, selective replay, and repair+replay.
 - Includes source-matrix health panel (active source, health score, failover state).
+- Header links to main portal (`/ui/`) and trading workbench (`/trading/workbench`).
 
-23. Compliance evidence package export
+23. Frontend trading workbench
+- Browser UI at `GET /trading/workbench`.
+- Static assets at `/ui/trading-workbench/*`.
+- Three-page workflow: strategy+params, result visualization, and prep-sheet+execution writeback.
+- Integrates `/strategies`, `/signals/generate`, `/backtest/run`, `/research/run`, `/replay/*` APIs.
+- Adds K-line/price trend chart with signal overlay via `/market/bars`.
+- Adds portfolio weight + industry exposure visualization and rebalance linkage via `/portfolio/rebalance/plan`.
+- Header links to main portal (`/ui/`) and ops dashboard (`/ops/dashboard`).
+
+24. Frontend main portal
+- Browser UI at `GET /ui/`.
+- Unified navigation to trading workbench and ops dashboard.
+- Provides entry-level process guidance and quick status summary.
+
+25. Compliance evidence package export
 - One-click evidence bundle zip with SHA256 checksums.
 - Bundle includes audit hash-chain verify, strategy governance snapshot, and event governance snapshot.
 - Optional bundle signing + verification.
@@ -153,7 +168,7 @@ Design boundary:
 - Optional immutable-vault copy + scheduled auto-export via ops jobs.
 - External WORM/KMS policy integration hooks (endpoint-driven archive + key wrap receipt).
 
-24. Deployment manifests
+26. Deployment manifests
 - Single-node Docker deployment (`deploy/docker-compose.single-node.yml`).
 - Private-cloud Kubernetes baseline (`deploy/k8s/private-cloud/trading-assistant.yaml`).
 
@@ -174,6 +189,26 @@ powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\run_pipeline.ps1 -Symbols "000001,000002"
 ```
+
+Windows one-click launcher:
+
+```bat
+start_system_windows.bat
+```
+
+Behavior:
+- auto switch to project root (`%~dp0`)
+- auto create `.venv` / `.env` if missing
+- auto install dependencies when package import is unavailable
+- auto start API in a new terminal with `OPS_SCHEDULER_ENABLED=true`
+- auto open:
+  - `http://127.0.0.1:8000/ui/`
+  - `http://127.0.0.1:8000/trading/workbench`
+  - `http://127.0.0.1:8000/ops/dashboard`
+
+Optional args:
+- `start_system_windows.bat --dry-run` (print actions only)
+- `start_system_windows.bat --no-browser` (start backend only)
 
 ## Testing (Windows)
 
@@ -213,7 +248,9 @@ kubectl apply -f deploy/k8s/private-cloud/trading-assistant.yaml
 
 Ops dashboard UI:
 ```text
+http://127.0.0.1:8000/ui/
 http://127.0.0.1:8000/ops/dashboard
+http://127.0.0.1:8000/trading/workbench
 ```
 
 ## Optional Auth (RBAC)

@@ -130,7 +130,7 @@ function renderCoverageChart(daily) {
   if (!host) return;
   const rows = Array.isArray(daily) ? daily.slice(-30) : [];
   if (!rows.length) {
-    host.innerHTML = `<p class="muted">No event data in lookback window.</p>`;
+    host.innerHTML = `<p class="muted">回看窗口内暂无事件数据。</p>`;
     return;
   }
   const maxTotal = Math.max(...rows.map((x) => Number(x.total_events || 0)), 1);
@@ -145,7 +145,7 @@ function renderCoverageChart(daily) {
       const hn = Math.round((neg / sum) * h);
       const hu = Math.max(0, h - hp - hn);
       const label = String(r.trade_date || "").slice(5);
-      return `<div class="bar-col" title="${esc(r.trade_date)} total=${t}">
+      return `<div class="bar-col" title="${esc(r.trade_date)} 总量=${t}">
         <div class="bar-stack" style="height:${h}px">
           <div class="bar-neu" style="height:${hu}px"></div>
           <div class="bar-neg" style="height:${hn}px"></div>
@@ -162,7 +162,7 @@ function renderSloBurnChart(hostId, points, warnKey, criticalKey) {
   if (!host) return;
   const rows = Array.isArray(points) ? points.slice(-40) : [];
   if (!rows.length) {
-    host.innerHTML = `<p class="muted">No SLO history yet.</p>`;
+    host.innerHTML = `<p class="muted">暂无 SLO 历史数据。</p>`;
     return;
   }
   const maxBurn = Math.max(
@@ -176,7 +176,7 @@ function renderSloBurnChart(hostId, points, warnKey, criticalKey) {
       const hw = Math.max(2, Math.round((warn / maxBurn) * 90));
       const hc = Math.max(2, Math.round((critical / maxBurn) * 90));
       const ts = String(r.window_end || "").slice(5, 16).replace("T", " ");
-      return `<div class="bar-col" title="${esc(ts)} W=${warn.toFixed(2)} C=${critical.toFixed(2)}">
+      return `<div class="bar-col" title="${esc(ts)} 预警=${warn.toFixed(2)} 严重=${critical.toFixed(2)}">
         <div class="bar-stack" style="height:${Math.max(hw, hc)}px">
           <div class="bar-neu" style="height:${Math.max(0, hw - hc)}px"></div>
           <div class="bar-neg" style="height:${hc}px"></div>
@@ -198,7 +198,7 @@ function renderSloHistoryRows(connectorHistory, nlpHistory) {
     return { c, n };
   });
   if (!rows.length) {
-    host.innerHTML = `<tr><td colspan="7" class="muted">No SLO history yet.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="7" class="muted">暂无 SLO 历史数据。</td></tr>`;
     return;
   }
   host.innerHTML = rows
@@ -218,7 +218,7 @@ function renderConnectorRows(items) {
   const host = document.getElementById("connectorRows");
   if (!host) return;
   if (!Array.isArray(items) || !items.length) {
-    host.innerHTML = `<tr><td colspan="8" class="muted">No connector configured.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="8" class="muted">暂无连接器配置。</td></tr>`;
     return;
   }
   host.innerHTML = items
@@ -242,7 +242,7 @@ function renderSourceHealthRows(rows) {
   const host = document.getElementById("sourceHealthRows");
   if (!host) return;
   if (!Array.isArray(rows) || !rows.length) {
-    host.innerHTML = `<tr><td colspan="10" class="muted">No source matrix state.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="10" class="muted">暂无来源矩阵状态。</td></tr>`;
     return;
   }
   host.innerHTML = rows
@@ -267,7 +267,7 @@ function renderConnectorSlaRows(rows) {
   const host = document.getElementById("connectorSlaRows");
   if (!host) return;
   if (!Array.isArray(rows) || !rows.length) {
-    host.innerHTML = `<tr><td colspan="8" class="muted">No connector SLA breach.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="8" class="muted">暂无连接器 SLA 违约。</td></tr>`;
     return;
   }
   host.innerHTML = rows
@@ -290,14 +290,14 @@ function renderConnectorSlaStateRows(rows) {
   const host = document.getElementById("connectorSlaStateRows");
   if (!host) return;
   if (!Array.isArray(rows) || !rows.length) {
-    host.innerHTML = `<tr><td colspan="8" class="muted">No open SLA state.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="8" class="muted">暂无未恢复 SLA 状态。</td></tr>`;
     return;
   }
   host.innerHTML = rows
     .map((x) => {
       const level = Number(x.escalation_level || 0);
       const levelCls = level >= 2 ? "status-danger" : level >= 1 ? "status-warn" : "status-ok";
-      const levelText = level > 0 ? `L${level} ${esc(x.escalation_reason || "")}` : "L0";
+      const levelText = level > 0 ? `L${level} ${esc(x.escalation_reason || "")}` : "L0 正常";
       return `<tr>
         <td>${esc(x.connector_name)}</td>
         <td>${esc(x.breach_type)}</td>
@@ -315,7 +315,7 @@ function renderRunRows(rows) {
   const host = document.getElementById("runRows");
   if (!host) return;
   if (!Array.isArray(rows) || !rows.length) {
-    host.innerHTML = `<tr><td colspan="4" class="muted">No recent runs.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="4" class="muted">暂无近期作业运行。</td></tr>`;
     return;
   }
   host.innerHTML = rows
@@ -334,7 +334,7 @@ function renderSLARows(rows) {
   const host = document.getElementById("slaRows");
   if (!host) return;
   if (!Array.isArray(rows) || !rows.length) {
-    host.innerHTML = `<tr><td colspan="4" class="muted">No scheduler SLA breach.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="4" class="muted">暂无调度器 SLA 违约。</td></tr>`;
     return;
   }
   host.innerHTML = rows
@@ -353,7 +353,7 @@ function renderAlertRows(rows) {
   const host = document.getElementById("alertRows");
   if (!host) return;
   if (!Array.isArray(rows) || !rows.length) {
-    host.innerHTML = `<tr><td colspan="4" class="muted">No unacked alerts.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="4" class="muted">暂无未确认告警。</td></tr>`;
     return;
   }
   host.innerHTML = rows
@@ -372,7 +372,7 @@ function renderOncallRows(rows) {
   const host = document.getElementById("oncallRows");
   if (!host) return;
   if (!Array.isArray(rows) || !rows.length) {
-    host.innerHTML = `<tr><td colspan="7" class="muted">No on-call callback yet.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="7" class="muted">暂无值班回调记录。</td></tr>`;
     return;
   }
   host.innerHTML = rows
@@ -394,7 +394,7 @@ function renderNlpSnapshots(rows) {
   const host = document.getElementById("nlpSnapshotRows");
   if (!host) return;
   if (!Array.isArray(rows) || !rows.length) {
-    host.innerHTML = `<tr><td colspan="8" class="muted">No drift snapshots.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="8" class="muted">暂无漂移快照。</td></tr>`;
     return;
   }
   host.innerHTML = rows
@@ -421,7 +421,7 @@ function renderNlpSnapshots(rows) {
 function renderNlpMonitor(activeRuleset, monitor) {
   setText(
     "nlpActiveRuleset",
-    activeRuleset && activeRuleset.version ? `${activeRuleset.version} (rules=${fmtNum(activeRuleset.rule_count)})` : "-"
+    activeRuleset && activeRuleset.version ? `${activeRuleset.version} (规则数=${fmtNum(activeRuleset.rule_count)})` : "-"
   );
   if (!monitor) {
     setText("nlpLatestRisk", "-");
@@ -469,14 +469,14 @@ function clearWorkbenchEditor() {
   const eventEditor = document.getElementById("wbEventEditor");
   if (rawEditor) rawEditor.value = "{}";
   if (eventEditor) eventEditor.value = "{}";
-  setText("wbSelectedMeta", "Pick one row to edit payload.");
+  setText("wbSelectedMeta", "请选择一行后编辑 payload。");
 }
 
 function renderWorkbenchRows(rows) {
   const host = document.getElementById("wbFailureRows");
   if (!host) return;
   if (!Array.isArray(rows) || !rows.length) {
-    host.innerHTML = `<tr><td colspan="7" class="muted">No failure rows in current filter.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="7" class="muted">当前筛选条件下无失败记录。</td></tr>`;
     return;
   }
   host.innerHTML = rows
@@ -488,7 +488,7 @@ function renderWorkbenchRows(rows) {
       <td>${fmtNum(x.retry_count)}</td>
       <td>${fmtTs(x.next_retry_at)}</td>
       <td>${esc(x.last_error || "")}</td>
-      <td><button type="button" class="wb-edit secondary" data-id="${x.id}">Edit</button></td>
+      <td><button type="button" class="wb-edit secondary" data-id="${x.id}">编辑</button></td>
     </tr>`
     )
     .join("");
@@ -498,7 +498,7 @@ function renderReplayResultRows(items) {
   const host = document.getElementById("wbReplayResultRows");
   if (!host) return;
   if (!Array.isArray(items) || !items.length) {
-    host.innerHTML = `<tr><td colspan="3" class="muted">No replay result yet.</td></tr>`;
+    host.innerHTML = `<tr><td colspan="3" class="muted">暂无重放结果。</td></tr>`;
     return;
   }
   host.innerHTML = items
@@ -528,7 +528,7 @@ function selectFailureForEdit(failureId) {
 
   setText(
     "wbSelectedMeta",
-    `Editing failure_id=${row.id}, status=${row.status}, retry_count=${row.retry_count}, connector=${row.connector_name}`
+    `正在编辑 失败ID=${row.id}, 状态=${row.status}, 重试次数=${row.retry_count}, 连接器=${row.connector_name}`
   );
 }
 async function loadWorkbenchFailures() {
@@ -563,19 +563,19 @@ function parseJsonEditor(inputId, label) {
   try {
     const parsed = JSON.parse(text);
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
-    throw new Error(`${label} must be a JSON object`);
+    throw new Error(`${label} 必须是 JSON 对象`);
   } catch (err) {
-    throw new Error(`${label} parse failed: ${err.message}`);
+    throw new Error(`${label} 解析失败：${err.message}`);
   }
 }
 
 async function saveWorkbenchRepair() {
   if (!state.selectedFailureId) {
-    throw new Error("Pick one failure row first.");
+    throw new Error("请先选择一条失败记录。");
   }
   const connector = connectorFromSelect();
   if (!connector) {
-    throw new Error("Connector is empty.");
+    throw new Error("连接器不能为空。");
   }
 
   const body = {
@@ -589,7 +589,7 @@ async function saveWorkbenchRepair() {
   };
 
   const result = await postJSON("/events/connectors/failures/repair", body);
-  setWorkbenchResult(`Repair saved. failure_id=${result.failure_id}, updated=${result.updated}`);
+  setWorkbenchResult(`修复已保存。失败ID=${result.failure_id}, 已更新=${result.updated}`);
   await loadWorkbenchFailures();
 }
 
@@ -602,11 +602,11 @@ function collectSelectedFailureIds() {
 async function replaySelectedFailures() {
   const connector = connectorFromSelect();
   if (!connector) {
-    throw new Error("Connector is empty.");
+    throw new Error("连接器不能为空。");
   }
   const ids = collectSelectedFailureIds();
   if (!ids.length) {
-    throw new Error("Pick at least one failure row.");
+    throw new Error("请至少选择一条失败记录。");
   }
 
   const result = await postJSON("/events/connectors/replay/manual", {
@@ -615,7 +615,7 @@ async function replaySelectedFailures() {
     triggered_by: "ops_dashboard",
   });
   setWorkbenchResult(
-    `Manual replay done: picked=${result.picked}, replayed=${result.replayed}, failed=${result.failed}, dead=${result.dead}`
+    `手动重放完成：已选=${result.picked}, 重放成功=${result.replayed}, 失败=${result.failed}, 死信=${result.dead}`
   );
   renderReplayResultRows(result.items || []);
   await loadDashboard();
@@ -625,11 +625,11 @@ async function replaySelectedFailures() {
 async function repairReplaySelectedFailures() {
   const connector = connectorFromSelect();
   if (!connector) {
-    throw new Error("Connector is empty.");
+    throw new Error("连接器不能为空。");
   }
   const ids = collectSelectedFailureIds();
   if (!ids.length) {
-    throw new Error("Pick at least one failure row.");
+    throw new Error("请至少选择一条失败记录。");
   }
 
   const patchRaw = parseJsonEditor("wbRawEditor", "raw_record");
@@ -650,7 +650,7 @@ async function repairReplaySelectedFailures() {
   });
 
   setWorkbenchResult(
-    `Repair+Replay done: repaired=${result.repaired}, picked=${result.picked}, replayed=${result.replayed}, failed=${result.failed}, dead=${result.dead}`
+    `修复+重放完成：已修复=${result.repaired}, 已选=${result.picked}, 重放成功=${result.replayed}, 失败=${result.failed}, 死信=${result.dead}`
   );
   renderReplayResultRows(result.items || []);
   await loadDashboard();
@@ -666,7 +666,7 @@ async function syncSlaAlerts() {
   });
   const result = await postEmpty(`/events/connectors/sla/sync-alerts?${params.toString()}`);
   setWorkbenchResult(
-    `SLA sync: emitted=${result.emitted}, skipped=${result.skipped}, recovered=${result.recovered}, escalated=${result.escalated}`
+    `SLA 同步完成：已发送=${result.emitted}, 已跳过=${result.skipped}, 已恢复=${result.recovered}, 已升级=${result.escalated}`
   );
   await loadDashboard();
 }
@@ -731,11 +731,11 @@ async function loadDashboard() {
   setText("kpiEventSymbols", fmtNum(coverage.symbols_covered));
 
   const summaryText = connectorSlaSummary
-    ? `open=${connectorSlaSummary.open_states} | escalated_open=${connectorSlaSummary.escalated_open_states} | by_severity=${JSON.stringify(connectorSlaSummary.open_by_severity || {})}`
+    ? `未恢复=${connectorSlaSummary.open_states} | 升级中未恢复=${connectorSlaSummary.escalated_open_states} | 分级统计=${JSON.stringify(connectorSlaSummary.open_by_severity || {})}`
     : "-";
   setText("connectorSlaSummaryMeta", summaryText);
 
-  setText("coverageMeta", `${coverage.lookback_days}d | generated ${fmtTs(coverage.generated_at)}`);
+  setText("coverageMeta", `${coverage.lookback_days}天 | 生成时间 ${fmtTs(coverage.generated_at)}`);
   setText("coverageTotal", fmtNum(coverage.total_events));
   setText("coveragePositive", fmtNum(coverage.positive_events));
   setText("coverageNegative", fmtNum(coverage.negative_events));
@@ -763,14 +763,14 @@ async function loadDashboard() {
   setText("nlpSloLatestCritical", fmtSigned(nLast && nLast.burn_rate_critical, 3));
 
   ensureWorkbenchConnectorOptions();
-  setText("lastUpdated", `Last update: ${new Date().toLocaleString()}`);
+  setText("lastUpdated", `最近更新时间：${new Date().toLocaleString()}`);
 }
 
 async function safeLoadDashboard() {
   try {
     await loadDashboard();
   } catch (err) {
-    showError(`Dashboard load failed: ${err.message}`);
+    showError(`看板加载失败：${err.message}`);
   }
 }
 
@@ -778,7 +778,7 @@ async function safeLoadFailures() {
   try {
     await loadWorkbenchFailures();
   } catch (err) {
-    showError(`Load failures failed: ${err.message}`);
+    showError(`加载失败列表失败：${err.message}`);
   }
 }
 
@@ -786,7 +786,7 @@ async function safeSaveRepair() {
   try {
     await saveWorkbenchRepair();
   } catch (err) {
-    showError(`Save repair failed: ${err.message}`);
+    showError(`保存修复失败：${err.message}`);
   }
 }
 
@@ -794,7 +794,7 @@ async function safeReplaySelected() {
   try {
     await replaySelectedFailures();
   } catch (err) {
-    showError(`Manual replay failed: ${err.message}`);
+    showError(`手动重放失败：${err.message}`);
   }
 }
 
@@ -802,7 +802,7 @@ async function safeRepairReplaySelected() {
   try {
     await repairReplaySelectedFailures();
   } catch (err) {
-    showError(`Repair replay failed: ${err.message}`);
+    showError(`修复重放失败：${err.message}`);
   }
 }
 
@@ -810,7 +810,7 @@ async function safeSyncSla() {
   try {
     await syncSlaAlerts();
   } catch (err) {
-    showError(`SLA sync failed: ${err.message}`);
+    showError(`SLA 同步失败：${err.message}`);
   }
 }
 
@@ -857,5 +857,5 @@ renderReplayResultRows([]);
 
 safeLoadDashboard()
   .then(() => safeLoadFailures())
-  .catch((err) => showError(`Init failed: ${err.message}`));
+  .catch((err) => showError(`初始化失败：${err.message}`));
 setInterval(safeLoadDashboard, 60 * 1000);

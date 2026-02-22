@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>A股半自动交易辅助系统 - 主界面</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #f3f1ea;
+        --bg-2: #d8e2d8;
+        --ink: #0f1f24;
+        --muted: #4f6167;
+        --line: #d2dbd4;
+        --panel: #ffffffde;
+        --accent: #1b6c97;
+        --accent-2: #0f8a56;
+        --warn: #cc5a22;
+        --shadow: 0 20px 42px -30px rgba(15, 31, 36, 0.45);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
+        color: var(--ink);
+        background:
+          radial-gradient(1200px 480px at -10% -10%, #ffe3bc99 0%, transparent 64%),
+          radial-gradient(920px 420px at 106% 0%, #b8dfd196 0%, transparent 62%),
+          linear-gradient(135deg, var(--bg), var(--bg-2));
+      }
+
+      .page {
+        width: min(1200px, calc(100vw - 28px));
+        margin: 24px auto 36px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .hero {
+        border: 1px solid var(--line);
+        background: linear-gradient(120deg, #fefdf7cc 0%, #e8fbf4cc 48%, #edf6ffcc 100%);
+        box-shadow: var(--shadow);
+        border-radius: 20px;
+        padding: 22px;
+        display: grid;
+        grid-template-columns: 1.3fr 1fr;
+        gap: 14px;
+      }
+
+      .eyebrow {
+        margin: 0;
+        font: 600 12px/1 "Space Grotesk", sans-serif;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        color: #3e5f67;
+      }
+
+      h1 {
+        margin: 8px 0 8px;
+        font-family: "Space Grotesk", "Noto Sans SC", sans-serif;
+        font-size: clamp(26px, 3vw, 40px);
+        line-height: 1.06;
+      }
+
+      .hero p {
+        margin: 0;
+        color: var(--muted);
+      }
+
+      .hero-metrics {
+        display: grid;
+        gap: 8px;
+        align-content: start;
+      }
+
+      .metric {
+        border: 1px solid #d4dcd5;
+        border-radius: 12px;
+        padding: 10px 12px;
+        background: #fff;
+      }
+
+      .metric p {
+        margin: 0;
+        font-size: 13px;
+        color: #607278;
+      }
+
+      .metric h3 {
+        margin: 6px 0 0;
+        font-size: 22px;
+        font-family: "Space Grotesk", "Noto Sans SC", sans-serif;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        padding: 16px;
+      }
+
+      .card h2 {
+        margin: 0 0 8px;
+        font-size: 22px;
+        font-family: "Space Grotesk", "Noto Sans SC", sans-serif;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .card ul {
+        margin: 10px 0 0;
+        padding-left: 18px;
+        color: #304246;
+      }
+
+      .actions {
+        margin-top: 14px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid transparent;
+        text-decoration: none;
+        font-weight: 700;
+        font-size: 14px;
+      }
+
+      .btn.primary {
+        color: #fff;
+        background: linear-gradient(120deg, var(--accent), #2a8bbd);
+      }
+
+      .btn.secondary {
+        color: #0f6944;
+        border-color: #afd3c0;
+        background: linear-gradient(120deg, #e7f7ef, #f4fff9);
+      }
+
+      .btn.warn {
+        color: #fff;
+        background: linear-gradient(120deg, var(--warn), #e37a39);
+      }
+
+      .flow {
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #ffffffcf;
+        padding: 14px;
+      }
+
+      .flow h3 {
+        margin: 0 0 8px;
+        font-family: "Space Grotesk", "Noto Sans SC", sans-serif;
+      }
+
+      .flow-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .flow-step {
+        border: 1px solid #d8e1da;
+        border-radius: 10px;
+        padding: 10px;
+        background: #fff;
+      }
+
+      .flow-step p {
+        margin: 0;
+        color: #4f6167;
+        font-size: 13px;
+      }
+
+      .flow-step h4 {
+        margin: 0 0 4px;
+        font-size: 15px;
+      }
+
+      .footnote {
+        margin: 0;
+        color: #58696e;
+        font-size: 12px;
+      }
+
+      @media (max-width: 1000px) {
+        .hero,
+        .grid {
+          grid-template-columns: 1fr;
+        }
+
+        .flow-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">A-share semi auto trading assistant</p>
+          <h1>主界面 / 功能导航</h1>
+          <p>统一入口到投研交易工作台与运维事件治理看板，并给出策略执行主流程。</p>
+        </div>
+        <div class="hero-metrics">
+          <div class="metric">
+            <p>系统状态</p>
+            <h3 id="healthVal">检查中...</h3>
+          </div>
+          <div class="metric">
+            <p>策略数量</p>
+            <h3 id="strategyCountVal">-</h3>
+          </div>
+          <div class="metric">
+            <p>最近刷新</p>
+            <h3 id="refreshTimeVal">-</h3>
+          </div>
+        </div>
+      </header>
+
+      <section class="grid">
+        <article class="card">
+          <h2>投研交易工作台</h2>
+          <p>面向策略研究与交易准备：配置参数、运行信号/回测、查看图表、生成交易准备单并回写执行。</p>
+          <ul>
+            <li>策略与参数页：策略选择、参数输入、信号/回测/研究一键运行</li>
+            <li>结果可视化页：候选信号、风控命中、K线叠加、回测与组合分析</li>
+            <li>交易执行页：手工下单回写、复盘报表、信号跟随分析</li>
+          </ul>
+          <div class="actions">
+            <a class="btn primary" href="/trading/workbench">进入投研工作台</a>
+            <a class="btn secondary" href="/trading/workbench#strategy">直达策略参数页</a>
+            <a class="btn secondary" href="/trading/workbench#results">直达结果可视化页</a>
+            <a class="btn secondary" href="/trading/workbench#execution">直达执行回写页</a>
+          </div>
+        </article>
+
+        <article class="card">
+          <h2>运维与事件治理看板</h2>
+          <p>面向生产运行稳定性：作业调度、SLA、告警升级、事件治理、失败重放处理。</p>
+          <ul>
+            <li>连接器治理：新鲜度、失败积压、容灾切换、健康评分</li>
+            <li>NLP治理：规则版本、漂移监控、命中率和分值稳定性</li>
+            <li>回放工作台：失败条目修复、批量重放、链路可追溯</li>
+          </ul>
+          <div class="actions">
+            <a class="btn warn" href="/ops/dashboard">进入运维看板</a>
+            <a class="btn secondary" href="/ops/dashboard#replay-workbench">直达回放工作台</a>
+          </div>
+        </article>
+      </section>
+
+      <section class="flow">
+        <h3>建议使用流程</h3>
+        <div class="flow-grid">
+          <article class="flow-step">
+            <h4>1. 策略研究</h4>
+            <p>在投研工作台设置参数并运行信号/回测，确认策略行为、风控命中和收益曲线。</p>
+          </article>
+          <article class="flow-step">
+            <h4>2. 组合与调仓</h4>
+            <p>在结果页查看组合权重与行业暴露，生成调仓建议后提交人工下单。</p>
+          </article>
+          <article class="flow-step">
+            <h4>3. 运维闭环</h4>
+            <p>到运维看板检查数据链路和SLA，处理失败回放并保存审计证据。</p>
+          </article>
+        </div>
+      </section>
+
+      <p class="footnote">提示：页面文案中文化，接口字段保持英文，以保证和后端 API 契约一致。</p>
+    </main>
+    <script>
+      async function refreshOverview() {
+        const healthEl = document.getElementById("healthVal");
+        const strategyEl = document.getElementById("strategyCountVal");
+        const refreshEl = document.getElementById("refreshTimeVal");
+        refreshEl.textContent = new Date().toLocaleString();
+        try {
+          const healthResp = await fetch("/health", { headers: { Accept: "application/json" } });
+          if (healthResp.ok) {
+            const payload = await healthResp.json();
+            healthEl.textContent = String(payload.status || "ok").toUpperCase();
+          } else {
+            healthEl.textContent = "UNKNOWN";
+          }
+        } catch {
+          healthEl.textContent = "UNREACHABLE";
+        }
+
+        try {
+          const strategyResp = await fetch("/strategies", { headers: { Accept: "application/json" } });
+          if (!strategyResp.ok) throw new Error("strategy list unavailable");
+          const rows = await strategyResp.json();
+          strategyEl.textContent = Array.isArray(rows) ? String(rows.length) : "-";
+        } catch {
+          strategyEl.textContent = "-";
+        }
+      }
+
+      refreshOverview();
+    </script>
+  </body>
+</html>

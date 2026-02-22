@@ -80,6 +80,30 @@ body {
   gap: 8px;
 }
 
+.hero-links {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.hero-links a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 30px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid #4f7a81;
+  color: #def0ee;
+  text-decoration: none;
+  font-size: 12px;
+  background: #224c53;
+}
+
+.hero-links a:hover {
+  background: #2c6169;
+}
+
 button {
   border: none;
   border-radius: 10px;
