@@ -39,9 +39,11 @@
 1. `symbol`：`000001`
 2. `start_date`：最近 180 天
 3. `end_date`：今天
-4. `strategy_name`：`trend_following`
+4. `strategy_name`：常规先用 `trend_following`；若账户长期低于 1 万元，建议直接用 `small_capital_adaptive`
 5. `enable_fundamental_enrichment` 保持开启（默认）
-6. 其他参数保持默认
+6. 若账户本金较小（如 2000-10000 元），勾选 `enable_small_capital_mode` 并填真实本金（如 `small_capital_principal=6000`）
+7. 也可直接点击小资金模板按钮：`套用 2000 档 / 5000 档 / 8000 档`（会自动填策略与关键参数）
+8. 其他参数保持默认
 
 点击：`运行信号生成`
 

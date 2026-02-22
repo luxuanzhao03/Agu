@@ -237,3 +237,63 @@ class FundamentalQualityRule(RiskRule):
                 message=f"Fundamental snapshot is stale ({req.fundamental_stale_days} days).",
             )
         return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Fundamental quality passed.")
+
+
+class SmallCapitalTradabilityRule(RiskRule):
+    name = "small_capital_tradability"
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        if not req.enable_small_capital_mode:
+            return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Small-capital mode disabled.")
+        if req.signal.action != SignalAction.BUY:
+            return RuleHit(
+                rule_name=self.name,
+                passed=True,
+                level=SignalLevel.INFO,
+                message="Small-capital tradability check applies to BUY actions only.",
+            )
+
+        available_cash = req.available_cash
+        if available_cash is None:
+            available_cash = req.small_capital_principal
+
+        if available_cash is None:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.WARNING,
+                message="Small-capital mode is enabled but available cash is unknown.",
+            )
+
+        required_cash = req.required_cash_for_min_lot
+        if required_cash is not None:
+            # Keep some cash buffer to avoid capital exhaustion at small account scale.
+            max_usable_cash = float(available_cash) * max(0.0, 1.0 - float(req.small_capital_cash_buffer_ratio))
+            if max_usable_cash < float(required_cash):
+                return RuleHit(
+                    rule_name=self.name,
+                    passed=False,
+                    level=SignalLevel.CRITICAL,
+                    message=(
+                        f"Not tradable for small account: usable_cash={max_usable_cash:.2f}, "
+                        f"required_cash_for_lot={float(required_cash):.2f}."
+                    ),
+                )
+
+        expected = req.expected_edge_bps
+        cost = req.estimated_roundtrip_cost_bps
+        edge_floor = req.min_expected_edge_bps
+        if expected is not None and cost is not None and edge_floor is not None:
+            required = float(cost) + float(edge_floor)
+            if float(expected) < required:
+                return RuleHit(
+                    rule_name=self.name,
+                    passed=False,
+                    level=SignalLevel.WARNING,
+                    message=(
+                        f"Expected edge {float(expected):.1f}bps < required {required:.1f}bps "
+                        "(cost + safety margin)."
+                    ),
+                )
+
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Small-capital tradability passed.")

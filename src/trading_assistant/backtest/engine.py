@@ -19,6 +19,13 @@ from trading_assistant.core.models import (
 from trading_assistant.factors.engine import FactorEngine
 from trading_assistant.risk.engine import RiskEngine
 from trading_assistant.strategy.base import BaseStrategy, StrategyContext
+from trading_assistant.trading.costs import (
+    calc_side_fee,
+    estimate_roundtrip_cost_bps,
+    infer_expected_edge_bps,
+    required_cash_for_min_lot,
+)
+from trading_assistant.trading.small_capital import apply_small_capital_overrides
 
 
 @dataclass
@@ -77,19 +84,72 @@ class BacktestEngine:
         for i in range(len(sorted_bars)):
             window = sorted_bars.iloc[: i + 1]
             features = self.factor_engine.compute(window)
-            context = StrategyContext(params=req.strategy_params)
+            context = StrategyContext(
+                params=req.strategy_params,
+                market_state={
+                    "enable_small_capital_mode": req.enable_small_capital_mode,
+                    "small_capital_principal": float(req.small_capital_principal or req.initial_cash),
+                    "small_capital_lot_size": int(req.lot_size),
+                    "small_capital_cash_buffer_ratio": 0.10,
+                    "commission_rate": req.commission_rate,
+                    "min_commission_cny": req.min_commission_cny,
+                    "transfer_fee_rate": req.transfer_fee_rate,
+                    "stamp_duty_sell_rate": req.stamp_duty_sell_rate,
+                    "slippage_rate": req.slippage_rate,
+                    "available_cash": state.cash,
+                },
+            )
             signals = strategy.generate(features, context=context)
             if not signals:
                 continue
 
             signal = signals[-1]
             close = float(window.iloc[-1]["close"])
+            _ = apply_small_capital_overrides(
+                signal=signal,
+                enable_small_capital_mode=req.enable_small_capital_mode,
+                principal=float(req.small_capital_principal or req.initial_cash),
+                latest_price=close,
+                lot_size=int(req.lot_size),
+                commission_rate=req.commission_rate,
+                min_commission=req.min_commission_cny,
+                transfer_fee_rate=req.transfer_fee_rate,
+                cash_buffer_ratio=0.10,
+                max_single_position=float(req.max_single_position),
+                max_positions=max(1, int(float(req.strategy_params.get("max_positions", 3)))),
+            )
             turnover20 = float(features.iloc[-1].get("turnover20", 0.0))
             fundamental_available = bool(features.iloc[-1].get("fundamental_available", False))
             fundamental_score = (
                 float(features.iloc[-1].get("fundamental_score", 0.5)) if fundamental_available else None
             )
             stale_days_raw = int(features.iloc[-1].get("fundamental_stale_days", -1))
+            small_principal = float(req.small_capital_principal or req.initial_cash)
+            small_lot = max(1, int(req.lot_size))
+            required_cash = required_cash_for_min_lot(
+                price=close,
+                lot_size=small_lot,
+                commission_rate=req.commission_rate,
+                min_commission=req.min_commission_cny,
+                transfer_fee_rate=req.transfer_fee_rate,
+            )
+            roundtrip_cost_bps = estimate_roundtrip_cost_bps(
+                price=close,
+                lot_size=small_lot,
+                commission_rate=req.commission_rate,
+                min_commission=req.min_commission_cny,
+                transfer_fee_rate=req.transfer_fee_rate,
+                stamp_duty_sell_rate=req.stamp_duty_sell_rate,
+                slippage_rate=req.slippage_rate,
+            )
+            expected_edge_bps = infer_expected_edge_bps(
+                confidence=float(signal.confidence),
+                momentum20=float(features.iloc[-1].get("momentum20", 0.0)),
+                event_score=float(features.iloc[-1].get("event_score", 0.0))
+                if "event_score" in features.columns
+                else None,
+                fundamental_score=fundamental_score,
+            )
 
             position_value = state.quantity * close
             equity = state.cash + position_value
@@ -128,6 +188,15 @@ class BacktestEngine:
                 fundamental_available=fundamental_available,
                 fundamental_pit_ok=bool(features.iloc[-1].get("fundamental_pit_ok", True)),
                 fundamental_stale_days=stale_days_raw if stale_days_raw >= 0 else None,
+                enable_small_capital_mode=req.enable_small_capital_mode,
+                small_capital_principal=small_principal,
+                available_cash=state.cash,
+                latest_price=close,
+                lot_size=small_lot,
+                required_cash_for_min_lot=required_cash,
+                estimated_roundtrip_cost_bps=roundtrip_cost_bps,
+                expected_edge_bps=expected_edge_bps,
+                min_expected_edge_bps=req.small_capital_min_expected_edge_bps,
             )
             risk_result = self.risk_engine.evaluate(risk_req)
             if risk_result.blocked:
@@ -187,20 +256,29 @@ class BacktestEngine:
         if signal.action == SignalAction.BUY and state.quantity == 0:
             target_alloc = float(signal.suggested_position or req.max_single_position)
             budget = state.cash * target_alloc
+            if req.enable_small_capital_mode:
+                budget = min(budget, float(req.small_capital_principal or req.initial_cash))
             trade_price = close * (1 + req.slippage_rate)
             qty = int(budget // trade_price // req.lot_size * req.lot_size)
             if qty <= 0:
                 return
 
             gross = qty * trade_price
-            fee = gross * req.commission_rate
+            fee = calc_side_fee(
+                notional=gross,
+                commission_rate=req.commission_rate,
+                min_commission=req.min_commission_cny,
+                transfer_fee_rate=req.transfer_fee_rate,
+                stamp_duty_sell_rate=req.stamp_duty_sell_rate,
+                is_sell=False,
+            )
             total_cost = gross + fee
             if total_cost > state.cash:
                 return
 
             state.cash -= total_cost
             state.quantity += qty
-            state.avg_cost = trade_price
+            state.avg_cost = total_cost / qty
             trades.append(
                 BacktestTrade(
                     date=signal.trade_date,
@@ -217,7 +295,14 @@ class BacktestEngine:
             qty = state.quantity
             trade_price = close * (1 - req.slippage_rate)
             gross = qty * trade_price
-            fee = gross * req.commission_rate
+            fee = calc_side_fee(
+                notional=gross,
+                commission_rate=req.commission_rate,
+                min_commission=req.min_commission_cny,
+                transfer_fee_rate=req.transfer_fee_rate,
+                stamp_duty_sell_rate=req.stamp_duty_sell_rate,
+                is_sell=True,
+            )
             net = gross - fee
 
             pnl = (trade_price - state.avg_cost) * qty - fee

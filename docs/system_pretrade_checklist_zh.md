@@ -34,6 +34,8 @@
 - [ ] 如启用事件增强，`event_lookback_days` 与 `event_decay_half_life_days` 已确认
 - [ ] 财报增强保持开启（`enable_fundamental_enrichment=true`）
 - [ ] 财报陈旧阈值已确认（`fundamental_max_staleness_days`）
+- [ ] 小资金模式已按账户规模开启（`enable_small_capital_mode`）
+- [ ] 小资金本金与安全边际已确认（`small_capital_principal`, `small_capital_min_expected_edge_bps`）
 
 ## 2.4 风控边界确认
 
@@ -50,6 +52,7 @@
 
 - [ ] 已运行信号生成并检查动作分布（BUY/SELL/WATCH）
 - [ ] 已检查信号表“财报评分”列，低分 BUY 信号已人工复核
+- [ ] 已检查“小资金提示”列，确认可买一手且成本可覆盖
 - [ ] 已查看风控命中，确认没有忽略 `CRITICAL` 阻断
 - [ ] 已看 K 线叠加信号，确认信号点位合理
 - [ ] 已查看回测核心指标（收益/回撤/夏普）与最近表现是否一致

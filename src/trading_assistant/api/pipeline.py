@@ -43,6 +43,8 @@ def run_daily_pipeline(
             "event_rows_used": sum(r.event_rows_used for r in result.results),
             "fundamental_enriched": req.enable_fundamental_enrichment,
             "fundamental_available_symbols": sum(1 for r in result.results if r.fundamental_available),
+            "small_capital_mode": req.enable_small_capital_mode,
+            "small_capital_blocked_symbols": sum(1 for r in result.results if r.small_capital_blocked),
         },
     )
     return result

@@ -70,6 +70,16 @@ class RiskCheckRequest(BaseModel):
     fundamental_available: bool = False
     fundamental_pit_ok: bool | None = None
     fundamental_stale_days: int | None = Field(default=None, ge=0)
+    enable_small_capital_mode: bool = False
+    small_capital_principal: float | None = Field(default=None, gt=0)
+    available_cash: float | None = Field(default=None, ge=0)
+    latest_price: float | None = Field(default=None, gt=0)
+    lot_size: int = Field(default=100, ge=1)
+    required_cash_for_min_lot: float | None = Field(default=None, ge=0)
+    estimated_roundtrip_cost_bps: float | None = Field(default=None, ge=0)
+    expected_edge_bps: float | None = Field(default=None, ge=0)
+    min_expected_edge_bps: float | None = Field(default=None, ge=0)
+    small_capital_cash_buffer_ratio: float = Field(default=0.1, ge=0.0, le=0.9)
 
 
 class RuleHit(BaseModel):
@@ -105,6 +115,9 @@ class GenerateSignalRequest(BaseModel):
     strategy_name: str = Field(default="trend_following")
     strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
     enable_event_enrichment: bool = False
+    enable_small_capital_mode: bool = False
+    small_capital_principal: float | None = Field(default=None, gt=0)
+    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
     enable_fundamental_enrichment: bool = True
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
@@ -210,6 +223,9 @@ class BacktestRequest(BaseModel):
     strategy_name: str = Field(default="trend_following")
     strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
     enable_event_enrichment: bool = False
+    enable_small_capital_mode: bool = False
+    small_capital_principal: float | None = Field(default=None, gt=0)
+    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
     enable_fundamental_enrichment: bool = True
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
@@ -217,6 +233,9 @@ class BacktestRequest(BaseModel):
     initial_cash: float = Field(default=1_000_000.0, gt=0)
     commission_rate: float = Field(default=0.0003, ge=0.0, le=0.02)
     slippage_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
+    min_commission_cny: float = Field(default=5.0, ge=0.0, le=500.0)
+    stamp_duty_sell_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
+    transfer_fee_rate: float = Field(default=0.00001, ge=0.0, le=0.01)
     lot_size: int = Field(default=100, ge=1)
     max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
 
@@ -304,6 +323,9 @@ class PipelineRunRequest(BaseModel):
     strategy_name: str = Field(default="trend_following")
     strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
     enable_event_enrichment: bool = False
+    enable_small_capital_mode: bool = False
+    small_capital_principal: float | None = Field(default=None, gt=0)
+    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
     enable_fundamental_enrichment: bool = True
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
@@ -331,6 +353,8 @@ class PipelineSymbolResult(BaseModel):
     fundamental_available: bool = False
     fundamental_score: float | None = None
     fundamental_source: str | None = None
+    small_capital_blocked: bool = False
+    small_capital_note: str | None = None
 
 
 class PipelineRunResult(BaseModel):
@@ -553,6 +577,8 @@ class WorkflowSignalItem(BaseModel):
     fundamental_available: bool = False
     fundamental_score: float | None = None
     fundamental_source: str | None = None
+    small_capital_blocked: bool = False
+    small_capital_note: str | None = None
 
 
 class ResearchWorkflowRequest(BaseModel):
@@ -562,6 +588,9 @@ class ResearchWorkflowRequest(BaseModel):
     strategy_name: str = Field(default="multi_factor")
     strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
     enable_event_enrichment: bool = False
+    enable_small_capital_mode: bool = False
+    small_capital_principal: float | None = Field(default=None, gt=0)
+    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
     enable_fundamental_enrichment: bool = True
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)

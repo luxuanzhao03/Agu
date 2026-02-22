@@ -45,6 +45,12 @@ from trading_assistant.signal.service import SignalService
 from trading_assistant.strategy.base import StrategyContext
 from trading_assistant.strategy.governance_service import StrategyGovernanceService
 from trading_assistant.strategy.registry import StrategyRegistry
+from trading_assistant.trading.costs import (
+    estimate_roundtrip_cost_bps,
+    infer_expected_edge_bps,
+    required_cash_for_min_lot,
+)
+from trading_assistant.trading.small_capital import apply_small_capital_overrides
 
 router = APIRouter(prefix="/signals", tags=["signals"])
 
@@ -158,7 +164,23 @@ def generate_signals(
     )
 
     features = factor_engine.compute(bars)
-    context = StrategyContext(params=req.strategy_params)
+    small_capital_enabled = bool(settings.small_capital_mode_enabled or req.enable_small_capital_mode)
+    small_capital_principal = float(req.small_capital_principal or settings.small_capital_principal_cny)
+    small_lot_size = max(1, int(settings.small_capital_lot_size))
+    context = StrategyContext(
+        params=req.strategy_params,
+        market_state={
+            "enable_small_capital_mode": small_capital_enabled,
+            "small_capital_principal": small_capital_principal,
+            "small_capital_lot_size": small_lot_size,
+            "small_capital_cash_buffer_ratio": settings.small_capital_cash_buffer_ratio,
+            "commission_rate": settings.default_commission_rate,
+            "min_commission_cny": settings.fee_min_commission_cny,
+            "transfer_fee_rate": settings.fee_transfer_rate,
+            "stamp_duty_sell_rate": settings.fee_stamp_duty_sell_rate,
+            "slippage_rate": settings.default_slippage_rate,
+        },
+    )
     candidates = strategy.generate(features, context=context)
     if not candidates:
         return []
@@ -171,6 +193,23 @@ def generate_signals(
         is_st=bool(status.get("is_st", False)),
     )
     avg_turnover_20d = float(latest.get("turnover20", 0.0))
+    latest_close = float(latest.get("close", 0.0))
+    roundtrip_cost_bps = estimate_roundtrip_cost_bps(
+        price=latest_close,
+        lot_size=small_lot_size,
+        commission_rate=settings.default_commission_rate,
+        min_commission=settings.fee_min_commission_cny,
+        transfer_fee_rate=settings.fee_transfer_rate,
+        stamp_duty_sell_rate=settings.fee_stamp_duty_sell_rate,
+        slippage_rate=settings.default_slippage_rate,
+    )
+    min_lot_cash = required_cash_for_min_lot(
+        price=latest_close,
+        lot_size=small_lot_size,
+        commission_rate=settings.default_commission_rate,
+        min_commission=settings.fee_min_commission_cny,
+        transfer_fee_rate=settings.fee_transfer_rate,
+    )
 
     results: list[TradePrepSheet] = []
     for signal in candidates:
@@ -178,6 +217,38 @@ def generate_signals(
         signal.metadata["signal_id"] = signal_id
         if req.industry:
             signal.metadata["industry"] = req.industry
+        _ = apply_small_capital_overrides(
+            signal=signal,
+            enable_small_capital_mode=small_capital_enabled,
+            principal=small_capital_principal,
+            latest_price=latest_close,
+            lot_size=small_lot_size,
+            commission_rate=settings.default_commission_rate,
+            min_commission=settings.fee_min_commission_cny,
+            transfer_fee_rate=settings.fee_transfer_rate,
+            cash_buffer_ratio=settings.small_capital_cash_buffer_ratio,
+            max_single_position=settings.max_single_position,
+            max_positions=max(1, int(float(req.strategy_params.get("max_positions", 3)))),
+        )
+        available_cash = (
+            float(req.portfolio_snapshot.cash)
+            if (req.portfolio_snapshot is not None and req.portfolio_snapshot.cash is not None)
+            else small_capital_principal
+        )
+        expected_edge_bps = infer_expected_edge_bps(
+            confidence=float(signal.confidence),
+            momentum20=float(latest.get("momentum20", 0.0)),
+            event_score=float(latest.get("event_score", 0.0)) if "event_score" in latest else None,
+            fundamental_score=float(latest.get("fundamental_score", 0.5))
+            if bool(latest.get("fundamental_available", False))
+            else None,
+        )
+        signal.metadata["small_capital_mode"] = small_capital_enabled
+        signal.metadata["small_capital_principal"] = round(small_capital_principal, 2)
+        signal.metadata["small_capital_lot_size"] = small_lot_size
+        signal.metadata["required_cash_for_min_lot"] = round(min_lot_cash, 4)
+        signal.metadata["estimated_roundtrip_cost_bps"] = round(roundtrip_cost_bps, 3)
+        signal.metadata["expected_edge_bps"] = round(expected_edge_bps, 3)
 
         risk_req = RiskCheckRequest(
             signal=signal,
@@ -199,6 +270,16 @@ def generate_signals(
                 if int(latest.get("fundamental_stale_days", -1)) >= 0
                 else None
             ),
+            enable_small_capital_mode=small_capital_enabled,
+            small_capital_principal=small_capital_principal,
+            available_cash=available_cash,
+            latest_price=latest_close if latest_close > 0 else None,
+            lot_size=small_lot_size,
+            required_cash_for_min_lot=min_lot_cash,
+            estimated_roundtrip_cost_bps=roundtrip_cost_bps,
+            expected_edge_bps=expected_edge_bps,
+            min_expected_edge_bps=float(req.small_capital_min_expected_edge_bps),
+            small_capital_cash_buffer_ratio=settings.small_capital_cash_buffer_ratio,
         )
         risk_result = risk_engine.evaluate(risk_req)
         results.append(signal_service.to_trade_prep_sheet(signal, risk_result))
@@ -236,6 +317,9 @@ def generate_signals(
             "fundamental_score": round(float(latest.get("fundamental_score", 0.5)), 6)
             if bool(latest.get("fundamental_available", False))
             else None,
+            "small_capital_mode": small_capital_enabled,
+            "small_capital_principal": round(small_capital_principal, 2),
+            "small_capital_roundtrip_cost_bps": round(roundtrip_cost_bps, 3),
         },
         status="OK" if (license_check.allowed or not settings.enforce_data_license) else "ERROR",
     )

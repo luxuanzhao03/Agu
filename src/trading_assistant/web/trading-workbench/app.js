@@ -31,6 +31,94 @@ const STRATEGY_PARAM_DEFAULTS = {
     event_score: 0.7,
     negative_event_score: 0.6,
   },
+  small_capital_adaptive: {
+    buy_threshold: 0.62,
+    sell_threshold: 0.34,
+    min_turnover20: 12000000,
+    max_volatility20: 0.045,
+    min_momentum20_buy: -0.02,
+    max_momentum20_buy: 0.18,
+    min_fundamental_score_buy: 0.45,
+    max_positions: 3,
+    cash_buffer_ratio: 0.1,
+    risk_per_trade: 0.01,
+    max_single_position: 0.35,
+  },
+};
+
+const SMALL_CAPITAL_TEMPLATE_LIBRARY = {
+  "2000": {
+    label: "2000档（微型资金）",
+    strategy_name: "small_capital_adaptive",
+    small_capital_principal: 2000,
+    small_capital_min_edge_bps: 140,
+    initial_cash: 2000,
+    lot_size: 100,
+    max_single_position: 0.6,
+    max_industry_exposure: 0.8,
+    target_gross_exposure: 0.8,
+    strategy_params: {
+      buy_threshold: 0.68,
+      sell_threshold: 0.32,
+      min_turnover20: 15000000,
+      max_volatility20: 0.035,
+      min_momentum20_buy: -0.01,
+      max_momentum20_buy: 0.12,
+      min_fundamental_score_buy: 0.5,
+      max_positions: 2,
+      cash_buffer_ratio: 0.08,
+      risk_per_trade: 0.008,
+      max_single_position: 0.6,
+    },
+  },
+  "5000": {
+    label: "5000档（小资金）",
+    strategy_name: "small_capital_adaptive",
+    small_capital_principal: 5000,
+    small_capital_min_edge_bps: 115,
+    initial_cash: 5000,
+    lot_size: 100,
+    max_single_position: 0.45,
+    max_industry_exposure: 0.65,
+    target_gross_exposure: 0.9,
+    strategy_params: {
+      buy_threshold: 0.64,
+      sell_threshold: 0.33,
+      min_turnover20: 12000000,
+      max_volatility20: 0.042,
+      min_momentum20_buy: -0.015,
+      max_momentum20_buy: 0.15,
+      min_fundamental_score_buy: 0.47,
+      max_positions: 3,
+      cash_buffer_ratio: 0.1,
+      risk_per_trade: 0.01,
+      max_single_position: 0.45,
+    },
+  },
+  "8000": {
+    label: "8000档（准万元）",
+    strategy_name: "small_capital_adaptive",
+    small_capital_principal: 8000,
+    small_capital_min_edge_bps: 95,
+    initial_cash: 8000,
+    lot_size: 100,
+    max_single_position: 0.35,
+    max_industry_exposure: 0.55,
+    target_gross_exposure: 0.95,
+    strategy_params: {
+      buy_threshold: 0.62,
+      sell_threshold: 0.34,
+      min_turnover20: 10000000,
+      max_volatility20: 0.048,
+      min_momentum20_buy: -0.02,
+      max_momentum20_buy: 0.18,
+      min_fundamental_score_buy: 0.45,
+      max_positions: 4,
+      cash_buffer_ratio: 0.12,
+      risk_per_trade: 0.012,
+      max_single_position: 0.35,
+    },
+  },
 };
 
 const state = {
@@ -188,6 +276,18 @@ function toOptionalDate(raw) {
   return val || null;
 }
 
+function setInputValue(id, value) {
+  const node = el(id);
+  if (!node || value === null || value === undefined) return;
+  node.value = String(value);
+}
+
+function setCheckboxValue(id, checked) {
+  const node = el(id);
+  if (!(node instanceof HTMLInputElement)) return;
+  node.checked = Boolean(checked);
+}
+
 function parseSymbols(raw) {
   const text = String(raw || "");
   return Array.from(
@@ -326,6 +426,12 @@ function buildCommonRequest() {
     strategy_name: strategyName,
     strategy_params: collectStrategyParams(false),
     enable_event_enrichment: Boolean(el("eventEnrichInput")?.checked),
+    enable_small_capital_mode: Boolean(el("smallCapitalModeInput")?.checked),
+    small_capital_principal: toNumber(el("smallCapitalPrincipalInput")?.value, "小资金本金", { min: 100 }),
+    small_capital_min_expected_edge_bps: toNumber(el("smallCapitalMinEdgeInput")?.value, "最低安全边际bps", {
+      min: 0,
+      max: 2000,
+    }),
     event_lookback_days: toNumber(el("eventLookbackInput")?.value, "事件回看天数", { integer: true, min: 1, max: 3650 }),
     event_decay_half_life_days: toNumber(el("eventDecayInput")?.value, "事件衰减半衰期", {
       min: 0.01,
@@ -374,9 +480,15 @@ function buildBacktestRequest() {
     enable_event_enrichment: req.enable_event_enrichment,
     event_lookback_days: req.event_lookback_days,
     event_decay_half_life_days: req.event_decay_half_life_days,
+    enable_small_capital_mode: req.enable_small_capital_mode,
+    small_capital_principal: req.small_capital_principal,
+    small_capital_min_expected_edge_bps: req.small_capital_min_expected_edge_bps,
     initial_cash: toNumber(el("initialCashInput")?.value, "初始资金", { min: 1000 }),
     commission_rate: toNumber(el("commissionRateInput")?.value, "手续费率", { min: 0, max: 0.02 }),
     slippage_rate: toNumber(el("slippageRateInput")?.value, "滑点率", { min: 0, max: 0.02 }),
+    min_commission_cny: toNumber(el("minCommissionInput")?.value, "最低佣金", { min: 0, max: 500 }),
+    stamp_duty_sell_rate: toNumber(el("stampDutyRateInput")?.value, "卖出印花税率", { min: 0, max: 0.02 }),
+    transfer_fee_rate: toNumber(el("transferFeeRateInput")?.value, "过户费率", { min: 0, max: 0.01 }),
     lot_size: toNumber(el("lotSizeInput")?.value, "最小交易手数", { integer: true, min: 1 }),
     max_single_position: toNumber(el("maxSinglePositionInput")?.value, "单标的上限", { min: 0.001, max: 1 }),
   };
@@ -394,6 +506,9 @@ function buildResearchRequest() {
     strategy_name: req.strategy_name,
     strategy_params: req.strategy_params,
     enable_event_enrichment: req.enable_event_enrichment,
+    enable_small_capital_mode: req.enable_small_capital_mode,
+    small_capital_principal: req.small_capital_principal,
+    small_capital_min_expected_edge_bps: req.small_capital_min_expected_edge_bps,
     event_lookback_days: req.event_lookback_days,
     event_decay_half_life_days: req.event_decay_half_life_days,
     industry_map: parseIndustryMap(el("industryMapInput")?.value),
@@ -435,6 +550,86 @@ function syncRebalanceDefaults() {
   if (el("rebalanceLotSizeInput") && el("lotSizeInput")) {
     el("rebalanceLotSizeInput").value = String(el("lotSizeInput").value || "100");
   }
+}
+
+function updateSmallCapitalHint() {
+  const hint = el("smallCapitalHint");
+  if (!hint) return;
+  const enabled = Boolean(el("smallCapitalModeInput")?.checked);
+  const principal = Number(el("smallCapitalPrincipalInput")?.value || 0);
+  const edgeBps = Number(el("smallCapitalMinEdgeInput")?.value || 0);
+  const currentStrategy = String(el("strategySelect")?.value || "").trim();
+  const hasSmallCapitalStrategy = state.strategies.some((s) => s && s.name === "small_capital_adaptive");
+
+  if (!enabled) {
+    hint.textContent = "小资金模式未启用：系统按常规资金假设运行。";
+    return;
+  }
+
+  if (Number.isFinite(principal) && principal > 0) {
+    if (el("initialCashInput")) {
+      const cur = Number(el("initialCashInput").value || 0);
+      if (!Number.isFinite(cur) || cur > principal) {
+        el("initialCashInput").value = String(principal);
+      }
+    }
+    if (el("portfolioTotalValue")) el("portfolioTotalValue").value = String(principal);
+    if (el("portfolioCash")) el("portfolioCash").value = String(principal);
+    if (el("portfolioPeakValue")) el("portfolioPeakValue").value = String(principal);
+  }
+  if (hasSmallCapitalStrategy && Number.isFinite(principal) && principal > 0 && principal <= 10000) {
+    const recommended = currentStrategy === "small_capital_adaptive";
+    const suffix = recommended
+      ? "当前策略已是 `small_capital_adaptive`。"
+      : `建议切换策略为 \`small_capital_adaptive\`（当前：\`${currentStrategy || "-"}\`）。`;
+    hint.textContent = `小资金模式已启用：本金=${fmtNum(principal, 0)} 元，安全边际=${fmtNum(edgeBps, 0)}bps。系统会执行“最小手数+费用+安全边际”过滤，并启用小资金仓位建议。${suffix}`;
+    return;
+  }
+
+  hint.textContent = `小资金模式已启用：本金=${fmtNum(principal, 0)} 元，安全边际=${fmtNum(edgeBps, 0)}bps。系统会增加“可交易过滤（最小手数+费用）”。`;
+}
+
+function applySmallCapitalTemplate(profileKey) {
+  const key = String(profileKey || "").trim();
+  const profile = SMALL_CAPITAL_TEMPLATE_LIBRARY[key];
+  if (!profile) throw new Error(`未找到小资金模板：${key}`);
+
+  setCheckboxValue("smallCapitalModeInput", true);
+  setInputValue("smallCapitalPrincipalInput", profile.small_capital_principal);
+  setInputValue("smallCapitalMinEdgeInput", profile.small_capital_min_edge_bps);
+  setInputValue("initialCashInput", profile.initial_cash);
+  setInputValue("lotSizeInput", profile.lot_size);
+  setInputValue("maxSinglePositionInput", profile.max_single_position);
+  setInputValue("maxIndustryExposureInput", profile.max_industry_exposure);
+  setInputValue("targetGrossExposureInput", profile.target_gross_exposure);
+  setInputValue("portfolioTotalValue", profile.small_capital_principal);
+  setInputValue("portfolioCash", profile.small_capital_principal);
+  setInputValue("portfolioPeakValue", profile.small_capital_principal);
+  setInputValue("rebalanceTotalEquityInput", profile.small_capital_principal);
+  setInputValue("rebalanceLotSizeInput", profile.lot_size);
+  setInputValue("minCommissionInput", 5);
+  setInputValue("stampDutyRateInput", 0.0005);
+  setInputValue("transferFeeRateInput", 0.00001);
+
+  const strategySelect = el("strategySelect");
+  let appliedStrategyName = profile.strategy_name;
+  if (strategySelect instanceof HTMLSelectElement) {
+    const hasTarget = Array.from(strategySelect.options).some((opt) => opt.value === profile.strategy_name);
+    if (hasTarget) {
+      strategySelect.value = profile.strategy_name;
+    } else {
+      appliedStrategyName = String(strategySelect.value || "");
+    }
+  }
+  renderStrategyParams(appliedStrategyName, profile.strategy_params || {});
+
+  updateSmallCapitalHint();
+  syncRebalanceDefaults();
+  updateRequestPreview();
+  saveFormSnapshot();
+  setActionMessage(
+    `已套用${profile.label}模板：策略=${appliedStrategyName}，本金=${fmtNum(profile.small_capital_principal, 0)}，安全边际=${fmtNum(profile.small_capital_min_edge_bps, 0)}bps。`
+  );
 }
 
 function updateRequestPreview() {
@@ -796,7 +991,7 @@ function renderSignalRows() {
   if (!host) return;
   const preps = state.latestSignalPreps || [];
   if (!preps.length) {
-    host.innerHTML = '<tr><td colspan="9" class="muted">暂无信号结果。请先在“策略与参数页”运行信号生成。</td></tr>';
+    host.innerHTML = '<tr><td colspan="10" class="muted">暂无信号结果。请先在“策略与参数页”运行信号生成。</td></tr>';
     return;
   }
 
@@ -809,12 +1004,16 @@ function renderSignalRows() {
       const fundamentalScore = signal.metadata && Number.isFinite(Number(signal.metadata.fundamental_score))
         ? Number(signal.metadata.fundamental_score)
         : null;
+      const smallHit =
+        Array.isArray(risk.hits) &&
+        risk.hits.find((hit) => hit && hit.rule_name === "small_capital_tradability" && !hit.passed);
       return `<tr class="${active}" data-prep-idx="${idx}">
         <td>${esc(signal.symbol || "-")}</td>
         <td>${esc(signal.trade_date || "-")}</td>
         <td>${statusChip(signal.action || "WATCH")}</td>
         <td>${fmtPct(signal.confidence || 0, 2)}</td>
         <td>${fundamentalScore === null ? "-" : fmtNum(fundamentalScore, 3)}</td>
+        <td>${esc((smallHit && smallHit.message) || "-")}</td>
         <td>${statusChip(risk.level || "INFO")}</td>
         <td>${risk.blocked ? statusChip("BLOCKED") : statusChip("PASS")}</td>
         <td>${esc(signal.reason || "-")}</td>
@@ -869,7 +1068,7 @@ function renderResearchRows() {
     ? state.latestResearchResult.signals
     : [];
   if (!rows.length) {
-    host.innerHTML = '<tr><td colspan="9" class="muted">暂无研究候选结果。请先运行研究工作流。</td></tr>';
+    host.innerHTML = '<tr><td colspan="10" class="muted">暂无研究候选结果。请先运行研究工作流。</td></tr>';
     return;
   }
 
@@ -881,6 +1080,7 @@ function renderResearchRows() {
       <td>${statusChip(r.action)}</td>
       <td>${fmtPct(r.confidence, 2)}</td>
       <td>${r.fundamental_score === null || r.fundamental_score === undefined ? "-" : fmtNum(r.fundamental_score, 3)}</td>
+      <td>${esc(r.small_capital_note || "-")}</td>
       <td>${r.blocked ? statusChip("BLOCKED") : statusChip("PASS")}</td>
       <td>${statusChip(r.level)}</td>
       <td>${fmtNum(r.event_rows_used, 0)}</td>
@@ -1457,6 +1657,28 @@ function bindStrategyInputEvents() {
       updateRequestPreview();
     });
   });
+
+  ["smallCapitalModeInput", "smallCapitalPrincipalInput", "smallCapitalMinEdgeInput"].forEach((id) => {
+    el(id)?.addEventListener("change", () => {
+      updateSmallCapitalHint();
+      syncRebalanceDefaults();
+      updateRequestPreview();
+      saveFormSnapshot();
+    });
+  });
+
+  el("smallCapitalTemplateActions")?.addEventListener("click", (ev) => {
+    const target = ev.target;
+    if (!(target instanceof HTMLElement)) return;
+    const btn = target.closest("button[data-small-cap-template]");
+    if (!btn) return;
+    const key = btn.getAttribute("data-small-cap-template");
+    try {
+      applySmallCapitalTemplate(key || "");
+    } catch (err) {
+      showGlobalError(`套用小资金模板失败：${err.message}`);
+    }
+  });
 }
 function setDefaultDatesIfEmpty() {
   if (el("startDateInput") && !el("startDateInput").value) el("startDateInput").value = minusDaysISO(180);
@@ -1627,6 +1849,7 @@ async function bootstrap() {
     applyFormSnapshot();
     syncBarsInputsFromStrategy();
     syncRebalanceDefaults();
+    updateSmallCapitalHint();
 
     bindStrategyInputEvents();
     bindResultSelectionEvents();

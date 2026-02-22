@@ -63,6 +63,26 @@ class OkProvider(MarketDataProvider):
         }
 
 
+class ExpensiveProvider(OkProvider):
+    def get_daily_bars(self, symbol: str, start_date: date, end_date: date) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "trade_date": start_date,
+                    "symbol": symbol,
+                    "open": 40.0,
+                    "high": 40.2,
+                    "low": 39.8,
+                    "close": 40.1,
+                    "volume": 100000,
+                    "amount": 4010000,
+                    "is_suspended": False,
+                    "is_st": False,
+                }
+            ]
+        )
+
+
 def test_pipeline_runs_for_symbols(tmp_path: Path) -> None:
     provider = CompositeDataProvider([OkProvider()])
     runner = DailyPipelineRunner(
@@ -177,3 +197,35 @@ def test_pipeline_event_driven_auto_event_enrichment(tmp_path: Path) -> None:
     result = runner.run(req)
     assert len(result.results) == 1
     assert result.results[0].event_rows_used >= 1
+
+
+def test_pipeline_small_capital_mode_flags_blocked_symbol(tmp_path: Path) -> None:
+    provider = CompositeDataProvider([ExpensiveProvider()])
+    runner = DailyPipelineRunner(
+        provider=provider,
+        factor_engine=FactorEngine(),
+        registry=StrategyRegistry(),
+        risk_engine=RiskEngine(
+            max_single_position=0.05,
+            max_drawdown=0.12,
+            max_industry_exposure=0.2,
+            min_turnover_20d=1000,
+        ),
+        signal_service=SignalService(),
+        quality_service=DataQualityService(),
+        pit_validator=PITValidator(),
+        snapshot_service=DataSnapshotService(DataSnapshotStore(str(tmp_path / "snapshot.db"))),
+        small_capital_mode_enabled=True,
+        small_capital_principal_cny=2000,
+    )
+    req = PipelineRunRequest(
+        symbols=["000001"],
+        start_date=date(2025, 1, 2),
+        end_date=date(2025, 1, 2),
+        strategy_name="multi_factor",
+        enable_small_capital_mode=True,
+        small_capital_principal=2000,
+    )
+    result = runner.run(req)
+    assert len(result.results) == 1
+    assert result.results[0].small_capital_note is not None

@@ -26,6 +26,12 @@ from trading_assistant.risk.engine import RiskEngine
 from trading_assistant.signal.service import SignalService
 from trading_assistant.strategy.base import StrategyContext
 from trading_assistant.strategy.registry import StrategyRegistry
+from trading_assistant.trading.costs import (
+    estimate_roundtrip_cost_bps,
+    infer_expected_edge_bps,
+    required_cash_for_min_lot,
+)
+from trading_assistant.trading.small_capital import apply_small_capital_overrides
 
 
 class DailyPipelineRunner:
@@ -43,6 +49,16 @@ class DailyPipelineRunner:
         license_service: DataLicenseService | None = None,
         enforce_data_license: bool = False,
         fundamental_service: FundamentalService | None = None,
+        default_commission_rate: float = 0.0003,
+        default_slippage_rate: float = 0.0005,
+        fee_min_commission_cny: float = 5.0,
+        fee_stamp_duty_sell_rate: float = 0.0005,
+        fee_transfer_rate: float = 0.00001,
+        small_capital_mode_enabled: bool = False,
+        small_capital_principal_cny: float = 2000.0,
+        small_capital_cash_buffer_ratio: float = 0.10,
+        small_capital_min_expected_edge_bps: float = 80.0,
+        small_capital_lot_size: int = 100,
     ) -> None:
         self.provider = provider
         self.fundamental_service = fundamental_service or FundamentalService(provider=provider)
@@ -56,6 +72,16 @@ class DailyPipelineRunner:
         self.snapshot_service = snapshot_service
         self.license_service = license_service
         self.enforce_data_license = enforce_data_license
+        self.default_commission_rate = float(default_commission_rate)
+        self.default_slippage_rate = float(default_slippage_rate)
+        self.fee_min_commission_cny = float(fee_min_commission_cny)
+        self.fee_stamp_duty_sell_rate = float(fee_stamp_duty_sell_rate)
+        self.fee_transfer_rate = float(fee_transfer_rate)
+        self.small_capital_mode_enabled = bool(small_capital_mode_enabled)
+        self.small_capital_principal_cny = float(small_capital_principal_cny)
+        self.small_capital_cash_buffer_ratio = float(small_capital_cash_buffer_ratio)
+        self.small_capital_min_expected_edge_bps = float(small_capital_min_expected_edge_bps)
+        self.small_capital_lot_size = max(1, int(small_capital_lot_size))
 
     def run(self, req: PipelineRunRequest) -> PipelineRunResult:
         started_at = datetime.now(timezone.utc)
@@ -162,11 +188,70 @@ class DailyPipelineRunner:
                 )
 
             features = self.factor_engine.compute(bars_for_features)
-            candidates = strategy.generate(features, StrategyContext(params=req.strategy_params))
+            small_capital_mode = bool(self.small_capital_mode_enabled or req.enable_small_capital_mode)
+            small_capital_principal = float(req.small_capital_principal or self.small_capital_principal_cny)
+            small_lot = max(1, self.small_capital_lot_size)
+            candidates = strategy.generate(
+                features,
+                StrategyContext(
+                    params=req.strategy_params,
+                    market_state={
+                        "enable_small_capital_mode": small_capital_mode,
+                        "small_capital_principal": small_capital_principal,
+                        "small_capital_lot_size": small_lot,
+                        "small_capital_cash_buffer_ratio": self.small_capital_cash_buffer_ratio,
+                        "commission_rate": self.default_commission_rate,
+                        "min_commission_cny": self.fee_min_commission_cny,
+                        "transfer_fee_rate": self.fee_transfer_rate,
+                        "stamp_duty_sell_rate": self.fee_stamp_duty_sell_rate,
+                        "slippage_rate": self.default_slippage_rate,
+                    },
+                ),
+            )
             blocked_count = 0
             warning_count = 0
             latest = features.sort_values("trade_date").iloc[-1]
+            latest_close = float(latest.get("close", 0.0))
+            required_cash = required_cash_for_min_lot(
+                price=latest_close,
+                lot_size=small_lot,
+                commission_rate=self.default_commission_rate,
+                min_commission=self.fee_min_commission_cny,
+                transfer_fee_rate=self.fee_transfer_rate,
+            )
+            roundtrip_cost_bps = estimate_roundtrip_cost_bps(
+                price=latest_close,
+                lot_size=small_lot,
+                commission_rate=self.default_commission_rate,
+                min_commission=self.fee_min_commission_cny,
+                transfer_fee_rate=self.fee_transfer_rate,
+                stamp_duty_sell_rate=self.fee_stamp_duty_sell_rate,
+                slippage_rate=self.default_slippage_rate,
+            )
+            small_capital_note: str | None = None
+            small_capital_blocked = False
             for signal in candidates:
+                _ = apply_small_capital_overrides(
+                    signal=signal,
+                    enable_small_capital_mode=small_capital_mode,
+                    principal=small_capital_principal,
+                    latest_price=latest_close,
+                    lot_size=small_lot,
+                    commission_rate=self.default_commission_rate,
+                    min_commission=self.fee_min_commission_cny,
+                    transfer_fee_rate=self.fee_transfer_rate,
+                    cash_buffer_ratio=self.small_capital_cash_buffer_ratio,
+                    max_single_position=0.35,
+                    max_positions=max(1, int(float(req.strategy_params.get("max_positions", 3)))),
+                )
+                expected_edge_bps = infer_expected_edge_bps(
+                    confidence=float(signal.confidence),
+                    momentum20=float(latest.get("momentum20", 0.0)),
+                    event_score=float(latest.get("event_score", 0.0)) if "event_score" in latest else None,
+                    fundamental_score=float(latest.get("fundamental_score", 0.5))
+                    if bool(latest.get("fundamental_available", False))
+                    else None,
+                )
                 risk_req = RiskCheckRequest(
                     signal=signal,
                     is_st=bool(status.get("is_st", False)),
@@ -183,9 +268,25 @@ class DailyPipelineRunner:
                         if int(latest.get("fundamental_stale_days", -1)) >= 0
                         else None
                     ),
+                    enable_small_capital_mode=small_capital_mode,
+                    small_capital_principal=small_capital_principal,
+                    available_cash=small_capital_principal,
+                    latest_price=latest_close if latest_close > 0 else None,
+                    lot_size=small_lot,
+                    required_cash_for_min_lot=required_cash,
+                    estimated_roundtrip_cost_bps=roundtrip_cost_bps,
+                    expected_edge_bps=expected_edge_bps,
+                    min_expected_edge_bps=float(req.small_capital_min_expected_edge_bps),
+                    small_capital_cash_buffer_ratio=self.small_capital_cash_buffer_ratio,
                 )
                 risk_result = self.risk_engine.evaluate(risk_req)
                 _ = self.signal_service.to_trade_prep_sheet(signal, risk_result)
+                small_hits_all = [x for x in risk_result.hits if x.rule_name == "small_capital_tradability"]
+                small_hits_failed = [x for x in small_hits_all if not x.passed]
+                if small_hits_all and small_capital_note is None:
+                    small_capital_note = (small_hits_failed[0].message if small_hits_failed else small_hits_all[0].message)
+                if any(x.level == SignalLevel.CRITICAL for x in small_hits_failed):
+                    small_capital_blocked = True
                 if risk_result.blocked:
                     blocked_count += 1
                 elif risk_result.level == SignalLevel.WARNING:
@@ -206,6 +307,8 @@ class DailyPipelineRunner:
                     if bool(latest.get("fundamental_available", False))
                     else None,
                     fundamental_source=str(fundamental_stats.get("source")) if fundamental_stats.get("source") else None,
+                    small_capital_blocked=small_capital_blocked,
+                    small_capital_note=small_capital_note,
                 )
             )
 

@@ -135,6 +135,16 @@ def get_pipeline_runner() -> DailyPipelineRunner:
         snapshot_service=get_snapshot_service(),
         license_service=get_data_license_service(),
         enforce_data_license=settings.enforce_data_license,
+        default_commission_rate=settings.default_commission_rate,
+        default_slippage_rate=settings.default_slippage_rate,
+        fee_min_commission_cny=settings.fee_min_commission_cny,
+        fee_stamp_duty_sell_rate=settings.fee_stamp_duty_sell_rate,
+        fee_transfer_rate=settings.fee_transfer_rate,
+        small_capital_mode_enabled=settings.small_capital_mode_enabled,
+        small_capital_principal_cny=settings.small_capital_principal_cny,
+        small_capital_cash_buffer_ratio=settings.small_capital_cash_buffer_ratio,
+        small_capital_min_expected_edge_bps=settings.small_capital_min_expected_edge_bps,
+        small_capital_lot_size=settings.small_capital_lot_size,
     )
 
 
@@ -271,6 +281,16 @@ def get_research_workflow_service() -> ResearchWorkflowService:
         event_service=get_event_service(),
         license_service=get_data_license_service(),
         enforce_data_license=settings.enforce_data_license,
+        default_commission_rate=settings.default_commission_rate,
+        default_slippage_rate=settings.default_slippage_rate,
+        fee_min_commission_cny=settings.fee_min_commission_cny,
+        fee_stamp_duty_sell_rate=settings.fee_stamp_duty_sell_rate,
+        fee_transfer_rate=settings.fee_transfer_rate,
+        small_capital_mode_enabled=settings.small_capital_mode_enabled,
+        small_capital_principal_cny=settings.small_capital_principal_cny,
+        small_capital_cash_buffer_ratio=settings.small_capital_cash_buffer_ratio,
+        small_capital_min_expected_edge_bps=settings.small_capital_min_expected_edge_bps,
+        small_capital_lot_size=settings.small_capital_lot_size,
     )
 
 

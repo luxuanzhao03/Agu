@@ -27,6 +27,7 @@
 - `multi_factor`
 - `sector_rotation`
 - `event_driven`
+- `small_capital_adaptive`（1万元以下账户优先策略）
 - 策略注册与策略元数据接口。
 
 4. 风险引擎
@@ -39,6 +40,7 @@
 - 组合回撤阈值。
 - 行业集中度预警。
 - 基本面质量门槛（低评分告警/阻断，PIT 时点违规阻断）。
+- 小资金可交易过滤（最小手数可买性、成本覆盖边际检查）。
 
 5. 信号中心
 - 支持策略选择与参数配置的信号生成。
@@ -47,6 +49,7 @@
 6. 回测引擎
 - 单标的 long-only 基线回测。
 - 滑点 + 手续费建模。
+- A股费用细化（最低佣金、卖出印花税、过户费）。
 - T+1 可卖数量逻辑。
 - 权益曲线、成交记录与关键指标。
 
@@ -159,6 +162,7 @@
 - 增加 K 线/价格趋势叠加信号（`/market/bars`）。
 - 增加组合权重 + 行业暴露可视化与调仓联动（`/portfolio/rebalance/plan`）。
 - 增加“财报评分”列（信号表 + 研究候选表），展示每个标的当前基本面评分。
+- 新增“小资金模式”参数区（本金、安全边际、费用参数）与结果提示列。
 - 页头可跳主界面（`/ui/`）与运维看板（`/ops/dashboard`）。
 
 24. 前端主界面
@@ -426,6 +430,29 @@ FUNDAMENTAL_REQUIRE_DATA_FOR_BUY=false
 - `FUNDAMENTAL_MAX_STALENESS_DAYS`：财报陈旧度阈值，超过后会在评分中施加衰减。
 - `FUNDAMENTAL_BUY_WARNING_SCORE` / `FUNDAMENTAL_BUY_CRITICAL_SCORE`：买入信号的财报质量分级门槛。
 - `FUNDAMENTAL_REQUIRE_DATA_FOR_BUY`：若开启且取不到财报快照，买入信号会进入人工确认路径（WARNING）。
+
+## 小资金模式与费用模型配置
+
+```text
+SMALL_CAPITAL_MODE_ENABLED=false
+SMALL_CAPITAL_PRINCIPAL_CNY=2000
+SMALL_CAPITAL_CASH_BUFFER_RATIO=0.10
+SMALL_CAPITAL_MIN_EXPECTED_EDGE_BPS=80
+SMALL_CAPITAL_LOT_SIZE=100
+DEFAULT_COMMISSION_RATE=0.0003
+DEFAULT_SLIPPAGE_RATE=0.0005
+FEE_MIN_COMMISSION_CNY=5
+FEE_STAMP_DUTY_SELL_RATE=0.0005
+FEE_TRANSFER_RATE=0.00001
+```
+
+说明：
+- 小资金模式开启后，`signals/pipeline/research/backtest`会对 BUY 信号增加“可买一手 + 成本覆盖边际”过滤。
+- 新增 `small_capital_adaptive` 策略：对 `1万以下资金`默认采用低换手、可交易性优先、动态仓位（按一手可买性 + 波动风险 + 资金分桶）规则。
+- 即使使用其他策略，小资金模式也会在 BUY 信号前执行“仓位覆写”：买不起一手或一手集中度过高时自动降级为 `WATCH`。
+- 前端策略页新增三档一键模板：`2000 / 5000 / 8000`，自动填充小资金策略与关键参数。
+- 回测中费用模型会计入最低佣金、卖出印花税、过户费，避免小本金回测被过度乐观高估。
+- 前端“策略与参数页”可按请求覆盖全局设置（`enable_small_capital_mode` / `small_capital_principal` / `small_capital_min_expected_edge_bps`）。
 
 ## 告警派发配置
 

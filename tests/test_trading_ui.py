@@ -13,12 +13,17 @@ def test_trading_workbench_ui_route() -> None:
     assert "rebalanceRows" in resp.text
     assert "/market/bars" in resp.text
     assert "/portfolio/rebalance/plan" in resp.text
+    assert 'data-small-cap-template="2000"' in resp.text
+    assert 'data-small-cap-template="5000"' in resp.text
+    assert 'data-small-cap-template="8000"' in resp.text
 
     js = client.get("/ui/trading-workbench/app.js")
     assert js.status_code == 200
     assert "runSignal" in js.text
     assert "loadMarketBars" in js.text
     assert "runRebalancePlan" in js.text
+    assert "SMALL_CAPITAL_TEMPLATE_LIBRARY" in js.text
+    assert "applySmallCapitalTemplate" in js.text
 
 
 def test_ui_main_portal_route() -> None:

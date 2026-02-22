@@ -47,6 +47,8 @@ def run_research_workflow(
             "event_rows_used": sum(item.event_rows_used for item in result.signals),
             "fundamental_enriched": req.enable_fundamental_enrichment,
             "fundamental_available_signals": sum(1 for item in result.signals if item.fundamental_available),
+            "small_capital_mode": req.enable_small_capital_mode,
+            "small_capital_blocked_signals": sum(1 for item in result.signals if item.small_capital_blocked),
         },
     )
     return result

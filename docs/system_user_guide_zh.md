@@ -125,6 +125,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 - `enable_event_enrichment`：启用事件增强
 - `event_lookback_days`：事件回看窗口
 - `event_decay_half_life_days`：事件衰减速度
+- `enable_small_capital_mode`：启用小资金模式（可交易过滤 + 成本覆盖检查）
+- `small_capital_principal`：小资金本金（如 2000 元）
+- `small_capital_min_expected_edge_bps`：最低安全边际（预期边际需覆盖交易成本+安全边）
+- 小资金模板按钮：`套用 2000 档 / 5000 档 / 8000 档`，可一键填充策略与关键参数
 - `enable_fundamental_enrichment`：启用财报基本面增强（建议保持开启）
 - `fundamental_max_staleness_days`：财报最大陈旧天数，超出后评分会衰减
 
@@ -146,6 +150,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 - `initial_cash`
 - `commission_rate`
 - `slippage_rate`
+- `min_commission_cny`
+- `stamp_duty_sell_rate`
+- `transfer_fee_rate`
 - `lot_size`
 - `optimize_portfolio`
 - `max_single_position`
@@ -167,7 +174,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 
 ## 6.2 如何选策略（非常重要）
 
-系统内置 5 种策略：
+系统内置 6 种策略：
 
 1. `trend_following`（趋势跟随）  
    适合：趋势明确、波段行情。  
@@ -189,6 +196,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
    适合：公告/事件信息密集时段。  
    核心：`event_score` 与 `negative_event_score` 触发。
 
+6. `small_capital_adaptive`（小资金自适应）  
+   适合：长期本金低于 1 万元、希望控制换手和费用拖累的账户。  
+   核心：在信号阶段就做“一手可买性 + 集中度 + 动态仓位”联动，避免生成不可执行 BUY。
+
 实操建议：
 
 1. 初次上手先用 `trend_following` 跑单标的，便于理解信号与回测关系。
@@ -196,6 +207,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 3. 事件流质量稳定后，再提高 `event_driven` 权重。
 4. 参数调优要逐步改，避免一次改太多无法解释收益变化。
 5. 财报增强建议默认开启；若关闭，仅剩技术/事件维度，建议降低仓位并加强人工复核。
+6. 若本金长期低于 1 万元：优先 `small_capital_adaptive`，并开启 `enable_small_capital_mode`，先保证“可执行”再追求收益弹性。
 
 ---
 
@@ -295,6 +307,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 1. 回撤是否可承受
 2. 夏普是否稳定
 3. 阻断是否过多（可能参数过激或风控条件过严）
+4. 小资金提示是否频繁触发（说明当前标的价格/成本结构不适合账户规模）
 
 ---
 
@@ -466,6 +479,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 
 5. 财报质量维度  
    财报覆盖率（有无快照）、`fundamental_score`分布、低分阻断/预警数量
+
+6. 小资金适配维度  
+   小资金阻断次数、最小手数可交易覆盖率、成本占预期边际比例
 
 ---
 

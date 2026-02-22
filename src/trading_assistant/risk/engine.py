@@ -17,6 +17,7 @@ from trading_assistant.risk.rules import (
     LiquidityRule,
     PositionLimitRule,
     RiskRule,
+    SmallCapitalTradabilityRule,
     STRule,
     SuspensionRule,
     TPlusOneRule,
@@ -41,6 +42,7 @@ class RiskEngine:
             LimitPriceRule(),
             PositionLimitRule(max_single_position=max_single_position),
             LiquidityRule(min_turnover_20d=min_turnover_20d),
+            SmallCapitalTradabilityRule(),
             DrawdownRule(max_drawdown=max_drawdown),
             IndustryExposureRule(max_industry_exposure=max_industry_exposure),
             FundamentalQualityRule(

@@ -115,3 +115,43 @@ def test_fundamental_pit_failure_blocks_buy() -> None:
     result = engine.evaluate(req)
     assert result.blocked is True
     assert result.level == SignalLevel.CRITICAL
+
+
+def test_small_capital_not_tradable_blocks_buy() -> None:
+    engine = build_engine()
+    req = RiskCheckRequest(
+        signal=build_signal(SignalAction.BUY),
+        enable_small_capital_mode=True,
+        small_capital_principal=2000,
+        available_cash=2000,
+        latest_price=30,
+        lot_size=100,
+        required_cash_for_min_lot=3010,
+        estimated_roundtrip_cost_bps=60,
+        expected_edge_bps=150,
+        min_expected_edge_bps=80,
+        small_capital_cash_buffer_ratio=0.1,
+    )
+    result = engine.evaluate(req)
+    assert result.blocked is True
+    assert result.level == SignalLevel.CRITICAL
+
+
+def test_small_capital_edge_below_cost_warns() -> None:
+    engine = build_engine()
+    req = RiskCheckRequest(
+        signal=build_signal(SignalAction.BUY),
+        enable_small_capital_mode=True,
+        small_capital_principal=2000,
+        available_cash=2000,
+        latest_price=10,
+        lot_size=100,
+        required_cash_for_min_lot=1006,
+        estimated_roundtrip_cost_bps=95,
+        expected_edge_bps=120,
+        min_expected_edge_bps=80,
+        small_capital_cash_buffer_ratio=0.1,
+    )
+    result = engine.evaluate(req)
+    assert result.blocked is False
+    assert result.level == SignalLevel.WARNING

@@ -62,6 +62,29 @@ class GrowingProvider(MarketDataProvider):
         }
 
 
+class ExpensiveGrowingProvider(GrowingProvider):
+    def get_daily_bars(self, symbol: str, start_date: date, end_date: date) -> pd.DataFrame:
+        rows = []
+        prices = [35, 35.2, 35.5, 35.8, 36.0]
+        for i, p in enumerate(prices):
+            d = start_date.replace(day=min(28, start_date.day + i))
+            rows.append(
+                {
+                    "trade_date": d,
+                    "symbol": symbol,
+                    "open": p * 0.99,
+                    "high": p * 1.01,
+                    "low": p * 0.98,
+                    "close": p,
+                    "volume": 100000 + i * 1000,
+                    "amount": p * (100000 + i * 1000),
+                    "is_suspended": False,
+                    "is_st": False,
+                }
+            )
+        return pd.DataFrame(rows)
+
+
 def test_research_workflow_runs(tmp_path: Path) -> None:
     workflow = ResearchWorkflowService(
         provider=CompositeDataProvider([GrowingProvider()]),
@@ -117,3 +140,35 @@ def test_research_workflow_blocks_when_license_enforced(tmp_path: Path) -> None:
         )
     )
     assert result.signals == []
+
+
+def test_research_workflow_small_capital_note(tmp_path: Path) -> None:
+    workflow = ResearchWorkflowService(
+        provider=CompositeDataProvider([ExpensiveGrowingProvider()]),
+        factor_engine=FactorEngine(),
+        registry=StrategyRegistry(),
+        risk_engine=RiskEngine(
+            max_single_position=0.05,
+            max_drawdown=0.12,
+            max_industry_exposure=0.2,
+            min_turnover_20d=1000,
+        ),
+        optimizer=PortfolioOptimizer(),
+        replay=ReplayService(ReplayStore(str(tmp_path / "replay.db"))),
+        pit_validator=PITValidator(),
+        small_capital_mode_enabled=True,
+        small_capital_principal_cny=2000,
+    )
+    result = workflow.run(
+        ResearchWorkflowRequest(
+            symbols=["000001"],
+            start_date=date(2025, 1, 2),
+            end_date=date(2025, 1, 10),
+            strategy_name="multi_factor",
+            optimize_portfolio=True,
+            enable_small_capital_mode=True,
+            small_capital_principal=2000,
+        )
+    )
+    assert result.signals
+    assert result.signals[0].small_capital_note is not None

@@ -95,7 +95,25 @@
                 事件衰减半衰期（天）
                 <input id="eventDecayInput" type="number" min="0.1" step="0.1" value="7" />
               </label>
+              <label class="inline">
+                <input id="smallCapitalModeInput" type="checkbox" /> 启用小资金模式（small_capital_mode）
+              </label>
+              <label>
+                小资金本金（small_capital_principal）
+                <input id="smallCapitalPrincipalInput" type="number" min="100" step="100" value="2000" />
+              </label>
+              <label>
+                最低安全边际（bps）
+                <input id="smallCapitalMinEdgeInput" type="number" min="0" max="2000" step="1" value="80" />
+              </label>
             </div>
+            <div id="smallCapitalTemplateActions" class="actions-row wrap">
+              <button type="button" class="secondary" data-small-cap-template="2000">套用 2000 档</button>
+              <button type="button" class="secondary" data-small-cap-template="5000">套用 5000 档</button>
+              <button type="button" class="secondary" data-small-cap-template="8000">套用 8000 档</button>
+            </div>
+            <p class="muted">点击模板后会一键填充小资金策略、仓位、回测与费用相关关键参数。</p>
+            <p id="smallCapitalHint" class="muted">-</p>
           </article>
 
           <article class="card">
@@ -169,6 +187,18 @@
               <label>
                 滑点率（slippage_rate）
                 <input id="slippageRateInput" type="number" min="0" max="0.02" step="0.0001" value="0.0005" />
+              </label>
+              <label>
+                最低佣金（min_commission_cny）
+                <input id="minCommissionInput" type="number" min="0" max="500" step="0.1" value="5" />
+              </label>
+              <label>
+                卖出印花税率（stamp_duty_sell_rate）
+                <input id="stampDutyRateInput" type="number" min="0" max="0.02" step="0.00001" value="0.0005" />
+              </label>
+              <label>
+                过户费率（transfer_fee_rate）
+                <input id="transferFeeRateInput" type="number" min="0" max="0.01" step="0.00001" value="0.00001" />
               </label>
               <label>
                 最小交易手数（lot_size）
@@ -246,6 +276,7 @@
                     <th>动作</th>
                     <th>置信度</th>
                     <th>财报评分</th>
+                    <th>小资金提示</th>
                     <th>风控等级</th>
                     <th>阻断</th>
                     <th>原因</th>
@@ -291,6 +322,7 @@
                     <th>动作</th>
                     <th>置信度</th>
                     <th>财报评分</th>
+                    <th>小资金提示</th>
                     <th>阻断</th>
                     <th>等级</th>
                     <th>事件行数</th>
