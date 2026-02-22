@@ -4,8 +4,11 @@ from types import SimpleNamespace
 
 from trading_assistant.core.models import (
     EventBatchIngestRequest,
+    EventNLPAdjudicationRequest,
     EventNLPDriftCheckRequest,
     EventNLPFeedbackUpsertRequest,
+    EventNLPLabelEntryUpsertRequest,
+    EventNLPLabelSnapshotRequest,
     EventNLPRule,
     EventNLPRulesetUpsertRequest,
     EventPolarity,
@@ -337,3 +340,129 @@ def test_nlp_feedback_loop_and_drift_feedback_accuracy_alerts(tmp_path: Path) ->
     assert drift.feedback_polarity_accuracy_delta < 0
     assert drift.feedback_event_type_accuracy_delta < 0
     assert any(a.metric == "feedback_polarity_accuracy" for a in drift.alerts)
+
+
+def test_nlp_label_adjudication_consistency_and_snapshot(tmp_path: Path) -> None:
+    db_path = str(tmp_path / "event.db")
+    event_service = EventService(store=EventStore(db_path))
+    _ = event_service.register_source(
+        EventSourceRegisterRequest(
+            source_name="ann_qc",
+            source_type="ANNOUNCEMENT",
+            provider="mock",
+            created_by="qa",
+        )
+    )
+    _ = event_service.ingest(
+        EventBatchIngestRequest(
+            source_name="ann_qc",
+            events=[
+                EventRecordCreate(
+                    event_id="qc-1",
+                    symbol="000001",
+                    event_type="share_buyback",
+                    publish_time=datetime(2025, 2, 10, 8, 0, tzinfo=timezone.utc),
+                    polarity=EventPolarity.POSITIVE,
+                    score=0.9,
+                    confidence=0.9,
+                    title="buyback",
+                    summary="buyback",
+                    metadata={"matched_rules": "share_buyback", "nlp_ruleset_version": "ruleset-v4"},
+                ),
+                EventRecordCreate(
+                    event_id="qc-2",
+                    symbol="000001",
+                    event_type="earnings_warning",
+                    publish_time=datetime(2025, 2, 11, 8, 0, tzinfo=timezone.utc),
+                    polarity=EventPolarity.NEGATIVE,
+                    score=0.8,
+                    confidence=0.9,
+                    title="warning",
+                    summary="warning",
+                    metadata={"matched_rules": "earnings_warning", "nlp_ruleset_version": "ruleset-v4"},
+                ),
+            ],
+        )
+    )
+    service = EventNLPGovernanceService(store=EventNLPStore(db_path))
+
+    # Event qc-1 has agreement, qc-2 has disagreement.
+    for labeler in ["reviewer_a", "reviewer_b"]:
+        _ = service.upsert_label_entry(
+            EventNLPLabelEntryUpsertRequest(
+                source_name="ann_qc",
+                event_id="qc-1",
+                label_event_type="share_buyback",
+                label_polarity=EventPolarity.POSITIVE,
+                label_score=0.88,
+                labeler=labeler,
+                label_version="v1",
+            )
+        )
+    _ = service.upsert_label_entry(
+        EventNLPLabelEntryUpsertRequest(
+            source_name="ann_qc",
+            event_id="qc-2",
+            label_event_type="earnings_warning",
+            label_polarity=EventPolarity.NEGATIVE,
+            label_score=0.7,
+            labeler="reviewer_a",
+            label_version="v1",
+        )
+    )
+    _ = service.upsert_label_entry(
+        EventNLPLabelEntryUpsertRequest(
+            source_name="ann_qc",
+            event_id="qc-2",
+            label_event_type="policy_positive",
+            label_polarity=EventPolarity.POSITIVE,
+            label_score=0.4,
+            labeler="reviewer_b",
+            label_version="v1",
+        )
+    )
+
+    adjudication = service.adjudicate_labels(
+        EventNLPAdjudicationRequest(
+            source_name="ann_qc",
+            start_date=date(2025, 2, 1),
+            end_date=date(2025, 2, 20),
+            min_labelers=2,
+            save_consensus=True,
+            adjudicated_by="qa_reviewer",
+        )
+    )
+    assert adjudication.total_events == 2
+    assert adjudication.adjudicated == 2
+    assert adjudication.conflicts == 1
+
+    consensus = service.list_consensus_labels(source_name="ann_qc", limit=20)
+    assert len(consensus) == 2
+    assert any(x.conflict for x in consensus)
+
+    consistency = service.label_consistency_summary(
+        source_name="ann_qc",
+        start_date=date(2025, 2, 1),
+        end_date=date(2025, 2, 20),
+        min_labelers=2,
+    )
+    assert consistency.events_with_labels == 2
+    assert consistency.total_label_rows == 4
+    assert consistency.majority_conflict_rate > 0
+    assert consistency.pair_agreements
+
+    snapshot = service.create_label_snapshot(
+        EventNLPLabelSnapshotRequest(
+            source_name="ann_qc",
+            start_date=date(2025, 2, 1),
+            end_date=date(2025, 2, 20),
+            min_labelers=2,
+            include_conflicts=False,
+            created_by="qa_reviewer",
+            note="exclude conflicts",
+        )
+    )
+    assert snapshot.sample_size == 1
+    assert snapshot.consensus_size == 1
+    assert snapshot.conflict_size == 0
+    assert snapshot.hash_sha256

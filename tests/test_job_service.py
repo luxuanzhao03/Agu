@@ -63,6 +63,34 @@ class FakeEventConnectorService:
         )
 
 
+class FakeComplianceEvidenceService:
+    def export_bundle(self, req):
+        _ = req
+        return SimpleNamespace(
+            bundle_id="bundle-1",
+            package_path="reports/compliance/bundle-1.zip",
+            package_sha256="sha256-demo",
+            signature=SimpleNamespace(enabled=True),
+            vault_copy_path="reports/compliance_vault/bundle-1.zip",
+            file_count=12,
+        )
+
+
+class FakeAlertService:
+    def reconcile_oncall(self, req):
+        _ = req
+        return SimpleNamespace(
+            provider="pagerduty",
+            endpoint="local://data/oncall.json",
+            pulled=3,
+            matched=2,
+            callbacks=2,
+            acked_notifications=2,
+            dry_run=False,
+            errors=[],
+        )
+
+
 def _service(tmp_path: Path) -> JobService:
     return JobService(
         store=JobStore(str(tmp_path / "job.db")),
@@ -79,6 +107,26 @@ def _service_with_connector(tmp_path: Path) -> JobService:
         research=FakeResearchWorkflowService(),
         reporting=FakeReportingService(),
         event_connector=FakeEventConnectorService(),
+    )
+
+
+def _service_with_compliance(tmp_path: Path) -> JobService:
+    return JobService(
+        store=JobStore(str(tmp_path / "job.db")),
+        pipeline=FakePipelineRunner(),
+        research=FakeResearchWorkflowService(),
+        reporting=FakeReportingService(),
+        compliance_evidence=FakeComplianceEvidenceService(),
+    )
+
+
+def _service_with_alerts(tmp_path: Path) -> JobService:
+    return JobService(
+        store=JobStore(str(tmp_path / "job.db")),
+        pipeline=FakePipelineRunner(),
+        research=FakeResearchWorkflowService(),
+        reporting=FakeReportingService(),
+        alerts=FakeAlertService(),
     )
 
 
@@ -141,3 +189,49 @@ def test_job_trigger_event_connector_sync_success(tmp_path: Path) -> None:
     assert run.status.value == "SUCCESS"
     assert run.result_summary["connector_name"] == "c1"
     assert run.result_summary["inserted"] == 2
+
+
+def test_job_trigger_compliance_evidence_export_success(tmp_path: Path) -> None:
+    service = _service_with_compliance(tmp_path)
+    job_id = service.register(
+        JobRegisterRequest(
+            name="compliance evidence export",
+            job_type=JobType.COMPLIANCE_EVIDENCE_EXPORT,
+            owner="qa",
+            payload={
+                "request": {
+                    "triggered_by": "ops_job_runner",
+                    "output_dir": "reports/compliance",
+                    "package_prefix": "evidence_job",
+                    "sign_bundle": True,
+                }
+            },
+        )
+    )
+    run = service.trigger(job_id=job_id, triggered_by="qa_user")
+    assert run.status.value == "SUCCESS"
+    assert run.result_summary["bundle_id"] == "bundle-1"
+    assert run.result_summary["signature_enabled"] is True
+
+
+def test_job_trigger_oncall_reconcile_success(tmp_path: Path) -> None:
+    service = _service_with_alerts(tmp_path)
+    job_id = service.register(
+        JobRegisterRequest(
+            name="oncall reconcile",
+            job_type=JobType.ALERT_ONCALL_RECONCILE,
+            owner="qa",
+            payload={
+                "provider": "pagerduty",
+                "endpoint": "local://data/oncall.json",
+                "mapping_template": "pagerduty",
+                "limit": 200,
+                "dry_run": False,
+            },
+        )
+    )
+    run = service.trigger(job_id=job_id, triggered_by="qa_user")
+    assert run.status.value == "SUCCESS"
+    assert run.result_summary["provider"] == "pagerduty"
+    assert run.result_summary["callbacks"] == 2
+    assert run.result_summary["acked_notifications"] == 2

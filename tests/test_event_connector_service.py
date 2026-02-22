@@ -1,6 +1,10 @@
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
+
+import pandas as pd
 
 from trading_assistant.core.models import (
     AnnouncementRawRecord,
@@ -454,3 +458,365 @@ def test_batch_repair_and_replay_failures(tmp_path: Path) -> None:
 
     event_rows = events.list_events(source_name="batch_manual_source", symbol="000001", limit=20)
     assert len(event_rows) >= 2
+
+
+def test_source_matrix_failover_and_health_scoring(tmp_path: Path) -> None:
+    events, connectors = _services(tmp_path)
+    _ = events.register_source(
+        EventSourceRegisterRequest(
+            source_name="matrix_source",
+            source_type="ANNOUNCEMENT",
+            provider="mock",
+            created_by="qa",
+        )
+    )
+    backup_file = tmp_path / "backup.json"
+    backup_file.write_text(
+        json.dumps(
+            [
+                {
+                    "source_event_id": "mx-1",
+                    "symbol": "000001",
+                    "title": "Backup source announcement",
+                    "summary": "fallback source healthy",
+                    "publish_time_text": "2025-02-01 08:30:00",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    _ = connectors.register_connector(
+        EventConnectorRegisterRequest(
+            connector_name="matrix_connector",
+            source_name="matrix_source",
+            connector_type=EventConnectorType.FILE_ANNOUNCEMENT,
+            config={
+                "failover": {"enabled": True, "health_threshold": 40, "max_candidates_per_run": 3},
+                "source_matrix": [
+                    {
+                        "source_key": "primary_dead",
+                        "connector_type": "FILE_ANNOUNCEMENT",
+                        "priority": 10,
+                        "enabled": True,
+                        "config": {"file_path": str(tmp_path / "missing_primary.json")},
+                    },
+                    {
+                        "source_key": "backup_ok",
+                        "connector_type": "FILE_ANNOUNCEMENT",
+                        "priority": 20,
+                        "enabled": True,
+                        "config": {"file_path": str(backup_file)},
+                    },
+                ],
+            },
+            created_by="qa",
+        )
+    )
+
+    result = connectors.run_connector(EventConnectorRunRequest(connector_name="matrix_connector", triggered_by="qa"))
+    assert result.run.status.value in {"SUCCESS", "PARTIAL"}
+    assert result.run.inserted_count >= 1
+    assert result.run.details.get("selected_source_key") == "backup_ok"
+    assert any("source=primary_dead" in err for err in result.errors)
+
+    states = connectors.list_source_states(connector_name="matrix_connector", limit=20)
+    assert len(states) == 2
+    by_key = {x.source_key: x for x in states}
+    assert by_key["backup_ok"].is_active is True
+    assert by_key["primary_dead"].consecutive_failures >= 1
+    assert by_key["primary_dead"].health_score < by_key["backup_ok"].health_score
+
+
+def test_http_json_connector_from_local_file_url(tmp_path: Path) -> None:
+    events, connectors = _services(tmp_path)
+    _ = events.register_source(
+        EventSourceRegisterRequest(
+            source_name="http_json_source",
+            source_type="ANNOUNCEMENT",
+            provider="mock",
+            created_by="qa",
+        )
+    )
+
+    payload_file = tmp_path / "http_payload.json"
+    payload_file.write_text(
+        json.dumps(
+            {
+                "data": {
+                    "items": [
+                        {
+                            "id": "http-1",
+                            "symbol": "000001",
+                            "title": "HTTP json announcement",
+                            "summary": "connected by http-json connector",
+                            "publish_time_text": "2025-02-05 09:15:00",
+                        }
+                    ]
+                }
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    file_url = payload_file.resolve().as_uri()
+
+    _ = connectors.register_connector(
+        EventConnectorRegisterRequest(
+            connector_name="http_json_connector",
+            source_name="http_json_source",
+            connector_type=EventConnectorType.HTTP_JSON_ANNOUNCEMENT,
+            config={
+                "url": file_url,
+                "method": "GET",
+                "records_path": "data.items",
+                "limit_param": "limit",
+                "cursor_param": "cursor",
+            },
+            created_by="qa",
+        )
+    )
+
+    result = connectors.run_connector(EventConnectorRunRequest(connector_name="http_json_connector", triggered_by="qa"))
+    assert result.run.status.value in {"SUCCESS", "PARTIAL"}
+    assert result.run.inserted_count == 1
+    rows = events.list_events(source_name="http_json_source", symbol="000001", limit=20)
+    assert any(r.event_id == "http-1" for r in rows)
+
+
+def test_source_budget_governance_skips_exhausted_source(tmp_path: Path) -> None:
+    events, connectors = _services(tmp_path)
+    _ = events.register_source(
+        EventSourceRegisterRequest(
+            source_name="budget_source",
+            source_type="ANNOUNCEMENT",
+            provider="mock",
+            created_by="qa",
+        )
+    )
+    primary_file = tmp_path / "budget_primary.json"
+    backup_file = tmp_path / "budget_backup.json"
+    payload = [
+        {
+            "source_event_id": "budget-1",
+            "symbol": "000001",
+            "title": "Budget source announcement",
+            "summary": "source budget test",
+            "publish_time_text": "2025-02-20 08:30:00",
+        }
+    ]
+    primary_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    backup_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    _ = connectors.register_connector(
+        EventConnectorRegisterRequest(
+            connector_name="budget_connector",
+            source_name="budget_source",
+            connector_type=EventConnectorType.FILE_ANNOUNCEMENT,
+            config={
+                "failover": {"enabled": True, "max_candidates_per_run": 2},
+                "source_matrix": [
+                    {
+                        "source_key": "primary_budget_1h",
+                        "connector_type": "FILE_ANNOUNCEMENT",
+                        "priority": 10,
+                        "enabled": True,
+                        "request_budget_per_hour": 1,
+                        "config": {"file_path": str(primary_file)},
+                    },
+                    {
+                        "source_key": "backup_unlimited",
+                        "connector_type": "FILE_ANNOUNCEMENT",
+                        "priority": 20,
+                        "enabled": True,
+                        "config": {"file_path": str(backup_file)},
+                    },
+                ],
+            },
+            created_by="qa",
+        )
+    )
+
+    first = connectors.run_connector(
+        EventConnectorRunRequest(connector_name="budget_connector", triggered_by="qa", force_full_sync=True)
+    )
+    assert first.run.status.value in {"SUCCESS", "PARTIAL"}
+    assert first.run.details.get("selected_source_key") == "primary_budget_1h"
+
+    second = connectors.run_connector(
+        EventConnectorRunRequest(connector_name="budget_connector", triggered_by="qa", force_full_sync=True)
+    )
+    assert second.run.status.value in {"SUCCESS", "PARTIAL"}
+    assert second.run.details.get("selected_source_key") == "backup_unlimited"
+    attempts = second.run.details.get("source_attempts") or []
+    assert any(x.get("status") == "SKIPPED_BUDGET" and x.get("source_key") == "primary_budget_1h" for x in attempts)
+
+
+def test_source_credential_alias_rotates_between_runs(tmp_path: Path) -> None:
+    events, connectors = _services(tmp_path)
+    _ = events.register_source(
+        EventSourceRegisterRequest(
+            source_name="credential_source",
+            source_type="ANNOUNCEMENT",
+            provider="mock",
+            created_by="qa",
+        )
+    )
+    payload_file = tmp_path / "credential_payload.json"
+    payload_file.write_text(
+        json.dumps(
+            [
+                {
+                    "source_event_id": "cred-1",
+                    "symbol": "000001",
+                    "title": "Credential rotation announcement",
+                    "summary": "rotation",
+                    "publish_time_text": "2025-02-20 09:30:00",
+                }
+            ],
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _ = connectors.register_connector(
+        EventConnectorRegisterRequest(
+            connector_name="credential_connector",
+            source_name="credential_source",
+            connector_type=EventConnectorType.FILE_ANNOUNCEMENT,
+            config={
+                "source_matrix": [
+                    {
+                        "source_key": "primary",
+                        "connector_type": "FILE_ANNOUNCEMENT",
+                        "priority": 10,
+                        "enabled": True,
+                        "credential_aliases": ["cred_a", "cred_b"],
+                        "config": {
+                            "file_path": str(payload_file),
+                            "credentials": {
+                                "cred_a": {"api_token": "token-a"},
+                                "cred_b": {"api_token": "token-b"},
+                            },
+                        },
+                    }
+                ]
+            },
+            created_by="qa",
+        )
+    )
+
+    first = connectors.run_connector(
+        EventConnectorRunRequest(connector_name="credential_connector", triggered_by="qa", force_full_sync=True)
+    )
+    second = connectors.run_connector(
+        EventConnectorRunRequest(connector_name="credential_connector", triggered_by="qa", force_full_sync=True)
+    )
+    a1 = (first.run.details.get("source_attempts") or [{}])[0].get("credential_alias")
+    a2 = (second.run.details.get("source_attempts") or [{}])[0].get("credential_alias")
+    assert a1 in {"cred_a", "cred_b"}
+    assert a2 in {"cred_a", "cred_b"}
+    assert a1 != a2
+
+
+def test_connector_slo_history_tracks_burn_rate(tmp_path: Path) -> None:
+    events, connectors = _services(tmp_path)
+    _ = events.register_source(
+        EventSourceRegisterRequest(
+            source_name="slo_source",
+            source_type="ANNOUNCEMENT",
+            provider="mock",
+            created_by="qa",
+        )
+    )
+    _ = connectors.register_connector(
+        EventConnectorRegisterRequest(
+            connector_name="slo_connector",
+            source_name="slo_source",
+            connector_type=EventConnectorType.FILE_ANNOUNCEMENT,
+            config={"file_path": str(tmp_path / "empty.json"), "sla": {"pending_warning": 1}},
+            created_by="qa",
+        )
+    )
+    _ = connectors.store.append_failures(
+        connector_name="slo_connector",
+        source_name="slo_source",
+        run_id="seed-run",
+        payloads=[{"phase": "ingest", "error": "seed pending"}],
+        error_message="seed failure",
+    )
+    audit = AuditService(AuditStore(str(tmp_path / "audit.db")))
+    _ = connectors.sync_sla_alerts(audit=audit, cooldown_seconds=0)
+    _ = connectors.sync_sla_alerts(audit=audit, cooldown_seconds=0)
+
+    history = connectors.slo_history(connector_name="slo_connector", lookback_days=1, bucket_hours=1)
+    assert history.total_points >= 1
+    assert any((p.warning_breaches + p.critical_breaches) > 0 for p in history.points)
+    assert any(p.burn_rate_warning >= 0 for p in history.points)
+
+
+def test_akshare_connector_handles_cn_columns_and_api_fallback(tmp_path: Path, monkeypatch) -> None:
+    events, connectors = _services(tmp_path)
+    _ = events.register_source(
+        EventSourceRegisterRequest(
+            source_name="akshare_source",
+            source_type="ANNOUNCEMENT",
+            provider="akshare",
+            created_by="qa",
+        )
+    )
+
+    def stock_notice_report(**kwargs):
+        _ = kwargs
+        return pd.DataFrame(
+            [
+                {
+                    "公告编号": "ak-1",
+                    "代码": "000001",
+                    "公告标题": "回购进展公告",
+                    "公告摘要": "公司继续推进股份回购",
+                    "公告内容": "董事会通过回购上限调整",
+                    "公告日期": "2025-02-22 09:30:00",
+                    "公告链接": "https://example.com/ak-1",
+                    "额外字段": "extra",
+                }
+            ]
+        )
+
+    fake_ak = SimpleNamespace(stock_notice_report=stock_notice_report)
+    monkeypatch.setitem(sys.modules, "akshare", fake_ak)
+
+    _ = connectors.register_connector(
+        EventConnectorRegisterRequest(
+            connector_name="akshare_connector",
+            source_name="akshare_source",
+            connector_type=EventConnectorType.AKSHARE_ANNOUNCEMENT,
+            config={
+                "api_name": "stock_notice_report",
+                "api_candidates": ["missing_api", "stock_notice_report"],
+                "request_kwargs": {"symbol": "000001"},
+                "column_map": {
+                    "event_id": ["公告编号", "id"],
+                    "symbol": ["代码"],
+                    "title": ["公告标题"],
+                    "summary": ["公告摘要"],
+                    "content": ["公告内容"],
+                    "publish_time": ["公告日期"],
+                    "url": ["公告链接"],
+                },
+            },
+            created_by="qa",
+        )
+    )
+
+    result = connectors.run_connector(
+        EventConnectorRunRequest(connector_name="akshare_connector", triggered_by="qa")
+    )
+    assert result.run.status.value in {"SUCCESS", "PARTIAL"}
+    assert result.run.inserted_count == 1
+
+    rows = events.list_events(source_name="akshare_source", symbol="000001", limit=20)
+    assert len(rows) == 1
+    assert rows[0].event_id == "ak-1"
+    assert rows[0].title == "回购进展公告"
+    assert rows[0].summary == "公司继续推进股份回购"

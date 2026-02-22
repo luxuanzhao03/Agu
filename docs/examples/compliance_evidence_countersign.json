@@ -1,0 +1,8 @@
+{
+  "package_path": "reports/compliance/evidence_daily_20260221T102000Z_abc12345.zip",
+  "countersign_path": "reports/compliance/evidence_daily_20260221T102000Z_abc12345.countersign.json",
+  "signer": "audit_manager",
+  "signing_key_id": "audit-key-1",
+  "signing_secret": "your-signing-secret",
+  "note": "dual control countersign"
+}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from functools import lru_cache
 
@@ -22,6 +23,7 @@ from trading_assistant.governance.event_nlp import EventStandardizer
 from trading_assistant.governance.event_nlp_governance import EventNLPGovernanceService
 from trading_assistant.governance.event_nlp_store import EventNLPStore
 from trading_assistant.governance.data_quality import DataQualityService
+from trading_assistant.governance.compliance_evidence import ComplianceEvidenceService
 from trading_assistant.governance.event_service import EventService
 from trading_assistant.governance.event_store import EventStore
 from trading_assistant.governance.license_service import DataLicenseService
@@ -201,6 +203,24 @@ def get_event_nlp_governance_service() -> EventNLPGovernanceService:
 
 
 @lru_cache
+def get_compliance_evidence_service() -> ComplianceEvidenceService:
+    settings = get_settings()
+    return ComplianceEvidenceService(
+        audit=get_audit_service(),
+        strategy_gov=get_strategy_governance_service(),
+        event_connector=get_event_connector_service(),
+        event_nlp=get_event_nlp_governance_service(),
+        default_signing_secret=settings.compliance_evidence_signing_secret,
+        default_vault_dir=settings.compliance_evidence_vault_dir,
+        default_external_worm_endpoint=settings.compliance_evidence_external_worm_endpoint,
+        default_external_kms_wrap_endpoint=settings.compliance_evidence_external_kms_wrap_endpoint,
+        default_external_auth_token=settings.compliance_evidence_external_auth_token,
+        default_external_timeout_seconds=settings.compliance_evidence_external_timeout_seconds,
+        default_external_require_success=settings.compliance_evidence_external_require_success,
+    )
+
+
+@lru_cache
 def get_pit_validator() -> PITValidator:
     return PITValidator()
 
@@ -273,11 +293,30 @@ def get_model_risk_service() -> ModelRiskService:
 @lru_cache
 def get_alert_service() -> AlertService:
     settings = get_settings()
+    mapping_templates: dict[str, dict[str, object]] = {}
+    raw_mapping = (settings.oncall_callback_mapping_json or "").strip()
+    if raw_mapping:
+        try:
+            parsed = json.loads(raw_mapping)
+            if isinstance(parsed, dict):
+                mapping_templates = {
+                    str(key): dict(value)
+                    for key, value in parsed.items()
+                    if isinstance(value, dict)
+                }
+        except Exception:  # noqa: BLE001
+            mapping_templates = {}
     return AlertService(
         store=AlertStore(settings.alert_db_path),
         audit=get_audit_service(),
         dispatcher=RealAlertDispatcher(settings=settings),
         default_runbook_base_url=settings.alert_runbook_base_url,
+        oncall_callback_signing_secret=settings.oncall_callback_signing_secret,
+        oncall_callback_require_signature=settings.oncall_callback_require_signature,
+        oncall_callback_signature_ttl_seconds=settings.oncall_callback_signature_ttl_seconds,
+        oncall_mapping_templates=mapping_templates,
+        oncall_reconcile_default_endpoint=settings.oncall_reconcile_default_endpoint,
+        oncall_reconcile_timeout_seconds=settings.oncall_reconcile_timeout_seconds,
     )
 
 
@@ -290,6 +329,8 @@ def get_job_service() -> JobService:
         research=get_research_workflow_service(),
         reporting=get_reporting_service(),
         event_connector=get_event_connector_service(),
+        compliance_evidence=get_compliance_evidence_service(),
+        alerts=get_alert_service(),
         scheduler_timezone=settings.ops_scheduler_timezone,
         running_timeout_minutes=settings.ops_job_running_timeout_minutes,
     )

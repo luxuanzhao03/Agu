@@ -1,0 +1,7 @@
+{
+  "package_path": "reports/compliance/evidence_daily_20260221T102000Z_abc12345.zip",
+  "signature_path": "reports/compliance/evidence_daily_20260221T102000Z_abc12345.signature.json",
+  "countersign_path": "reports/compliance/evidence_daily_20260221T102000Z_abc12345.countersign.json",
+  "require_countersign": true,
+  "signing_secret": "your-signing-secret"
+}

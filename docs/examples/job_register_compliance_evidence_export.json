@@ -1,0 +1,23 @@
+{
+  "name": "compliance-evidence-nightly",
+  "job_type": "compliance_evidence_export",
+  "owner": "compliance_ops",
+  "schedule_cron": "30 18 * * 1-5",
+  "enabled": true,
+  "description": "daily evidence export with signature and immutable vault copy",
+  "payload": {
+    "request": {
+      "triggered_by": "ops_job_runner",
+      "source_name": "exchange_announcement",
+      "event_lookback_days": 30,
+      "output_dir": "reports/compliance",
+      "package_prefix": "evidence_daily",
+      "sign_bundle": true,
+      "signer": "compliance_bot",
+      "signing_key_id": "compliance-k1",
+      "write_vault_copy": true,
+      "vault_dir": "reports/compliance_vault",
+      "cleanup_bundle_dir": true
+    }
+  }
+}

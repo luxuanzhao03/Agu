@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from trading_assistant.alerts.service import AlertService
 from trading_assistant.core.container import get_alert_service
@@ -9,6 +9,11 @@ from trading_assistant.core.models import (
     AlertDeliveryStatus,
     AlertItem,
     AlertNotificationRecord,
+    OncallCallbackRequest,
+    OncallCallbackResult,
+    OncallEventRecord,
+    OncallReconcileRequest,
+    OncallReconcileResult,
     AlertSubscriptionCreateRequest,
     AlertSubscriptionRecord,
 )
@@ -79,6 +84,47 @@ def ack_notification(
     _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.RISK, UserRole.ADMIN)),
 ) -> bool:
     return alerts.ack(notification_id=notification_id)
+
+
+@router.post("/oncall/callback", response_model=OncallCallbackResult)
+def oncall_callback(
+    req: OncallCallbackRequest,
+    alerts: AlertService = Depends(get_alert_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.RISK, UserRole.AUDIT)),
+) -> OncallCallbackResult:
+    try:
+        return alerts.process_oncall_callback(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/oncall/events", response_model=list[OncallEventRecord])
+def list_oncall_events(
+    provider: str | None = Query(default=None),
+    incident_id: str | None = Query(default=None),
+    acked: bool | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=5000),
+    alerts: AlertService = Depends(get_alert_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.RISK, UserRole.AUDIT)),
+) -> list[OncallEventRecord]:
+    return alerts.list_oncall_events(
+        provider=provider,
+        incident_id=incident_id,
+        acked=acked,
+        limit=limit,
+    )
+
+
+@router.post("/oncall/reconcile", response_model=OncallReconcileResult)
+def reconcile_oncall(
+    req: OncallReconcileRequest,
+    alerts: AlertService = Depends(get_alert_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.RISK, UserRole.AUDIT)),
+) -> OncallReconcileResult:
+    try:
+        return alerts.reconcile_oncall(req)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/deliveries", response_model=list[AlertDeliveryRecord])

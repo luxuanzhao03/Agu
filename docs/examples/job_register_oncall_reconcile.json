@@ -1,0 +1,15 @@
+{
+  "name": "oncall-reconcile-pagerduty",
+  "job_type": "alert_oncall_reconcile",
+  "owner": "ops_team",
+  "schedule_cron": "*/10 * * * *",
+  "enabled": true,
+  "description": "reconcile open incidents and callback ACK status",
+  "payload": {
+    "provider": "pagerduty",
+    "endpoint": "local://data/oncall_remote_incidents.json",
+    "mapping_template": "pagerduty",
+    "limit": 500,
+    "dry_run": false
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "provider": "pagerduty",
+  "endpoint": "local://data/oncall_remote_incidents.json",
+  "mapping_template": "pagerduty",
+  "limit": 200,
+  "dry_run": false
+}

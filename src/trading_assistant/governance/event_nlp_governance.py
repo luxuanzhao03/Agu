@@ -1,22 +1,37 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 from datetime import date, datetime, timedelta, timezone
+from itertools import combinations
 import json
 import math
 
 from trading_assistant.core.models import (
+    EventNLPAdjudicationItem,
+    EventNLPAdjudicationRequest,
+    EventNLPAdjudicationResult,
+    EventNLPConsensusRecord,
     EventFeatureBacktestCompareRequest,
     EventNLPContributionWindow,
     EventNLPDriftAlert,
     EventNLPDriftCheckRequest,
     EventNLPDriftCheckResult,
+    EventNLPLabelConsistencySummary,
+    EventNLPLabelEntryRecord,
+    EventNLPLabelEntryUpsertRequest,
+    EventNLPLabelSnapshotRecord,
+    EventNLPLabelSnapshotRequest,
+    EventNLPLabelerPairAgreement,
+    EventNLPSLOHistory,
+    EventNLPSLOPoint,
     EventNLPDriftMonitorPoint,
     EventNLPDriftMonitorSummary,
     EventNLPDriftSnapshotRecord,
     EventNLPFeedbackRecord,
     EventNLPFeedbackSummary,
     EventNLPFeedbackUpsertRequest,
+    EventPolarity,
     EventNLPRulesetActivateRequest,
     EventNLPRulesetRecord,
     EventNLPRulesetUpsertRequest,
@@ -137,6 +152,398 @@ class EventNLPGovernanceService:
             start_date=start_date,
             end_date=end_date,
             limit=limit,
+        )
+
+    def upsert_label_entry(self, req: EventNLPLabelEntryUpsertRequest) -> int:
+        return self.store.upsert_label_entry(req)
+
+    def list_label_entries(
+        self,
+        *,
+        source_name: str | None = None,
+        labeler: str | None = None,
+        event_id: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        limit: int = 500,
+    ) -> list[EventNLPLabelEntryRecord]:
+        return self.store.list_label_entries(
+            source_name=source_name,
+            labeler=labeler,
+            event_id=event_id,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+        )
+
+    def adjudicate_labels(self, req: EventNLPAdjudicationRequest) -> EventNLPAdjudicationResult:
+        rows = self.store.load_label_entry_rows_for_scope(
+            source_name=req.source_name,
+            event_ids=req.event_ids,
+            start_date=req.start_date,
+            end_date=req.end_date,
+            min_labelers=req.min_labelers,
+        )
+        grouped: dict[tuple[str, str], list[dict]] = {}
+        for row in rows:
+            key = (str(row["source_name"]), str(row["event_id"]))
+            grouped.setdefault(key, []).append(dict(row))
+
+        items: list[EventNLPAdjudicationItem] = []
+        adjudicated = 0
+        conflicts = 0
+        skipped = 0
+        for key, group in grouped.items():
+            source_name, event_id = key
+            label_count = len(group)
+            if label_count < req.min_labelers:
+                skipped += 1
+                continue
+
+            labelers = sorted({str(x["labeler"]) for x in group})
+            event_type_counter = Counter(str(x["label_event_type"]) for x in group)
+            polarity_counter = Counter(str(x["label_polarity"]) for x in group)
+            score_values = [float(x["label_score"]) for x in group if x.get("label_score") is not None]
+            predicted_scores = [float(x["predicted_score"]) for x in group if x.get("predicted_score") is not None]
+
+            event_top = event_type_counter.most_common(2)
+            polarity_top = polarity_counter.most_common(2)
+            consensus_event_type = event_top[0][0] if event_top else None
+            consensus_polarity_raw = polarity_top[0][0] if polarity_top else None
+            consensus_polarity = EventPolarity(consensus_polarity_raw) if consensus_polarity_raw else None
+
+            consensus_score: float | None = None
+            if score_values:
+                ordered_scores = sorted(score_values)
+                mid = len(ordered_scores) // 2
+                if len(ordered_scores) % 2 == 0:
+                    consensus_score = round((ordered_scores[mid - 1] + ordered_scores[mid]) / 2.0, 6)
+                else:
+                    consensus_score = round(ordered_scores[mid], 6)
+            elif predicted_scores:
+                consensus_score = round(sum(predicted_scores) / len(predicted_scores), 6)
+
+            type_conf = (event_top[0][1] / label_count) if event_top else 0.0
+            polarity_conf = (polarity_top[0][1] / label_count) if polarity_top else 0.0
+            consensus_confidence = round((type_conf + polarity_conf) / 2.0, 6)
+
+            conflict_reasons: list[str] = []
+            if len(event_type_counter) > 1:
+                conflict_reasons.append("event_type_disagreement")
+            if len(polarity_counter) > 1:
+                conflict_reasons.append("polarity_disagreement")
+            if len(event_top) > 1 and event_top[0][1] == event_top[1][1]:
+                conflict_reasons.append("event_type_tie")
+            if len(polarity_top) > 1 and polarity_top[0][1] == polarity_top[1][1]:
+                conflict_reasons.append("polarity_tie")
+            if req.require_unanimous and (len(event_type_counter) > 1 or len(polarity_counter) > 1):
+                conflict_reasons.append("require_unanimous_not_met")
+
+            if score_values:
+                mean = sum(score_values) / len(score_values)
+                var = sum((x - mean) ** 2 for x in score_values) / len(score_values)
+                std = math.sqrt(max(0.0, var))
+                if std >= 0.18:
+                    conflict_reasons.append("score_dispersion_high")
+
+            conflict = bool(conflict_reasons)
+            if conflict:
+                conflicts += 1
+
+            first = group[0]
+            item = EventNLPAdjudicationItem(
+                source_name=source_name,
+                event_id=event_id,
+                symbol=str(first["symbol"]),
+                publish_time=datetime.fromisoformat(str(first["publish_time"])),
+                label_count=label_count,
+                labelers=labelers,
+                consensus_event_type=consensus_event_type,
+                consensus_polarity=consensus_polarity,
+                consensus_score=consensus_score,
+                consensus_confidence=consensus_confidence,
+                conflict=conflict,
+                conflict_reasons=conflict_reasons,
+            )
+            items.append(item)
+
+            if req.save_consensus and consensus_event_type and consensus_polarity:
+                _ = self.store.upsert_consensus(
+                    source_name=source_name,
+                    event_id=event_id,
+                    symbol=item.symbol,
+                    publish_time=item.publish_time,
+                    consensus_event_type=consensus_event_type,
+                    consensus_polarity=consensus_polarity.value,
+                    consensus_score=consensus_score,
+                    consensus_confidence=consensus_confidence,
+                    label_count=label_count,
+                    conflict=conflict,
+                    conflict_reasons=conflict_reasons,
+                    adjudicated_by=req.adjudicated_by,
+                    label_version=req.label_version,
+                )
+            adjudicated += 1
+
+        items.sort(key=lambda x: x.publish_time, reverse=True)
+        return EventNLPAdjudicationResult(
+            generated_at=datetime.now(timezone.utc),
+            source_name=req.source_name,
+            total_events=len(grouped),
+            adjudicated=adjudicated,
+            conflicts=conflicts,
+            skipped=skipped,
+            items=items,
+        )
+
+    def list_consensus_labels(
+        self,
+        *,
+        source_name: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        limit: int = 500,
+    ) -> list[EventNLPConsensusRecord]:
+        return self.store.list_consensus(
+            source_name=source_name,
+            start_date=start_date,
+            end_date=end_date,
+            limit=limit,
+        )
+
+    def label_consistency_summary(
+        self,
+        *,
+        source_name: str | None,
+        start_date: date,
+        end_date: date,
+        min_labelers: int = 2,
+    ) -> EventNLPLabelConsistencySummary:
+        rows = self.store.load_label_entry_rows_for_scope(
+            source_name=source_name,
+            start_date=start_date,
+            end_date=end_date,
+            min_labelers=max(1, min_labelers),
+        )
+        if not rows:
+            return EventNLPLabelConsistencySummary(
+                source_name=source_name,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+        grouped: dict[tuple[str, str], list[dict]] = {}
+        for row in rows:
+            key = (str(row["source_name"]), str(row["event_id"]))
+            grouped.setdefault(key, []).append(dict(row))
+
+        total_label_rows = len(rows)
+        events_with_labels = len(grouped)
+        avg_labelers_per_event = round(total_label_rows / max(1, events_with_labels), 6)
+
+        conflict_events = 0
+        score_stds: list[float] = []
+        pair_stats: dict[tuple[str, str], dict[str, float]] = {}
+        for group in grouped.values():
+            event_types = {str(x["label_event_type"]) for x in group}
+            polarities = {str(x["label_polarity"]) for x in group}
+            if len(event_types) > 1 or len(polarities) > 1:
+                conflict_events += 1
+
+            score_values = [float(x["label_score"]) for x in group if x.get("label_score") is not None]
+            if score_values:
+                mean = sum(score_values) / len(score_values)
+                var = sum((x - mean) ** 2 for x in score_values) / len(score_values)
+                score_stds.append(math.sqrt(max(0.0, var)))
+
+            by_labeler = {str(x["labeler"]): x for x in group}
+            for a, b in combinations(sorted(by_labeler.keys()), 2):
+                row_a = by_labeler[a]
+                row_b = by_labeler[b]
+                key = (a, b)
+                stat = pair_stats.setdefault(
+                    key,
+                    {
+                        "common_events": 0,
+                        "event_type_hit": 0,
+                        "polarity_hit": 0,
+                        "score_abs_sum": 0.0,
+                        "score_pairs": 0,
+                    },
+                )
+                stat["common_events"] += 1
+                if str(row_a["label_event_type"]) == str(row_b["label_event_type"]):
+                    stat["event_type_hit"] += 1
+                if str(row_a["label_polarity"]) == str(row_b["label_polarity"]):
+                    stat["polarity_hit"] += 1
+                if row_a.get("label_score") is not None and row_b.get("label_score") is not None:
+                    stat["score_abs_sum"] += abs(float(row_a["label_score"]) - float(row_b["label_score"]))
+                    stat["score_pairs"] += 1
+
+        pair_agreements = [
+            EventNLPLabelerPairAgreement(
+                labeler_a=pair[0],
+                labeler_b=pair[1],
+                common_events=int(stat["common_events"]),
+                event_type_agreement=round(stat["event_type_hit"] / max(1, stat["common_events"]), 6),
+                polarity_agreement=round(stat["polarity_hit"] / max(1, stat["common_events"]), 6),
+                avg_score_abs_delta=(
+                    round(stat["score_abs_sum"] / stat["score_pairs"], 6) if stat["score_pairs"] > 0 else None
+                ),
+            )
+            for pair, stat in sorted(pair_stats.items(), key=lambda x: (-x[1]["common_events"], x[0][0], x[0][1]))
+        ]
+
+        return EventNLPLabelConsistencySummary(
+            source_name=source_name,
+            start_date=start_date,
+            end_date=end_date,
+            events_with_labels=events_with_labels,
+            total_label_rows=total_label_rows,
+            avg_labelers_per_event=avg_labelers_per_event,
+            majority_conflict_rate=round(conflict_events / max(1, events_with_labels), 6),
+            avg_score_std=(round(sum(score_stds) / len(score_stds), 6) if score_stds else None),
+            pair_agreements=pair_agreements[:30],
+        )
+
+    def create_label_snapshot(self, req: EventNLPLabelSnapshotRequest) -> EventNLPLabelSnapshotRecord:
+        consensus_rows = self.store.list_consensus(
+            source_name=req.source_name,
+            start_date=req.start_date,
+            end_date=req.end_date,
+            limit=200000,
+        )
+        if not consensus_rows:
+            _ = self.adjudicate_labels(
+                EventNLPAdjudicationRequest(
+                    source_name=req.source_name,
+                    start_date=req.start_date,
+                    end_date=req.end_date,
+                    min_labelers=req.min_labelers,
+                    save_consensus=True,
+                    adjudicated_by=req.created_by,
+                )
+            )
+            consensus_rows = self.store.list_consensus(
+                source_name=req.source_name,
+                start_date=req.start_date,
+                end_date=req.end_date,
+                limit=200000,
+            )
+
+        scoped = [x for x in consensus_rows if x.label_count >= req.min_labelers and (req.include_conflicts or not x.conflict)]
+        event_type_counter = Counter(x.consensus_event_type for x in scoped)
+        polarity_counter = Counter(x.consensus_polarity.value for x in scoped)
+        stats = {
+            "event_type_distribution": dict(event_type_counter.most_common(20)),
+            "polarity_distribution": dict(polarity_counter.most_common(10)),
+        }
+        rows_for_hash = [
+            {
+                "source_name": x.source_name,
+                "event_id": x.event_id,
+                "symbol": x.symbol,
+                "publish_time": x.publish_time.isoformat(),
+                "consensus_event_type": x.consensus_event_type,
+                "consensus_polarity": x.consensus_polarity.value,
+                "consensus_score": x.consensus_score,
+                "consensus_confidence": x.consensus_confidence,
+                "label_count": x.label_count,
+                "conflict": x.conflict,
+                "conflict_reasons": x.conflict_reasons,
+            }
+            for x in scoped
+        ]
+        hash_sha256 = hashlib.sha256(
+            json.dumps(rows_for_hash, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+
+        snapshot_id = self.store.create_label_snapshot(
+            source_name=req.source_name,
+            start_date=req.start_date,
+            end_date=req.end_date,
+            min_labelers=req.min_labelers,
+            include_conflicts=req.include_conflicts,
+            sample_size=len(rows_for_hash),
+            consensus_size=len([x for x in scoped if not x.conflict]),
+            conflict_size=len([x for x in scoped if x.conflict]),
+            hash_sha256=hash_sha256,
+            stats=stats,
+            created_by=req.created_by,
+            note=req.note,
+        )
+        snapshots = self.store.list_label_snapshots(source_name=req.source_name, limit=500)
+        for row in snapshots:
+            if row.id == snapshot_id:
+                return row
+        raise RuntimeError(f"snapshot_id '{snapshot_id}' was not found after insert")
+
+    def list_label_snapshots(
+        self,
+        *,
+        source_name: str | None = None,
+        limit: int = 200,
+    ) -> list[EventNLPLabelSnapshotRecord]:
+        return self.store.list_label_snapshots(source_name=source_name, limit=limit)
+
+    def drift_slo_history(
+        self,
+        *,
+        source_name: str | None = None,
+        lookback_days: int = 30,
+        bucket_hours: int = 24,
+    ) -> EventNLPSLOHistory:
+        days = max(1, min(lookback_days, 3650))
+        bucket = max(1, min(bucket_hours, 24 * 14))
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(days=days)
+        snapshots = self.list_drift_snapshots(source_name=source_name, limit=200000)
+        scoped = [x for x in snapshots if x.created_at >= start]
+
+        points: list[EventNLPSLOPoint] = []
+        current = start.replace(minute=0, second=0, microsecond=0)
+        while current < now:
+            next_dt = current + timedelta(hours=bucket)
+            rows = [x for x in scoped if current <= x.created_at < next_dt]
+            snapshots_count = len(rows)
+            warning_count = 0
+            critical_count = 0
+            hit_deltas: list[float] = []
+            score_deltas: list[float] = []
+            for row in rows:
+                hit_deltas.append(float(row.hit_rate_delta))
+                score_deltas.append(float(row.score_p50_delta))
+                warning_count += sum(1 for alert in row.alerts if alert.severity == SignalLevel.WARNING)
+                critical_count += sum(1 for alert in row.alerts if alert.severity == SignalLevel.CRITICAL)
+
+            warning_ratio = (warning_count / max(1, snapshots_count)) if snapshots_count > 0 else 0.0
+            critical_ratio = (critical_count / max(1, snapshots_count)) if snapshots_count > 0 else 0.0
+            points.append(
+                EventNLPSLOPoint(
+                    window_start=current,
+                    window_end=next_dt,
+                    snapshots=snapshots_count,
+                    warning_snapshots=warning_count,
+                    critical_snapshots=critical_count,
+                    avg_hit_rate_delta=(
+                        round(sum(hit_deltas) / len(hit_deltas), 6) if hit_deltas else None
+                    ),
+                    avg_score_p50_delta=(
+                        round(sum(score_deltas) / len(score_deltas), 6) if score_deltas else None
+                    ),
+                    burn_rate_warning=round(warning_ratio / 0.05, 6),
+                    burn_rate_critical=round(critical_ratio / 0.02, 6),
+                )
+            )
+            current = next_dt
+
+        return EventNLPSLOHistory(
+            generated_at=now,
+            source_name=source_name,
+            lookback_days=days,
+            bucket_hours=bucket,
+            total_points=len(points),
+            points=points,
         )
 
     def feedback_summary(

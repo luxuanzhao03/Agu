@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from trading_assistant.audit.service import AuditService
 from trading_assistant.core.container import (
     get_audit_service,
+    get_alert_service,
     get_event_connector_service,
     get_event_feature_compare_service,
     get_event_nlp_governance_service,
@@ -31,7 +32,9 @@ from trading_assistant.core.models import (
     EventConnectorSLAAlertSyncResult,
     EventConnectorSLAAlertStateRecord,
     EventConnectorSLAAlertStateSummary,
+    EventConnectorSLOHistory,
     EventConnectorSLAReport,
+    EventConnectorSourceStateRecord,
     EventConnectorRunRecord,
     EventConnectorRunRequest,
     EventConnectorRunResult,
@@ -46,9 +49,18 @@ from trading_assistant.core.models import (
     EventNormalizePreviewRequest,
     EventNormalizePreviewResult,
     EventOpsCoverageSummary,
+    EventNLPAdjudicationRequest,
+    EventNLPAdjudicationResult,
+    EventNLPConsensusRecord,
     EventNLPDriftCheckRequest,
     EventNLPDriftCheckResult,
     EventNLPDriftMonitorSummary,
+    EventNLPLabelConsistencySummary,
+    EventNLPLabelEntryRecord,
+    EventNLPLabelEntryUpsertRequest,
+    EventNLPLabelSnapshotRecord,
+    EventNLPLabelSnapshotRequest,
+    EventNLPSLOHistory,
     EventNLPDriftSnapshotRecord,
     EventNLPFeedbackRecord,
     EventNLPFeedbackSummary,
@@ -65,6 +77,7 @@ from trading_assistant.governance.event_connector_service import EventConnectorS
 from trading_assistant.governance.event_feature_compare import EventFeatureBacktestCompareService
 from trading_assistant.governance.event_nlp_governance import EventNLPGovernanceService
 from trading_assistant.governance.event_service import EventService
+from trading_assistant.alerts.service import AlertService
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -218,6 +231,16 @@ def connector_overview(
     _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.AUDIT, UserRole.RISK, UserRole.RESEARCH)),
 ) -> EventConnectorOverviewResult:
     return connectors.overview(limit=limit)
+
+
+@router.get("/connectors/source-health", response_model=list[EventConnectorSourceStateRecord])
+def connector_source_health(
+    connector_name: str | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=5000),
+    connectors: EventConnectorService = Depends(get_event_connector_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.AUDIT, UserRole.RISK, UserRole.RESEARCH)),
+) -> list[EventConnectorSourceStateRecord]:
+    return connectors.list_source_states(connector_name=connector_name, limit=limit)
 
 
 @router.post("/connectors/run", response_model=EventConnectorRunResult)
@@ -408,15 +431,19 @@ def connector_sla_sync_alerts(
     critical_repeat_escalate: int = Query(default=2, ge=1, le=1000),
     connectors: EventConnectorService = Depends(get_event_connector_service),
     audit: AuditService = Depends(get_audit_service),
+    alerts: AlertService = Depends(get_alert_service),
     _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.RISK)),
 ) -> EventConnectorSLAAlertSyncResult:
-    return connectors.sync_sla_alerts(
+    result = connectors.sync_sla_alerts(
         audit=audit,
         lookback_days=lookback_days,
         cooldown_seconds=cooldown_seconds,
         warning_repeat_escalate=warning_repeat_escalate,
         critical_repeat_escalate=critical_repeat_escalate,
     )
+    # Immediately convert newly logged SLA events into notifications and channel dispatch.
+    _ = alerts.sync_from_audit(limit=2000)
+    return result
 
 
 @router.get("/connectors/sla/states", response_model=list[EventConnectorSLAAlertStateRecord])
@@ -441,6 +468,23 @@ def connector_sla_alert_states_summary(
     _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.AUDIT, UserRole.RISK)),
 ) -> EventConnectorSLAAlertStateSummary:
     return connectors.sla_alert_state_summary(connector_name=connector_name)
+
+
+@router.get("/connectors/slo/history", response_model=EventConnectorSLOHistory)
+def connector_slo_history(
+    connector_name: str | None = Query(default=None),
+    lookback_days: int = Query(default=30, ge=1, le=3650),
+    bucket_hours: int = Query(default=24, ge=1, le=24 * 14),
+    include_disabled: bool = Query(default=True),
+    connectors: EventConnectorService = Depends(get_event_connector_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.AUDIT, UserRole.RISK)),
+) -> EventConnectorSLOHistory:
+    return connectors.slo_history(
+        connector_name=connector_name,
+        lookback_days=lookback_days,
+        bucket_hours=bucket_hours,
+        include_disabled=include_disabled,
+    )
 
 
 @router.get("/ops/coverage", response_model=EventOpsCoverageSummary)
@@ -606,6 +650,147 @@ def upsert_nlp_feedback(
     return row_id
 
 
+@router.post("/nlp/labels", response_model=int)
+def upsert_nlp_label(
+    req: EventNLPLabelEntryUpsertRequest,
+    service: EventNLPGovernanceService = Depends(get_event_nlp_governance_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.RISK, UserRole.RESEARCH)),
+) -> int:
+    try:
+        row_id = service.upsert_label_entry(req)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    audit.log(
+        event_type="event_nlp_label",
+        action="upsert",
+        payload={
+            "source_name": req.source_name,
+            "event_id": req.event_id,
+            "labeler": req.labeler,
+            "label_version": req.label_version,
+            "label_id": row_id,
+        },
+    )
+    return row_id
+
+
+@router.get("/nlp/labels", response_model=list[EventNLPLabelEntryRecord])
+def list_nlp_labels(
+    source_name: str | None = Query(default=None),
+    labeler: str | None = Query(default=None),
+    event_id: str | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=20000),
+    service: EventNLPGovernanceService = Depends(get_event_nlp_governance_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.AUDIT, UserRole.RISK, UserRole.RESEARCH)),
+) -> list[EventNLPLabelEntryRecord]:
+    return service.list_label_entries(
+        source_name=source_name,
+        labeler=labeler,
+        event_id=event_id,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+
+
+@router.post("/nlp/labels/adjudicate", response_model=EventNLPAdjudicationResult)
+def adjudicate_nlp_labels(
+    req: EventNLPAdjudicationRequest,
+    service: EventNLPGovernanceService = Depends(get_event_nlp_governance_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.RISK)),
+) -> EventNLPAdjudicationResult:
+    result = service.adjudicate_labels(req)
+    audit.log(
+        event_type="event_nlp_label",
+        action="adjudicate",
+        status="ERROR" if result.conflicts > 0 else "OK",
+        payload={
+            "source_name": req.source_name,
+            "min_labelers": req.min_labelers,
+            "total_events": result.total_events,
+            "adjudicated": result.adjudicated,
+            "conflicts": result.conflicts,
+            "skipped": result.skipped,
+            "save_consensus": req.save_consensus,
+            "adjudicated_by": req.adjudicated_by,
+        },
+    )
+    return result
+
+
+@router.get("/nlp/labels/consensus", response_model=list[EventNLPConsensusRecord])
+def list_nlp_label_consensus(
+    source_name: str | None = Query(default=None),
+    start_date: date | None = Query(default=None),
+    end_date: date | None = Query(default=None),
+    limit: int = Query(default=500, ge=1, le=20000),
+    service: EventNLPGovernanceService = Depends(get_event_nlp_governance_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.AUDIT, UserRole.RISK, UserRole.RESEARCH)),
+) -> list[EventNLPConsensusRecord]:
+    return service.list_consensus_labels(
+        source_name=source_name,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+
+
+@router.get("/nlp/labels/consistency", response_model=EventNLPLabelConsistencySummary)
+def nlp_label_consistency(
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    source_name: str | None = Query(default=None),
+    min_labelers: int = Query(default=2, ge=1, le=20),
+    service: EventNLPGovernanceService = Depends(get_event_nlp_governance_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.AUDIT, UserRole.RISK, UserRole.RESEARCH)),
+) -> EventNLPLabelConsistencySummary:
+    if start_date > end_date:
+        raise HTTPException(status_code=400, detail="start_date must be <= end_date")
+    return service.label_consistency_summary(
+        source_name=source_name,
+        start_date=start_date,
+        end_date=end_date,
+        min_labelers=min_labelers,
+    )
+
+
+@router.post("/nlp/labels/snapshots", response_model=EventNLPLabelSnapshotRecord)
+def create_nlp_label_snapshot(
+    req: EventNLPLabelSnapshotRequest,
+    service: EventNLPGovernanceService = Depends(get_event_nlp_governance_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.RISK, UserRole.AUDIT)),
+) -> EventNLPLabelSnapshotRecord:
+    row = service.create_label_snapshot(req)
+    audit.log(
+        event_type="event_nlp_label",
+        action="snapshot_create",
+        payload={
+            "snapshot_id": row.id,
+            "source_name": req.source_name,
+            "sample_size": row.sample_size,
+            "consensus_size": row.consensus_size,
+            "conflict_size": row.conflict_size,
+            "created_by": req.created_by,
+        },
+    )
+    return row
+
+
+@router.get("/nlp/labels/snapshots", response_model=list[EventNLPLabelSnapshotRecord])
+def list_nlp_label_snapshots(
+    source_name: str | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=2000),
+    service: EventNLPGovernanceService = Depends(get_event_nlp_governance_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.AUDIT, UserRole.RISK, UserRole.RESEARCH)),
+) -> list[EventNLPLabelSnapshotRecord]:
+    return service.list_label_snapshots(source_name=source_name, limit=limit)
+
+
 @router.get("/nlp/feedback", response_model=list[EventNLPFeedbackRecord])
 def list_nlp_feedback(
     source_name: str | None = Query(default=None),
@@ -660,6 +845,21 @@ def nlp_drift_monitor(
     _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.AUDIT, UserRole.RISK, UserRole.RESEARCH)),
 ) -> EventNLPDriftMonitorSummary:
     return service.drift_monitor(source_name=source_name, limit=limit)
+
+
+@router.get("/nlp/drift/slo/history", response_model=EventNLPSLOHistory)
+def nlp_drift_slo_history(
+    source_name: str | None = Query(default=None),
+    lookback_days: int = Query(default=30, ge=1, le=3650),
+    bucket_hours: int = Query(default=24, ge=1, le=24 * 14),
+    service: EventNLPGovernanceService = Depends(get_event_nlp_governance_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.ADMIN, UserRole.AUDIT, UserRole.RISK, UserRole.RESEARCH)),
+) -> EventNLPSLOHistory:
+    return service.drift_slo_history(
+        source_name=source_name,
+        lookback_days=lookback_days,
+        bucket_hours=bucket_hours,
+    )
 
 
 @router.post("/features/backtest-compare", response_model=EventFeatureBacktestCompareResult)

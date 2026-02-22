@@ -26,6 +26,8 @@ from trading_assistant.core.models import (
     EventConnectorSLAAlertSyncResult,
     EventConnectorSLAAlertStateRecord,
     EventConnectorSLAAlertStateSummary,
+    EventConnectorSLOHistory,
+    EventConnectorSLOPoint,
     EventConnectorSLABreach,
     EventConnectorSLABreachType,
     EventConnectorSLAPolicy,
@@ -35,6 +37,8 @@ from trading_assistant.core.models import (
     EventConnectorRunRequest,
     EventConnectorRunResult,
     EventConnectorRunStatus,
+    EventConnectorSourceStateRecord,
+    EventConnectorType,
     EventNormalizeIngestRequest,
     EventNormalizeIngestResult,
     EventNormalizePreviewRequest,
@@ -66,13 +70,26 @@ class EventConnectorService:
         source = self.event_service.store.get_source(req.source_name)
         if source is None:
             raise KeyError(f"event source '{req.source_name}' not found")
-        return self.store.register_connector(req)
+        row_id = self.store.register_connector(req)
+        connector = self.store.get_connector(req.connector_name)
+        if connector is not None:
+            matrix = self._resolve_source_matrix(connector)
+            self._sync_source_state_registry(connector=connector, source_matrix=matrix)
+        return row_id
 
     def list_connectors(self, limit: int = 200, enabled_only: bool = False) -> list[EventConnectorRecord]:
         return self.store.list_connectors(limit=limit, enabled_only=enabled_only)
 
     def list_runs(self, connector_name: str | None = None, limit: int = 200) -> list[EventConnectorRunRecord]:
         return self.store.list_runs(connector_name=connector_name, limit=limit)
+
+    def list_source_states(
+        self,
+        *,
+        connector_name: str | None = None,
+        limit: int = 500,
+    ) -> list[EventConnectorSourceStateRecord]:
+        return self.store.list_source_states(connector_name=connector_name, limit=limit)
 
     def list_failures(
         self,
@@ -120,7 +137,17 @@ class EventConnectorService:
 
         checkpoint = self.store.get_checkpoint(connector.connector_name)
         checkpoint_before = checkpoint.checkpoint_cursor if checkpoint else None
-        cursor = None if req.force_full_sync else checkpoint_before
+        source_matrix = self._resolve_source_matrix(connector)
+        self._sync_source_state_registry(connector=connector, source_matrix=source_matrix)
+        source_state_index = {
+            x.source_key: x for x in self.store.list_source_states(connector_name=connector.connector_name, limit=500)
+        }
+        candidate_index = {item["source_key"]: item for item in source_matrix}
+        ordered_states, failover_enabled, max_candidates = self._order_source_states_for_run(
+            connector=connector,
+            states=[source_state_index[item["source_key"]] for item in source_matrix if item["source_key"] in source_state_index],
+        )
+
         now = datetime.now(timezone.utc)
         run = EventConnectorRunRecord(
             run_id=uuid4().hex,
@@ -131,22 +158,155 @@ class EventConnectorService:
             triggered_by=req.triggered_by,
             checkpoint_before=checkpoint_before,
             checkpoint_after=checkpoint_before,
-            details={"enabled": connector.enabled, "dry_run": req.dry_run, "force_full_sync": req.force_full_sync},
+            details={
+                "enabled": connector.enabled,
+                "dry_run": req.dry_run,
+                "force_full_sync": req.force_full_sync,
+                "failover_enabled": failover_enabled,
+                "source_matrix_count": len(source_matrix),
+                "source_attempts": [],
+            },
         )
         self.store.create_run(run)
 
         errors: list[str] = []
         next_retry_at = now + timedelta(seconds=connector.replay_backoff_seconds)
         fail_payloads: list[dict] = []
+        fetched = None
+        selected_state: EventConnectorSourceStateRecord | None = None
+        selected_candidate: dict | None = None
 
         try:
             fetch_limit = req.fetch_limit_override or connector.fetch_limit
-            ann_connector = build_announcement_connector(connector.connector_type, connector.config)
-            fetched = ann_connector.fetch(cursor=cursor, limit=fetch_limit)
-            run.pulled_count = len(fetched.records)
-            run.checkpoint_after = fetched.next_cursor or checkpoint_before
             run.details["fetch_limit"] = fetch_limit
+
+            picked_states = ordered_states[:max(1, max_candidates)]
+            for state in picked_states:
+                candidate = candidate_index.get(state.source_key)
+                if candidate is None:
+                    continue
+                source_cfg = dict(candidate["config"]) if isinstance(candidate.get("config"), dict) else {}
+                global_cfg = connector.config if isinstance(connector.config, dict) else {}
+                budget_raw = source_cfg.get("request_budget_per_hour", global_cfg.get("request_budget_per_hour"))
+                try:
+                    budget_per_hour = int(budget_raw) if budget_raw is not None else None
+                except Exception:  # noqa: BLE001
+                    budget_per_hour = None
+                budget_allowed, budget_used, budget_limit, budget_window = self.store.try_consume_source_budget(
+                    connector_name=connector.connector_name,
+                    source_key=state.source_key,
+                    budget_per_hour=budget_per_hour,
+                    as_of=datetime.now(timezone.utc),
+                )
+                if not budget_allowed:
+                    budget_msg = (
+                        f"source={state.source_key}: budget exceeded "
+                        f"{budget_used}/{budget_limit} (window={budget_window})"
+                    )
+                    errors.append(budget_msg)
+                    run.details["source_attempts"].append(
+                        {
+                            "source_key": state.source_key,
+                            "connector_type": candidate["connector_type"].value,
+                            "status": "SKIPPED_BUDGET",
+                            "budget_used": budget_used,
+                            "budget_limit": budget_limit,
+                            "budget_window": budget_window,
+                            "error": budget_msg,
+                        }
+                    )
+                    if not failover_enabled:
+                        break
+                    continue
+
+                credential_alias = None
+                raw_aliases = source_cfg.get("credential_aliases", global_cfg.get("credential_aliases", []))
+                if not isinstance(raw_aliases, list):
+                    raw_aliases = []
+                credential_alias = self.store.next_source_credential_alias(
+                    connector_name=connector.connector_name,
+                    source_key=state.source_key,
+                    aliases=[str(x) for x in raw_aliases],
+                )
+                raw_credential_map = source_cfg.get("credentials", global_cfg.get("credentials", {}))
+                if (
+                    credential_alias
+                    and isinstance(raw_credential_map, dict)
+                    and isinstance(raw_credential_map.get(credential_alias), dict)
+                ):
+                    source_cfg.update(dict(raw_credential_map[credential_alias]))
+                source_cfg.pop("credential_aliases", None)
+                source_cfg.pop("credentials", None)
+                source_cfg.pop("request_budget_per_hour", None)
+
+                cursor = None if req.force_full_sync else (state.checkpoint_cursor or checkpoint_before)
+                fetch_started = datetime.now(timezone.utc)
+                try:
+                    ann_connector = build_announcement_connector(candidate["connector_type"], source_cfg)
+                    candidate_fetched = ann_connector.fetch(cursor=cursor, limit=fetch_limit)
+                    latency_ms = int((datetime.now(timezone.utc) - fetch_started).total_seconds() * 1000)
+                    updated_state = self.store.mark_source_attempt_success(
+                        connector_name=connector.connector_name,
+                        source_key=state.source_key,
+                        checkpoint_cursor=candidate_fetched.next_cursor or cursor,
+                        checkpoint_publish_time=candidate_fetched.checkpoint_publish_time,
+                        latency_ms=latency_ms,
+                    )
+                    selected_state = updated_state or state
+                    selected_candidate = candidate
+                    fetched = candidate_fetched
+                    run.checkpoint_before = cursor
+                    run.checkpoint_after = candidate_fetched.next_cursor or cursor
+                    run.details["source_attempts"].append(
+                        {
+                            "source_key": state.source_key,
+                            "connector_type": candidate["connector_type"].value,
+                            "status": "SUCCESS",
+                            "latency_ms": latency_ms,
+                            "checkpoint_before": cursor,
+                            "checkpoint_after": run.checkpoint_after,
+                            "credential_alias": credential_alias,
+                            "budget_used": budget_used,
+                            "budget_limit": budget_limit,
+                            "budget_window": budget_window,
+                        }
+                    )
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    latency_ms = int((datetime.now(timezone.utc) - fetch_started).total_seconds() * 1000)
+                    _ = self.store.mark_source_attempt_failure(
+                        connector_name=connector.connector_name,
+                        source_key=state.source_key,
+                        error_message=str(exc),
+                        latency_ms=latency_ms,
+                    )
+                    err = f"source={state.source_key}: fetch failed: {exc}"
+                    errors.append(err)
+                    run.details["source_attempts"].append(
+                        {
+                            "source_key": state.source_key,
+                            "connector_type": candidate["connector_type"].value,
+                            "status": "FAILED",
+                            "latency_ms": latency_ms,
+                            "error": str(exc),
+                            "credential_alias": credential_alias,
+                            "budget_used": budget_used,
+                            "budget_limit": budget_limit,
+                            "budget_window": budget_window,
+                        }
+                    )
+                    if not failover_enabled:
+                        break
+
+            if fetched is None:
+                raise RuntimeError("all source matrix candidates failed")
+
+            run.pulled_count = len(fetched.records)
             run.details["fetched"] = len(fetched.records)
+            run.details["selected_source_key"] = selected_state.source_key if selected_state else None
+            run.details["selected_connector_type"] = (
+                selected_candidate["connector_type"].value if selected_candidate else None
+            )
 
             normalized_events = []
             for idx, raw in enumerate(fetched.records):
@@ -168,6 +328,7 @@ class EventConnectorService:
                     fail_payloads.append(
                         {
                             "phase": "normalize",
+                            "source_key": selected_state.source_key if selected_state else None,
                             "error": str(exc),
                             "raw_record": raw.model_dump(mode="json"),
                         }
@@ -190,7 +351,11 @@ class EventConnectorService:
                     for ingest_error in ingest.errors:
                         errors.append(ingest_error)
                         idx = self._extract_error_index(ingest_error)
-                        payload = {"phase": "ingest", "error": ingest_error}
+                        payload = {
+                            "phase": "ingest",
+                            "source_key": selected_state.source_key if selected_state else None,
+                            "error": ingest_error,
+                        }
                         if idx is not None and 0 <= idx < len(normalized_events):
                             raw = normalized_events[idx][1]
                             event = normalized_events[idx][2]
@@ -674,6 +839,7 @@ class EventConnectorService:
     ) -> EventConnectorSLAAlertSyncResult:
         now = datetime.now(timezone.utc)
         report = self.evaluate_sla(now=now)
+        _ = self.store.append_sla_history(observed_at=now, breaches=report.breaches)
         connector_map = {
             c.connector_name: c
             for c in self.store.list_connectors(limit=5000, enabled_only=False)
@@ -822,6 +988,94 @@ class EventConnectorService:
             connector_sla_escalated=sla.escalated_count,
         )
 
+    def slo_history(
+        self,
+        *,
+        connector_name: str | None = None,
+        lookback_days: int = 30,
+        bucket_hours: int = 24,
+        include_disabled: bool = True,
+    ) -> EventConnectorSLOHistory:
+        days = max(1, min(lookback_days, 3650))
+        bucket = max(1, min(bucket_hours, 24 * 14))
+        now = datetime.now(timezone.utc)
+        start = (now - timedelta(days=days)).replace(minute=0, second=0, microsecond=0)
+
+        connectors = self.store.list_connectors(limit=5000, enabled_only=not include_disabled)
+        allowed_connectors = {x.connector_name for x in connectors}
+        if connector_name:
+            if connector_name not in allowed_connectors:
+                allowed_connectors = set()
+            else:
+                allowed_connectors = {connector_name}
+
+        runs = self.store.list_runs(
+            connector_name=connector_name if connector_name else None,
+            limit=500000,
+        )
+        scoped_runs = [
+            r
+            for r in runs
+            if r.connector_name in allowed_connectors and r.started_at >= start and r.started_at <= now
+        ]
+        history_rows = self.store.list_sla_history(
+            connector_name=connector_name if connector_name else None,
+            start_time=start,
+            end_time=now,
+            limit=500000,
+        )
+        scoped_history = [
+            (
+                datetime.fromisoformat(str(row["observed_at"])),
+                str(row["severity"]),
+                str(row["stage"]),
+            )
+            for row in history_rows
+            if str(row["connector_name"]) in allowed_connectors
+        ]
+
+        points: list[EventConnectorSLOPoint] = []
+        current = start
+        while current < now:
+            next_dt = current + timedelta(hours=bucket)
+            run_rows = [r for r in scoped_runs if current <= r.started_at < next_dt]
+            run_effective = [r for r in run_rows if r.status != EventConnectorRunStatus.DRY_RUN]
+            success = sum(1 for r in run_effective if r.status in {EventConnectorRunStatus.SUCCESS, EventConnectorRunStatus.PARTIAL})
+            failed = sum(1 for r in run_effective if r.status == EventConnectorRunStatus.FAILED)
+            run_count = len(run_effective)
+
+            breach_rows = [row for row in scoped_history if current <= row[0] < next_dt]
+            warning_breaches = sum(1 for row in breach_rows if row[1] == SignalLevel.WARNING.value)
+            critical_breaches = sum(1 for row in breach_rows if row[1] == SignalLevel.CRITICAL.value)
+            escalated_breaches = sum(1 for row in breach_rows if row[2] == "escalated")
+
+            warning_budget = max(1.0, run_count * 0.2)
+            critical_budget = max(1.0, run_count * 0.05)
+            points.append(
+                EventConnectorSLOPoint(
+                    window_start=current,
+                    window_end=next_dt,
+                    runs=run_count,
+                    run_success_rate=round(success / max(1, run_count), 6),
+                    run_failure_rate=round(failed / max(1, run_count), 6),
+                    warning_breaches=warning_breaches,
+                    critical_breaches=critical_breaches,
+                    escalated_breaches=escalated_breaches,
+                    burn_rate_warning=round(warning_breaches / warning_budget, 6),
+                    burn_rate_critical=round(critical_breaches / critical_budget, 6),
+                )
+            )
+            current = next_dt
+
+        return EventConnectorSLOHistory(
+            generated_at=now,
+            connector_name=connector_name,
+            lookback_days=days,
+            bucket_hours=bucket,
+            total_points=len(points),
+            points=points,
+        )
+
     def _replay_failure_rows(
         self,
         *,
@@ -907,6 +1161,130 @@ class EventConnectorService:
                     )
 
         return replayed, failed, dead, errors, items
+
+    @staticmethod
+    def _resolve_source_matrix(connector: EventConnectorRecord) -> list[dict]:
+        raw = connector.config.get("source_matrix") if isinstance(connector.config, dict) else None
+        out: list[dict] = []
+        if isinstance(raw, list):
+            for idx, item in enumerate(raw):
+                if not isinstance(item, dict):
+                    continue
+                source_key = str(item.get("source_key") or f"source_{idx + 1}").strip()
+                if not source_key:
+                    continue
+                raw_type = item.get("connector_type") or connector.connector_type.value
+                try:
+                    connector_type = EventConnectorType(str(raw_type))
+                except Exception:  # noqa: BLE001
+                    continue
+                priority = max(0, int(item.get("priority", (idx + 1) * 10)))
+                enabled = bool(item.get("enabled", True))
+                cfg = item.get("config")
+                cfg_map = dict(cfg) if isinstance(cfg, dict) else {}
+                budget_raw = item.get("request_budget_per_hour")
+                if budget_raw is not None:
+                    try:
+                        budget = int(budget_raw)
+                        if budget > 0:
+                            cfg_map["request_budget_per_hour"] = budget
+                    except Exception:  # noqa: BLE001
+                        pass
+                aliases_raw = item.get("credential_aliases")
+                if isinstance(aliases_raw, list):
+                    aliases = [str(x).strip() for x in aliases_raw if str(x).strip()]
+                    if aliases:
+                        cfg_map["credential_aliases"] = aliases
+                out.append(
+                    {
+                        "source_key": source_key,
+                        "connector_type": connector_type,
+                        "priority": priority,
+                        "enabled": enabled,
+                        "config": cfg_map,
+                    }
+                )
+        if not out:
+            out.append(
+                {
+                    "source_key": "primary",
+                    "connector_type": connector.connector_type,
+                    "priority": 10,
+                    "enabled": True,
+                    "config": dict(connector.config),
+                }
+            )
+        out.sort(key=lambda x: (x["priority"], x["source_key"]))
+        return out
+
+    def _sync_source_state_registry(self, *, connector: EventConnectorRecord, source_matrix: list[dict]) -> None:
+        active_keys = {str(item["source_key"]) for item in source_matrix}
+        for item in source_matrix:
+            self.store.upsert_source_state(
+                connector_name=connector.connector_name,
+                source_key=str(item["source_key"]),
+                connector_type=item["connector_type"],
+                priority=int(item["priority"]),
+                enabled=bool(item["enabled"]),
+            )
+        existing = self.store.list_source_states(connector_name=connector.connector_name, limit=5000)
+        for state in existing:
+            if state.source_key in active_keys:
+                continue
+            self.store.upsert_source_state(
+                connector_name=state.connector_name,
+                source_key=state.source_key,
+                connector_type=state.connector_type,
+                priority=state.priority,
+                enabled=False,
+                default_health=state.health_score,
+            )
+
+    @staticmethod
+    def _order_source_states_for_run(
+        *,
+        connector: EventConnectorRecord,
+        states: list[EventConnectorSourceStateRecord],
+    ) -> tuple[list[EventConnectorSourceStateRecord], bool, int]:
+        if not states:
+            return [], True, 1
+        failover_cfg = connector.config.get("failover") if isinstance(connector.config, dict) else None
+        failover_enabled = True
+        health_threshold = 35.0
+        max_candidates = len(states)
+        if isinstance(failover_cfg, dict):
+            failover_enabled = bool(failover_cfg.get("enabled", True))
+            try:
+                health_threshold = float(failover_cfg.get("health_threshold", 35.0))
+            except Exception:  # noqa: BLE001
+                health_threshold = 35.0
+            try:
+                max_candidates = int(failover_cfg.get("max_candidates_per_run", len(states)))
+            except Exception:  # noqa: BLE001
+                max_candidates = len(states)
+
+        enabled_states = [x for x in states if x.enabled]
+        if not enabled_states:
+            enabled_states = list(states)
+
+        if not failover_enabled:
+            ordered = sorted(
+                enabled_states,
+                key=lambda x: (0 if x.is_active else 1, x.priority, -x.effective_health_score, x.source_key),
+            )
+            return ordered[:1], False, 1
+
+        ordered = sorted(
+            enabled_states,
+            key=lambda x: (
+                0 if (x.is_active and x.effective_health_score >= health_threshold) else 1,
+                -x.effective_health_score,
+                x.priority,
+                x.source_key,
+            ),
+        )
+        bounded = max(1, min(max_candidates, len(ordered)))
+        return ordered, True, bounded
 
     def _resolve_policy(self, connector: EventConnectorRecord) -> EventConnectorSLAPolicy:
         raw = connector.config.get("sla") if isinstance(connector.config, dict) else None

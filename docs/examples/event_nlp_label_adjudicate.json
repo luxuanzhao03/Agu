@@ -1,0 +1,10 @@
+{
+  "source_name": "exchange_announcement",
+  "start_date": "2026-02-01",
+  "end_date": "2026-02-21",
+  "min_labelers": 2,
+  "require_unanimous": false,
+  "save_consensus": true,
+  "adjudicated_by": "nlp_qc_lead",
+  "label_version": "v2026.02"
+}

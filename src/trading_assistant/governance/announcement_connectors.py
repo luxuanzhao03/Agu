@@ -430,7 +430,10 @@ class HttpJsonAnnouncementConnector(AnnouncementConnector):
     def _load_payload(self, *, cursor: str | None, limit: int) -> Any:
         parsed = parse.urlparse(self.url)
         if parsed.scheme == "file":
-            local_path = Path(parse.unquote(parsed.path))
+            raw_path = parse.unquote(parsed.path)
+            if raw_path.startswith("/") and len(raw_path) >= 3 and raw_path[2] == ":":
+                raw_path = raw_path[1:]
+            local_path = Path(raw_path)
             return json.loads(local_path.read_text(encoding="utf-8"))
         if parsed.scheme in {"", "local"}:
             local_path = Path(self.url.replace("local://", ""))
@@ -466,6 +469,282 @@ class HttpJsonAnnouncementConnector(AnnouncementConnector):
         return json.loads(raw)
 
 
+class AkshareAnnouncementConnector(AnnouncementConnector):
+    _DEFAULT_FIELD_CANDIDATES: dict[str, list[str]] = {
+        "publish_time": [
+            "publish_time",
+            "publish_time_text",
+            "f_ann_date",
+            "ann_date",
+            "pub_date",
+            "date",
+            "time",
+            "公告日期",
+            "发布时间",
+            "公告时间",
+            "日期",
+        ],
+        "event_id": [
+            "source_event_id",
+            "event_id",
+            "id",
+            "ann_id",
+            "notice_id",
+            "公告编号",
+            "公告ID",
+            "编号",
+        ],
+        "symbol": [
+            "symbol",
+            "ts_code",
+            "code",
+            "ticker",
+            "股票代码",
+            "证券代码",
+            "代码",
+        ],
+        "ts_code": [
+            "ts_code",
+            "symbol",
+            "code",
+            "ticker",
+            "证券代码",
+            "股票代码",
+            "代码",
+        ],
+        "title": [
+            "title",
+            "ann_title",
+            "headline",
+            "name",
+            "notice_title",
+            "公告标题",
+            "标题",
+        ],
+        "summary": [
+            "summary",
+            "brief",
+            "description",
+            "desc",
+            "notice_type",
+            "公告摘要",
+            "摘要",
+            "公告类型",
+        ],
+        "content": [
+            "content",
+            "detail",
+            "body",
+            "text",
+            "content_text",
+            "公告内容",
+            "正文",
+            "详情",
+            "内容",
+        ],
+        "url": [
+            "url",
+            "link",
+            "notice_url",
+            "公告链接",
+            "链接",
+            "地址",
+        ],
+    }
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.api_name = str(config.get("api_name", "stock_notice_report")).strip() or "stock_notice_report"
+        raw_candidates = config.get("api_candidates", [])
+        self.api_candidates = [self.api_name]
+        if isinstance(raw_candidates, list):
+            for item in raw_candidates:
+                name = str(item).strip()
+                if not name or name in self.api_candidates:
+                    continue
+                self.api_candidates.append(name)
+        self.request_kwargs = dict(config.get("request_kwargs", {}))
+        raw_variants = config.get("request_variants", [])
+        self.request_variants = [dict(item) for item in raw_variants if isinstance(item, dict)]
+        self.timezone = str(config.get("timezone", "Asia/Shanghai"))
+        self.lookback_days = max(0, min(int(config.get("lookback_days", 7)), 3650))
+        self.symbol = str(config.get("symbol", "")).strip() or None
+        self.column_map = dict(config.get("column_map", {}))
+
+    def fetch(self, *, cursor: str | None, limit: int) -> AnnouncementFetchResult:
+        import akshare as ak
+
+        cursor_dt = _parse_cursor(cursor)
+        selected_api = ""
+        selected_kwargs: dict[str, Any] = {}
+        frame: pd.DataFrame | None = None
+        had_empty_success = False
+        errors: list[str] = []
+
+        variants = self._build_request_variants(cursor_dt)
+        for api_name in self.api_candidates:
+            fn = getattr(ak, api_name, None)
+            if fn is None:
+                errors.append(f"api '{api_name}' not found")
+                continue
+            for kwargs in variants:
+                try:
+                    candidate = self._call_akshare(fn, kwargs)
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"api='{api_name}' kwargs={kwargs}: {exc}")
+                    continue
+                if not isinstance(candidate, pd.DataFrame):
+                    errors.append(f"api='{api_name}' did not return DataFrame")
+                    continue
+                if candidate.empty:
+                    had_empty_success = True
+                    continue
+                frame = candidate
+                selected_api = api_name
+                selected_kwargs = kwargs
+                break
+            if frame is not None:
+                break
+
+        if frame is None:
+            if had_empty_success:
+                return AnnouncementFetchResult(records=[], next_cursor=cursor, checkpoint_publish_time=cursor_dt)
+            summary = " | ".join(errors[:6]) if errors else "no candidate API was executed"
+            raise ValueError(f"akshare connector exhausted candidates: {summary}")
+
+        if not isinstance(frame, pd.DataFrame):
+            raise ValueError("akshare announcement API did not return DataFrame")
+        if frame.empty:
+            return AnnouncementFetchResult(records=[], next_cursor=cursor, checkpoint_publish_time=cursor_dt)
+
+        rows = frame.to_dict(orient="records")
+        items: list[AnnouncementRawRecord] = []
+        latest = cursor_dt
+        for row in rows:
+            publish_candidates = self._field_candidates("publish_time")
+            publish_time = _parse_time_cell(
+                self._pick_field(row, "publish_time"),
+                timezone_name=self.timezone,
+            )
+            if publish_time is None:
+                continue
+            if cursor_dt is not None and publish_time <= cursor_dt:
+                continue
+            event_id_candidates = self._field_candidates("event_id")
+            symbol_candidates = self._field_candidates("symbol")
+            ts_code_candidates = self._field_candidates("ts_code")
+            title_candidates = self._field_candidates("title")
+            summary_candidates = self._field_candidates("summary")
+            content_candidates = self._field_candidates("content")
+            url_candidates = self._field_candidates("url")
+
+            source_event_id = self._pick_field(row, "event_id")
+            symbol = self._pick_field(row, "symbol")
+            ts_code = self._pick_field(row, "ts_code")
+            title = self._pick_field(row, "title")
+            summary = self._pick_field(row, "summary")
+            content = self._pick_field(row, "content")
+            url = self._pick_field(row, "url")
+            used_keys = {
+                self._pick_existing_key(row, event_id_candidates),
+                self._pick_existing_key(row, symbol_candidates),
+                self._pick_existing_key(row, ts_code_candidates),
+                self._pick_existing_key(row, title_candidates),
+                self._pick_existing_key(row, summary_candidates),
+                self._pick_existing_key(row, content_candidates),
+                self._pick_existing_key(row, publish_candidates),
+                self._pick_existing_key(row, url_candidates),
+            }
+            used_keys.discard(None)
+
+            metadata = {
+                key: _safe_meta(value)
+                for key, value in row.items()
+                if key not in used_keys
+            }
+            metadata["akshare_api_name"] = selected_api or self.api_name
+            if selected_kwargs:
+                metadata["akshare_request_keys"] = ",".join(sorted(selected_kwargs.keys()))
+            items.append(
+                AnnouncementRawRecord(
+                    source_event_id=str(source_event_id) if source_event_id else None,
+                    symbol=str(symbol) if symbol else None,
+                    ts_code=str(ts_code) if ts_code else (str(symbol) if symbol else None),
+                    title=str(title or ""),
+                    summary=str(summary or title or ""),
+                    content=str(content or ""),
+                    publish_time=publish_time,
+                    url=str(url) if url else None,
+                    metadata=metadata,
+                )
+            )
+            if latest is None or publish_time > latest:
+                latest = publish_time
+            if len(items) >= limit:
+                break
+
+        items.sort(key=lambda x: x.publish_time or datetime(1970, 1, 1, tzinfo=timezone.utc))
+        return AnnouncementFetchResult(
+            records=items,
+            next_cursor=_to_iso(latest),
+            checkpoint_publish_time=latest,
+        )
+
+    def _pick_field(self, row: dict[str, Any], field: str) -> Any:
+        return _pick(row, *self._field_candidates(field))
+
+    def _field_candidates(self, field: str) -> list[str]:
+        defaults = list(self._DEFAULT_FIELD_CANDIDATES.get(field, []))
+        custom = self.column_map.get(field)
+        out: list[str] = []
+        if isinstance(custom, str) and custom.strip():
+            out.append(custom.strip())
+        elif isinstance(custom, list):
+            out.extend([str(x).strip() for x in custom if str(x).strip()])
+        for item in defaults:
+            if item and item not in out:
+                out.append(item)
+        return out
+
+    @staticmethod
+    def _pick_existing_key(row: dict[str, Any], candidates: list[str]) -> str | None:
+        for key in candidates:
+            if key in row:
+                return key
+        return None
+
+    def _build_request_variants(self, cursor_dt: datetime | None) -> list[dict[str, Any]]:
+        base_variants = self.request_variants if self.request_variants else [{}]
+        try:
+            tz = ZoneInfo(self.timezone)
+        except Exception:  # noqa: BLE001
+            tz = timezone.utc
+        now_local = datetime.now(tz)
+        out: list[dict[str, Any]] = []
+        for variant in base_variants:
+            merged = dict(self.request_kwargs)
+            merged.update(variant)
+            if self.symbol and "symbol" not in merged and "ts_code" not in merged and "code" not in merged:
+                merged["symbol"] = self.symbol
+            if cursor_dt is not None:
+                local_from = cursor_dt.astimezone(tz) - timedelta(days=self.lookback_days)
+                merged.setdefault("start_date", local_from.strftime("%Y%m%d"))
+                merged.setdefault("begin_date", local_from.strftime("%Y%m%d"))
+                merged.setdefault("end_date", now_local.strftime("%Y%m%d"))
+            out.append(merged)
+        if not out:
+            out.append(dict(self.request_kwargs))
+        return out
+
+    @staticmethod
+    def _call_akshare(fn: Any, kwargs: dict[str, Any]) -> Any:
+        if kwargs:
+            try:
+                return fn(**kwargs)
+            except TypeError:
+                return fn()
+        return fn()
+
+
 def build_announcement_connector(connector_type: EventConnectorType, config: dict[str, Any]) -> AnnouncementConnector:
     if connector_type == EventConnectorType.FILE_ANNOUNCEMENT:
         return FileAnnouncementConnector(config=config)
@@ -473,4 +752,6 @@ def build_announcement_connector(connector_type: EventConnectorType, config: dic
         return TushareAnnouncementConnector(config=config)
     if connector_type == EventConnectorType.HTTP_JSON_ANNOUNCEMENT:
         return HttpJsonAnnouncementConnector(config=config)
+    if connector_type == EventConnectorType.AKSHARE_ANNOUNCEMENT:
+        return AkshareAnnouncementConnector(config=config)
     raise ValueError(f"unsupported connector type: {connector_type.value}")

@@ -4,7 +4,9 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+from trading_assistant.alerts.service import AlertService
 from trading_assistant.core.models import (
+    ComplianceEvidenceExportJobPayload,
     EventConnectorReplayJobPayload,
     EventConnectorReplayRequest,
     EventConnectorRunRequest,
@@ -19,11 +21,14 @@ from trading_assistant.core.models import (
     JobRunStatus,
     JobStatus,
     JobType,
+    OncallReconcileJobPayload,
+    OncallReconcileRequest,
     PipelineRunRequest,
     ReportGenerateRequest,
     ResearchWorkflowRequest,
     SignalLevel,
 )
+from trading_assistant.governance.compliance_evidence import ComplianceEvidenceService
 from trading_assistant.governance.event_connector_service import EventConnectorService
 from trading_assistant.ops.cron import CronSchedule
 from trading_assistant.ops.job_store import JobStore
@@ -40,6 +45,8 @@ class JobService:
         research: ResearchWorkflowService,
         reporting: ReportingService,
         event_connector: EventConnectorService | None = None,
+        compliance_evidence: ComplianceEvidenceService | None = None,
+        alerts: AlertService | None = None,
         scheduler_timezone: str = "Asia/Shanghai",
         running_timeout_minutes: int = 120,
     ) -> None:
@@ -48,6 +55,8 @@ class JobService:
         self.research = research
         self.reporting = reporting
         self.event_connector = event_connector
+        self.compliance_evidence = compliance_evidence
+        self.alerts = alerts
         self.scheduler_timezone = scheduler_timezone
         self.running_timeout_minutes = max(1, running_timeout_minutes)
 
@@ -308,6 +317,44 @@ class JobService:
                 "replayed": result.replayed,
                 "failed": result.failed,
                 "dead": result.dead,
+            }
+
+        if job.job_type == JobType.COMPLIANCE_EVIDENCE_EXPORT:
+            if self.compliance_evidence is None:
+                raise ValueError("compliance evidence service is not configured")
+            payload = ComplianceEvidenceExportJobPayload.model_validate(job.payload)
+            result = self.compliance_evidence.export_bundle(payload.request)
+            return {
+                "bundle_id": result.bundle_id,
+                "package_path": result.package_path,
+                "package_sha256": result.package_sha256,
+                "signature_enabled": bool(result.signature and result.signature.enabled),
+                "vault_copy_path": result.vault_copy_path,
+                "file_count": result.file_count,
+            }
+
+        if job.job_type == JobType.ALERT_ONCALL_RECONCILE:
+            if self.alerts is None:
+                raise ValueError("alert service is not configured")
+            payload = OncallReconcileJobPayload.model_validate(job.payload)
+            result = self.alerts.reconcile_oncall(
+                OncallReconcileRequest(
+                    provider=payload.provider,
+                    endpoint=payload.endpoint,
+                    mapping_template=payload.mapping_template,
+                    limit=payload.limit,
+                    dry_run=payload.dry_run,
+                )
+            )
+            return {
+                "provider": result.provider,
+                "endpoint": result.endpoint,
+                "pulled": result.pulled,
+                "matched": result.matched,
+                "callbacks": result.callbacks,
+                "acked_notifications": result.acked_notifications,
+                "dry_run": result.dry_run,
+                "errors": len(result.errors),
             }
 
         raise ValueError(f"unsupported job_type: {job.job_type.value}")

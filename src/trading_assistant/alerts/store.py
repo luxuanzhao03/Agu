@@ -12,6 +12,7 @@ from trading_assistant.core.models import (
     AlertNotificationRecord,
     AlertSubscriptionCreateRequest,
     AlertSubscriptionRecord,
+    OncallEventRecord,
     SignalLevel,
 )
 
@@ -117,6 +118,38 @@ class AlertStore:
                 """
                 CREATE INDEX IF NOT EXISTS idx_alert_delivery_subscription
                 ON alert_deliveries(subscription_id, created_at DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS alert_oncall_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_key TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    incident_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    notification_id INTEGER,
+                    delivery_id INTEGER,
+                    external_ticket_id TEXT,
+                    acked INTEGER NOT NULL,
+                    ack_by TEXT NOT NULL,
+                    note TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_alert_oncall_lookup
+                ON alert_oncall_events(provider, incident_id, updated_at DESC)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_alert_oncall_notification
+                ON alert_oncall_events(notification_id, updated_at DESC)
                 """
             )
 
@@ -331,6 +364,201 @@ class AlertStore:
             )
         return int(cur.lastrowid)
 
+    def find_notification_ids_by_delivery(self, delivery_id: int) -> list[int]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT notification_id
+                FROM alert_deliveries
+                WHERE id = ?
+                LIMIT 1
+                """,
+                (delivery_id,),
+            ).fetchall()
+        out: list[int] = []
+        for row in rows:
+            try:
+                out.append(int(row["notification_id"]))
+            except Exception:  # noqa: BLE001
+                continue
+        return out
+
+    def find_notification_ids_by_incident(
+        self,
+        *,
+        provider: str,
+        incident_id: str,
+        limit: int = 200,
+    ) -> list[int]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT notification_id
+                FROM alert_oncall_events
+                WHERE provider = ? AND incident_id = ? AND notification_id IS NOT NULL
+                ORDER BY updated_at DESC, id DESC
+                LIMIT ?
+                """,
+                (
+                    provider,
+                    incident_id,
+                    max(1, min(limit, 5000)),
+                ),
+            ).fetchall()
+        out: list[int] = []
+        seen: set[int] = set()
+        for row in rows:
+            try:
+                value = int(row["notification_id"])
+            except Exception:  # noqa: BLE001
+                continue
+            if value <= 0 or value in seen:
+                continue
+            seen.add(value)
+            out.append(value)
+        return out
+
+    def upsert_oncall_event(
+        self,
+        *,
+        provider: str,
+        incident_id: str,
+        status: str,
+        notification_id: int | None,
+        delivery_id: int | None,
+        external_ticket_id: str | None,
+        acked: bool,
+        ack_by: str,
+        note: str,
+        payload: dict[str, object] | None = None,
+    ) -> tuple[OncallEventRecord, bool]:
+        now = datetime.now(timezone.utc).isoformat()
+        event_key = self._oncall_event_key(
+            provider=provider,
+            incident_id=incident_id,
+            status=status,
+            notification_id=notification_id,
+            delivery_id=delivery_id,
+            external_ticket_id=external_ticket_id,
+        )
+        with self._conn() as conn:
+            existing = conn.execute(
+                """
+                SELECT id
+                FROM alert_oncall_events
+                WHERE event_key = ?
+                LIMIT 1
+                """,
+                (event_key,),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO alert_oncall_events(
+                        event_key, created_at, updated_at, provider, incident_id, status,
+                        notification_id, delivery_id, external_ticket_id, acked, ack_by, note, payload
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        event_key,
+                        now,
+                        now,
+                        provider,
+                        incident_id,
+                        status,
+                        notification_id,
+                        delivery_id,
+                        external_ticket_id,
+                        1 if acked else 0,
+                        ack_by,
+                        note,
+                        json.dumps(payload or {}, ensure_ascii=False),
+                    ),
+                )
+                created = True
+            else:
+                conn.execute(
+                    """
+                    UPDATE alert_oncall_events
+                    SET
+                        updated_at = ?,
+                        provider = ?,
+                        incident_id = ?,
+                        status = ?,
+                        notification_id = ?,
+                        delivery_id = ?,
+                        external_ticket_id = ?,
+                        acked = ?,
+                        ack_by = ?,
+                        note = ?,
+                        payload = ?
+                    WHERE event_key = ?
+                    """,
+                    (
+                        now,
+                        provider,
+                        incident_id,
+                        status,
+                        notification_id,
+                        delivery_id,
+                        external_ticket_id,
+                        1 if acked else 0,
+                        ack_by,
+                        note,
+                        json.dumps(payload or {}, ensure_ascii=False),
+                        event_key,
+                    ),
+                )
+                created = False
+            row = conn.execute(
+                """
+                SELECT
+                    id, created_at, updated_at, provider, incident_id, status, notification_id,
+                    delivery_id, external_ticket_id, acked, ack_by, note, payload
+                FROM alert_oncall_events
+                WHERE event_key = ?
+                LIMIT 1
+                """,
+                (event_key,),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("failed to upsert oncall event")
+        return self._to_oncall_event(row), created
+
+    def list_oncall_events(
+        self,
+        *,
+        provider: str | None = None,
+        incident_id: str | None = None,
+        acked: bool | None = None,
+        limit: int = 200,
+    ) -> list[OncallEventRecord]:
+        sql = """
+            SELECT
+                id, created_at, updated_at, provider, incident_id, status, notification_id,
+                delivery_id, external_ticket_id, acked, ack_by, note, payload
+            FROM alert_oncall_events
+        """
+        conditions: list[str] = []
+        params: list[str | int] = []
+        if provider:
+            conditions.append("provider = ?")
+            params.append(provider)
+        if incident_id:
+            conditions.append("incident_id = ?")
+            params.append(incident_id)
+        if acked is not None:
+            conditions.append("acked = ?")
+            params.append(1 if acked else 0)
+        if conditions:
+            sql += " WHERE " + " AND ".join(conditions)
+        sql += " ORDER BY updated_at DESC, id DESC LIMIT ?"
+        params.append(max(1, min(limit, 5000)))
+        with self._conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [self._to_oncall_event(row) for row in rows]
+
     def list_deliveries(
         self,
         *,
@@ -409,5 +637,44 @@ class AlertStore:
             target=str(row["target"]),
             status=AlertDeliveryStatus(str(row["status"])),
             error_message=str(row["error_message"] or ""),
+            payload=dict(json.loads(str(row["payload"] or "{}"))),
+        )
+
+    @staticmethod
+    def _oncall_event_key(
+        *,
+        provider: str,
+        incident_id: str,
+        status: str,
+        notification_id: int | None,
+        delivery_id: int | None,
+        external_ticket_id: str | None,
+    ) -> str:
+        return "|".join(
+            [
+                provider.strip().lower(),
+                incident_id.strip(),
+                status.strip().lower(),
+                str(notification_id or 0),
+                str(delivery_id or 0),
+                (external_ticket_id or "").strip(),
+            ]
+        )
+
+    @staticmethod
+    def _to_oncall_event(row: sqlite3.Row) -> OncallEventRecord:
+        return OncallEventRecord(
+            id=int(row["id"]),
+            created_at=datetime.fromisoformat(str(row["created_at"])),
+            updated_at=datetime.fromisoformat(str(row["updated_at"])),
+            provider=str(row["provider"]),
+            incident_id=str(row["incident_id"]),
+            status=str(row["status"]),
+            notification_id=int(row["notification_id"]) if row["notification_id"] is not None else None,
+            delivery_id=int(row["delivery_id"]) if row["delivery_id"] is not None else None,
+            external_ticket_id=str(row["external_ticket_id"]) if row["external_ticket_id"] else None,
+            acked=bool(int(row["acked"])),
+            ack_by=str(row["ack_by"] or ""),
+            note=str(row["note"] or ""),
             payload=dict(json.loads(str(row["payload"] or "{}"))),
         )

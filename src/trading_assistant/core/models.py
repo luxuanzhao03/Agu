@@ -676,6 +676,20 @@ class ComplianceEvidenceExportRequest(BaseModel):
     nlp_snapshot_limit: int = Field(default=200, ge=1, le=2000)
     include_ruleset_body: bool = True
     include_feedback_summary: bool = True
+    sign_bundle: bool = True
+    signer: str = "compliance_system"
+    signing_key_id: str = "default"
+    retention_policy: str = "regulatory_7y"
+    vault_mode: str = Field(default="COPY", pattern="^(COPY|SIMULATED_WORM)$")
+    kms_key_id: str | None = None
+    external_worm_endpoint: str | None = None
+    external_kms_wrap_endpoint: str | None = None
+    external_auth_token: str | None = None
+    external_timeout_seconds: int = Field(default=10, ge=1, le=120)
+    external_require_success: bool = False
+    write_vault_copy: bool = False
+    vault_dir: str | None = None
+    cleanup_bundle_dir: bool = False
     output_dir: str = "reports/compliance"
     package_prefix: str = "evidence"
 
@@ -687,15 +701,77 @@ class ComplianceEvidenceFileItem(BaseModel):
     sha256: str
 
 
+class ComplianceEvidenceBundleSignature(BaseModel):
+    enabled: bool = False
+    algorithm: str = "sha256-hmac"
+    signer: str = ""
+    signing_key_id: str = ""
+    digest: str = ""
+    signature: str = ""
+    signed_at: datetime | None = None
+
+
 class ComplianceEvidenceExportResult(BaseModel):
     bundle_id: str
     generated_at: datetime
+    bundle_dir: str
     package_path: str
     package_size_bytes: int
     package_sha256: str
+    signature: ComplianceEvidenceBundleSignature | None = None
+    signature_path: str | None = None
+    vault_copy_path: str | None = None
     file_count: int
     files: list[ComplianceEvidenceFileItem] = Field(default_factory=list)
     summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class ComplianceEvidenceVerifyRequest(BaseModel):
+    package_path: str
+    signature_path: str | None = None
+    countersign_path: str | None = None
+    require_countersign: bool = False
+    signing_secret: str | None = None
+
+
+class ComplianceEvidenceVerifyResult(BaseModel):
+    package_path: str
+    package_sha256: str = ""
+    package_exists: bool = False
+    manifest_exists: bool = False
+    manifest_valid: bool = False
+    signature_checked: bool = False
+    signature_valid: bool = False
+    countersign_checked: bool = False
+    countersign_valid: bool = False
+    countersign_count: int = 0
+    message: str = ""
+
+
+class ComplianceEvidenceCounterSignRequest(BaseModel):
+    package_path: str
+    countersign_path: str | None = None
+    signer: str
+    signing_key_id: str = "counter_sign_default"
+    signing_secret: str | None = None
+    note: str = ""
+
+
+class ComplianceEvidenceCounterSignEntry(BaseModel):
+    signer: str
+    signing_key_id: str
+    signed_at: datetime
+    digest: str
+    signature: str
+    note: str = ""
+
+
+class ComplianceEvidenceCounterSignResult(BaseModel):
+    package_path: str
+    package_sha256: str
+    countersign_path: str
+    entry_count: int
+    last_entry: ComplianceEvidenceCounterSignEntry
 
 
 class EventSourceType(str, Enum):
@@ -1043,6 +1119,55 @@ class EventNLPFeedbackRecord(BaseModel):
     note: str = ""
 
 
+class EventNLPLabelEntryUpsertRequest(BaseModel):
+    source_name: str
+    event_id: str
+    label_event_type: str
+    label_polarity: EventPolarity
+    label_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    labeler: str = "system"
+    label_version: str = "v1"
+    note: str = ""
+
+
+class EventNLPLabelEntryRecord(BaseModel):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    source_name: str
+    event_id: str
+    symbol: str
+    publish_time: datetime
+    predicted_event_type: str
+    predicted_polarity: EventPolarity
+    predicted_score: float
+    label_event_type: str
+    label_polarity: EventPolarity
+    label_score: float | None = None
+    labeler: str
+    label_version: str = "v1"
+    note: str = ""
+
+
+class EventNLPConsensusRecord(BaseModel):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    source_name: str
+    event_id: str
+    symbol: str
+    publish_time: datetime
+    consensus_event_type: str
+    consensus_polarity: EventPolarity
+    consensus_score: float | None = None
+    consensus_confidence: float = 0.0
+    label_count: int = 0
+    conflict: bool = False
+    conflict_reasons: list[str] = Field(default_factory=list)
+    adjudicated_by: str = "system"
+    label_version: str = "v1"
+
+
 class EventNLPFeedbackSummary(BaseModel):
     source_name: str | None = None
     start_date: date
@@ -1076,6 +1201,107 @@ class EventNLPDriftThresholds(BaseModel):
     feedback_polarity_accuracy_drop_critical: float = Field(default=0.15, ge=0.0, le=1.0)
     feedback_event_type_accuracy_drop_warning: float = Field(default=0.1, ge=0.0, le=1.0)
     feedback_event_type_accuracy_drop_critical: float = Field(default=0.2, ge=0.0, le=1.0)
+
+
+class EventNLPAdjudicationRequest(BaseModel):
+    source_name: str | None = None
+    event_ids: list[str] = Field(default_factory=list)
+    start_date: date | None = None
+    end_date: date | None = None
+    min_labelers: int = Field(default=2, ge=1, le=20)
+    require_unanimous: bool = False
+    save_consensus: bool = True
+    adjudicated_by: str = "nlp_qc"
+    label_version: str = "v1"
+
+    @model_validator(mode="after")
+    def _validate_scope(self) -> "EventNLPAdjudicationRequest":
+        has_ids = bool(self.event_ids)
+        has_window = self.start_date is not None and self.end_date is not None
+        if not has_ids and not has_window:
+            raise ValueError("either event_ids or start_date/end_date must be provided")
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("start_date must be <= end_date")
+        return self
+
+
+class EventNLPAdjudicationItem(BaseModel):
+    source_name: str
+    event_id: str
+    symbol: str
+    publish_time: datetime
+    label_count: int
+    labelers: list[str] = Field(default_factory=list)
+    consensus_event_type: str | None = None
+    consensus_polarity: EventPolarity | None = None
+    consensus_score: float | None = None
+    consensus_confidence: float = 0.0
+    conflict: bool = False
+    conflict_reasons: list[str] = Field(default_factory=list)
+
+
+class EventNLPAdjudicationResult(BaseModel):
+    generated_at: datetime
+    source_name: str | None = None
+    total_events: int
+    adjudicated: int
+    conflicts: int
+    skipped: int
+    items: list[EventNLPAdjudicationItem] = Field(default_factory=list)
+
+
+class EventNLPLabelerPairAgreement(BaseModel):
+    labeler_a: str
+    labeler_b: str
+    common_events: int
+    event_type_agreement: float
+    polarity_agreement: float
+    avg_score_abs_delta: float | None = None
+
+
+class EventNLPLabelConsistencySummary(BaseModel):
+    source_name: str | None = None
+    start_date: date
+    end_date: date
+    events_with_labels: int = 0
+    total_label_rows: int = 0
+    avg_labelers_per_event: float = 0.0
+    majority_conflict_rate: float = 0.0
+    avg_score_std: float | None = None
+    pair_agreements: list[EventNLPLabelerPairAgreement] = Field(default_factory=list)
+
+
+class EventNLPLabelSnapshotRequest(BaseModel):
+    source_name: str | None = None
+    start_date: date
+    end_date: date
+    min_labelers: int = Field(default=1, ge=1, le=20)
+    include_conflicts: bool = True
+    created_by: str = "nlp_qc"
+    note: str = ""
+
+    @model_validator(mode="after")
+    def _validate_dates(self) -> "EventNLPLabelSnapshotRequest":
+        if self.start_date > self.end_date:
+            raise ValueError("start_date must be <= end_date")
+        return self
+
+
+class EventNLPLabelSnapshotRecord(BaseModel):
+    id: int
+    created_at: datetime
+    source_name: str | None = None
+    start_date: date
+    end_date: date
+    min_labelers: int
+    include_conflicts: bool
+    sample_size: int
+    consensus_size: int
+    conflict_size: int
+    hash_sha256: str
+    stats: dict[str, Any] = Field(default_factory=dict)
+    created_by: str
+    note: str = ""
 
 
 class EventNLPDriftAlert(BaseModel):
@@ -1189,10 +1415,32 @@ class EventNLPDriftMonitorSummary(BaseModel):
     points: list[EventNLPDriftMonitorPoint] = Field(default_factory=list)
 
 
+class EventNLPSLOPoint(BaseModel):
+    window_start: datetime
+    window_end: datetime
+    snapshots: int = 0
+    warning_snapshots: int = 0
+    critical_snapshots: int = 0
+    avg_hit_rate_delta: float | None = None
+    avg_score_p50_delta: float | None = None
+    burn_rate_warning: float = 0.0
+    burn_rate_critical: float = 0.0
+
+
+class EventNLPSLOHistory(BaseModel):
+    generated_at: datetime
+    source_name: str | None = None
+    lookback_days: int
+    bucket_hours: int
+    total_points: int
+    points: list[EventNLPSLOPoint] = Field(default_factory=list)
+
+
 class EventConnectorType(str, Enum):
     TUSHARE_ANNOUNCEMENT = "TUSHARE_ANNOUNCEMENT"
     FILE_ANNOUNCEMENT = "FILE_ANNOUNCEMENT"
     HTTP_JSON_ANNOUNCEMENT = "HTTP_JSON_ANNOUNCEMENT"
+    AKSHARE_ANNOUNCEMENT = "AKSHARE_ANNOUNCEMENT"
 
 
 class EventConnectorRunStatus(str, Enum):
@@ -1260,6 +1508,8 @@ class EventConnectorMatrixSourceItem(BaseModel):
     connector_type: EventConnectorType
     priority: int = Field(default=100, ge=0, le=10000)
     enabled: bool = True
+    request_budget_per_hour: int | None = Field(default=None, ge=1, le=1000000)
+    credential_aliases: list[str] = Field(default_factory=list)
     config: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1507,6 +1757,28 @@ class EventConnectorSLAAlertSyncResult(BaseModel):
     report: EventConnectorSLAReport
 
 
+class EventConnectorSLOPoint(BaseModel):
+    window_start: datetime
+    window_end: datetime
+    runs: int = 0
+    run_success_rate: float = 0.0
+    run_failure_rate: float = 0.0
+    warning_breaches: int = 0
+    critical_breaches: int = 0
+    escalated_breaches: int = 0
+    burn_rate_warning: float = 0.0
+    burn_rate_critical: float = 0.0
+
+
+class EventConnectorSLOHistory(BaseModel):
+    generated_at: datetime
+    connector_name: str | None = None
+    lookback_days: int
+    bucket_hours: int
+    total_points: int
+    points: list[EventConnectorSLOPoint] = Field(default_factory=list)
+
+
 class EventConnectorSLAAlertStateRecord(BaseModel):
     dedupe_key: str
     connector_name: str
@@ -1698,6 +1970,8 @@ class JobType(str, Enum):
     REPORT_GENERATE = "report_generate"
     EVENT_CONNECTOR_SYNC = "event_connector_sync"
     EVENT_CONNECTOR_REPLAY = "event_connector_replay"
+    COMPLIANCE_EVIDENCE_EXPORT = "compliance_evidence_export"
+    ALERT_ONCALL_RECONCILE = "alert_oncall_reconcile"
 
 
 class EventConnectorSyncJobPayload(BaseModel):
@@ -1710,6 +1984,18 @@ class EventConnectorSyncJobPayload(BaseModel):
 class EventConnectorReplayJobPayload(BaseModel):
     connector_name: str
     limit: int = Field(default=100, ge=1, le=2000)
+
+
+class ComplianceEvidenceExportJobPayload(BaseModel):
+    request: ComplianceEvidenceExportRequest
+
+
+class OncallReconcileJobPayload(BaseModel):
+    provider: str = "generic_oncall"
+    endpoint: str
+    mapping_template: str | None = None
+    limit: int = Field(default=200, ge=1, le=5000)
+    dry_run: bool = False
 
 
 class JobStatus(str, Enum):
@@ -1915,3 +2201,67 @@ class AlertDeliveryRecord(BaseModel):
     status: AlertDeliveryStatus
     error_message: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class OncallCallbackRequest(BaseModel):
+    provider: str = "generic_oncall"
+    incident_id: str | None = None
+    status: str | None = None
+    mapping_template: str | None = None
+    timestamp: str | None = None
+    signature: str | None = None
+    notification_id: int | None = None
+    delivery_id: int | None = None
+    external_ticket_id: str | None = None
+    ack_by: str = "oncall"
+    note: str = ""
+    raw_payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class OncallEventRecord(BaseModel):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+    provider: str
+    incident_id: str
+    status: str
+    notification_id: int | None = None
+    delivery_id: int | None = None
+    external_ticket_id: str | None = None
+    acked: bool = False
+    ack_by: str = ""
+    note: str = ""
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class OncallCallbackResult(BaseModel):
+    provider: str
+    incident_id: str
+    status: str
+    mapping_template: str | None = None
+    signature_checked: bool = False
+    signature_valid: bool = False
+    linked_notification_ids: list[int] = Field(default_factory=list)
+    acked_notifications: int = 0
+    stored_events: int = 0
+    message: str = ""
+
+
+class OncallReconcileRequest(BaseModel):
+    provider: str = "generic_oncall"
+    endpoint: str
+    mapping_template: str | None = None
+    limit: int = Field(default=200, ge=1, le=5000)
+    dry_run: bool = False
+
+
+class OncallReconcileResult(BaseModel):
+    provider: str
+    endpoint: str
+    mapping_template: str | None = None
+    pulled: int = 0
+    matched: int = 0
+    callbacks: int = 0
+    acked_notifications: int = 0
+    dry_run: bool = False
+    errors: list[str] = Field(default_factory=list)

@@ -2,14 +2,18 @@
   dashboard:
     "/metrics/ops-dashboard?lookback_hours=24&recent_run_limit=20&replay_limit=300&event_lookback_days=30&sync_alerts_from_audit=true",
   alerts: "/alerts/notifications?only_unacked=true&limit=30&sync_limit=500",
+  oncallEvents: "/alerts/oncall/events?limit=30",
   connectors: "/events/connectors/overview?limit=200",
+  connectorSourceHealth: "/events/connectors/source-health?limit=500",
   connectorSla: "/events/connectors/sla?include_disabled=true",
   connectorSlaStates: "/events/connectors/sla/states?open_only=true&limit=300",
   connectorSlaSummary: "/events/connectors/sla/states/summary",
+  connectorSloHistory: "/events/connectors/slo/history?lookback_days=14&bucket_hours=6&include_disabled=true",
   coverage: "/events/ops/coverage?lookback_days=30",
   nlpActiveRuleset: "/events/nlp/rulesets/active?include_rules=false",
   nlpDriftMonitor: "/events/nlp/drift/monitor?limit=30",
   nlpDriftSnapshots: "/events/nlp/drift/snapshots?limit=20",
+  nlpDriftSloHistory: "/events/nlp/drift/slo/history?lookback_days=14&bucket_hours=6",
 };
 
 const state = {
@@ -17,6 +21,7 @@ const state = {
   connectorSla: null,
   connectorSlaStates: [],
   connectorSlaSummary: null,
+  connectorSourceHealth: [],
   failureRows: [],
   selectedFailureId: null,
 };
@@ -152,6 +157,63 @@ function renderCoverageChart(daily) {
     .join("");
 }
 
+function renderSloBurnChart(hostId, points, warnKey, criticalKey) {
+  const host = document.getElementById(hostId);
+  if (!host) return;
+  const rows = Array.isArray(points) ? points.slice(-40) : [];
+  if (!rows.length) {
+    host.innerHTML = `<p class="muted">No SLO history yet.</p>`;
+    return;
+  }
+  const maxBurn = Math.max(
+    ...rows.map((x) => Math.max(Number(x[warnKey] || 0), Number(x[criticalKey] || 0))),
+    1
+  );
+  host.innerHTML = rows
+    .map((r) => {
+      const warn = Number(r[warnKey] || 0);
+      const critical = Number(r[criticalKey] || 0);
+      const hw = Math.max(2, Math.round((warn / maxBurn) * 90));
+      const hc = Math.max(2, Math.round((critical / maxBurn) * 90));
+      const ts = String(r.window_end || "").slice(5, 16).replace("T", " ");
+      return `<div class="bar-col" title="${esc(ts)} W=${warn.toFixed(2)} C=${critical.toFixed(2)}">
+        <div class="bar-stack" style="height:${Math.max(hw, hc)}px">
+          <div class="bar-neu" style="height:${Math.max(0, hw - hc)}px"></div>
+          <div class="bar-neg" style="height:${hc}px"></div>
+          <div class="bar-pos" style="height:${Math.max(0, hw - hc)}px"></div>
+        </div>
+        <div class="bar-label">${esc(ts.slice(5))}</div>
+      </div>`;
+    })
+    .join("");
+}
+
+function renderSloHistoryRows(connectorHistory, nlpHistory) {
+  const host = document.getElementById("sloHistoryRows");
+  if (!host) return;
+  const cRows = (connectorHistory && connectorHistory.points) || [];
+  const nRows = (nlpHistory && nlpHistory.points) || [];
+  const rows = cRows.slice(-20).map((c) => {
+    const n = nRows.find((x) => x.window_end === c.window_end) || null;
+    return { c, n };
+  });
+  if (!rows.length) {
+    host.innerHTML = `<tr><td colspan="7" class="muted">No SLO history yet.</td></tr>`;
+    return;
+  }
+  host.innerHTML = rows
+    .map(({ c, n }) => `<tr>
+      <td>${fmtTs(c.window_end)}</td>
+      <td>${fmtNum(c.runs)}</td>
+      <td>${fmtSigned(c.run_success_rate, 3)}</td>
+      <td>${fmtSigned(c.burn_rate_warning, 3)}</td>
+      <td>${fmtSigned(c.burn_rate_critical, 3)}</td>
+      <td>${fmtSigned(n && n.burn_rate_warning, 3)}</td>
+      <td>${fmtSigned(n && n.burn_rate_critical, 3)}</td>
+    </tr>`)
+    .join("");
+}
+
 function renderConnectorRows(items) {
   const host = document.getElementById("connectorRows");
   if (!host) return;
@@ -173,6 +235,31 @@ function renderConnectorRows(items) {
         <td>${fmtTs(x.checkpoint_publish_time)}</td>
       </tr>`;
     })
+    .join("");
+}
+
+function renderSourceHealthRows(rows) {
+  const host = document.getElementById("sourceHealthRows");
+  if (!host) return;
+  if (!Array.isArray(rows) || !rows.length) {
+    host.innerHTML = `<tr><td colspan="10" class="muted">No source matrix state.</td></tr>`;
+    return;
+  }
+  host.innerHTML = rows
+    .map(
+      (x) => `<tr>
+      <td>${esc(x.connector_name)}</td>
+      <td>${esc(x.source_key)}</td>
+      <td>${esc(x.connector_type)}</td>
+      <td>${statusChip(x.is_active ? "ACTIVE" : "STANDBY")}</td>
+      <td>${fmtSigned(x.health_score, 2)}</td>
+      <td>${fmtSigned(x.effective_health_score, 2)}</td>
+      <td>${fmtNum(x.consecutive_failures)}</td>
+      <td>${fmtNum(x.total_success)}</td>
+      <td>${fmtTs(x.last_success_at)}</td>
+      <td>${esc(x.last_error || "")}</td>
+    </tr>`
+    )
     .join("");
 }
 
@@ -276,6 +363,28 @@ function renderAlertRows(rows) {
       <td>${statusChip(x.severity)}</td>
       <td>${esc(x.source)}</td>
       <td>${esc(x.message)}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderOncallRows(rows) {
+  const host = document.getElementById("oncallRows");
+  if (!host) return;
+  if (!Array.isArray(rows) || !rows.length) {
+    host.innerHTML = `<tr><td colspan="7" class="muted">No on-call callback yet.</td></tr>`;
+    return;
+  }
+  host.innerHTML = rows
+    .map(
+      (x) => `<tr>
+      <td>${fmtTs(x.updated_at || x.created_at)}</td>
+      <td>${esc(x.provider)}</td>
+      <td>${esc(x.incident_id)}</td>
+      <td>${esc(x.external_ticket_id || "-")}</td>
+      <td>${statusChip(x.status)}</td>
+      <td>${statusChip(x.acked ? "ACKED" : "OPEN")}</td>
+      <td>${esc(x.note || "")}</td>
     </tr>`
     )
     .join("");
@@ -564,14 +673,30 @@ async function syncSlaAlerts() {
 async function loadDashboard() {
   showError("");
 
-  const [summary, alerts, connectorOverview, coverage, connectorSla, connectorSlaStates, connectorSlaSummary] = await Promise.all([
+  const [
+    summary,
+    alerts,
+    oncallEvents,
+    connectorOverview,
+    connectorSourceHealth,
+    coverage,
+    connectorSla,
+    connectorSlaStates,
+    connectorSlaSummary,
+    connectorSloHistory,
+    nlpSloHistory,
+  ] = await Promise.all([
     fetchJSON(API.dashboard),
     fetchJSON(API.alerts),
+    fetchJSON(API.oncallEvents),
     fetchJSON(API.connectors),
+    fetchJSON(API.connectorSourceHealth),
     fetchJSON(API.coverage),
     fetchJSON(API.connectorSla),
     fetchJSON(API.connectorSlaStates),
     fetchJSON(API.connectorSlaSummary),
+    fetchJSON(API.connectorSloHistory),
+    fetchJSON(API.nlpDriftSloHistory),
   ]);
 
   const nlpResult = await Promise.allSettled([
@@ -584,6 +709,7 @@ async function loadDashboard() {
   const driftSnapshots = nlpResult[2].status === "fulfilled" ? nlpResult[2].value : [];
 
   state.connectorOverview = connectorOverview;
+  state.connectorSourceHealth = connectorSourceHealth || [];
   state.connectorSla = connectorSla;
   state.connectorSlaStates = connectorSlaStates || [];
   state.connectorSlaSummary = connectorSlaSummary || null;
@@ -617,13 +743,24 @@ async function loadDashboard() {
   renderCoverageChart(coverage.daily || []);
 
   renderConnectorRows((connectorOverview && connectorOverview.connectors) || []);
+  renderSourceHealthRows(connectorSourceHealth || []);
   renderConnectorSlaRows((connectorSla && connectorSla.breaches) || []);
   renderConnectorSlaStateRows(connectorSlaStates || []);
   renderRunRows(summary.recent_runs || []);
   renderSLARows(sla.breaches || []);
   renderAlertRows(alerts || []);
+  renderOncallRows(oncallEvents || []);
   renderNlpMonitor(activeRuleset, driftMonitor);
   renderNlpSnapshots(driftSnapshots || []);
+  renderSloBurnChart("connectorSloChart", (connectorSloHistory && connectorSloHistory.points) || [], "burn_rate_warning", "burn_rate_critical");
+  renderSloBurnChart("nlpSloChart", (nlpSloHistory && nlpSloHistory.points) || [], "burn_rate_warning", "burn_rate_critical");
+  renderSloHistoryRows(connectorSloHistory, nlpSloHistory);
+  const cLast = ((connectorSloHistory && connectorSloHistory.points) || []).slice(-1)[0];
+  const nLast = ((nlpSloHistory && nlpSloHistory.points) || []).slice(-1)[0];
+  setText("connectorSloLatestWarn", fmtSigned(cLast && cLast.burn_rate_warning, 3));
+  setText("connectorSloLatestCritical", fmtSigned(cLast && cLast.burn_rate_critical, 3));
+  setText("nlpSloLatestWarn", fmtSigned(nLast && nLast.burn_rate_warning, 3));
+  setText("nlpSloLatestCritical", fmtSigned(nLast && nLast.burn_rate_critical, 3));
 
   ensureWorkbenchConnectorOptions();
   setText("lastUpdated", `Last update: ${new Date().toLocaleString()}`);

@@ -105,6 +105,32 @@
 
       <section class="panel" data-animate>
         <div class="panel-head">
+          <h3>Connector Source Matrix Health</h3>
+          <p>multi-source DR health scoring + active auto-switch state</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Connector</th>
+                <th>Source Key</th>
+                <th>Type</th>
+                <th>Role</th>
+                <th>Health</th>
+                <th>Effective</th>
+                <th>Failures</th>
+                <th>Success</th>
+                <th>Last Success</th>
+                <th>Last Error</th>
+              </tr>
+            </thead>
+            <tbody id="sourceHealthRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" data-animate>
+        <div class="panel-head">
           <h3>Connector SLA Breaches + Escalation State Machine</h3>
           <p id="connectorSlaSummaryMeta">-</p>
         </div>
@@ -204,6 +230,57 @@
 
       <section class="panel" data-animate>
         <div class="panel-head">
+          <h3>SLO Burn-rate History</h3>
+          <p>connector reliability + NLP drift governance budget consumption</p>
+        </div>
+        <div class="monitor-grid">
+          <article class="monitor-card">
+            <p>Connector Burn(W)</p>
+            <h4 id="connectorSloLatestWarn">-</h4>
+          </article>
+          <article class="monitor-card">
+            <p>Connector Burn(C)</p>
+            <h4 id="connectorSloLatestCritical">-</h4>
+          </article>
+          <article class="monitor-card">
+            <p>NLP Burn(W)</p>
+            <h4 id="nlpSloLatestWarn">-</h4>
+          </article>
+          <article class="monitor-card">
+            <p>NLP Burn(C)</p>
+            <h4 id="nlpSloLatestCritical">-</h4>
+          </article>
+        </div>
+        <div class="split-grid">
+          <div>
+            <h4>Connector Burn Trend</h4>
+            <div id="connectorSloChart" class="coverage-chart"></div>
+          </div>
+          <div>
+            <h4>NLP Burn Trend</h4>
+            <div id="nlpSloChart" class="coverage-chart"></div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Window End</th>
+                <th>Runs</th>
+                <th>Run Success</th>
+                <th>Connector Burn(W)</th>
+                <th>Connector Burn(C)</th>
+                <th>NLP Burn(W)</th>
+                <th>NLP Burn(C)</th>
+              </tr>
+            </thead>
+            <tbody id="sloHistoryRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" data-animate>
+        <div class="panel-head">
           <h3>Jobs + Scheduler SLA</h3>
           <p>recent jobs and scheduler breaches</p>
         </div>
@@ -255,6 +332,29 @@
               </tr>
             </thead>
             <tbody id="alertRows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel" data-animate>
+        <div class="panel-head">
+          <h3>On-call Callback Timeline</h3>
+          <p>incident ACK / ticket sync / callback audit trail</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Provider</th>
+                <th>Incident</th>
+                <th>Ticket</th>
+                <th>Status</th>
+                <th>ACK</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody id="oncallRows"></tbody>
           </table>
         </div>
       </section>

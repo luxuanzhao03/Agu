@@ -1,0 +1,49 @@
+{
+  "name": "connector-sla-oncall",
+  "owner": "ops_team",
+  "event_types": [
+    "event_connector_sla",
+    "event_connector_sla_escalation",
+    "event_connector_sla_recovery"
+  ],
+  "min_severity": "WARNING",
+  "dedupe_window_sec": 300,
+  "enabled": true,
+  "channel": "oncall",
+  "runbook_url": "docs/runbooks/connector_sla_escalation.md",
+  "channel_config": {
+    "webhooks": [
+      "https://im.example.com/webhook/ops"
+    ],
+    "email_to": [
+      "risk-owner@example.com",
+      "data-owner@example.com"
+    ]
+  },
+  "escalation_chain": [
+    {
+      "level_threshold": 1,
+      "channel": "im",
+      "targets": [
+        "https://im.example.com/webhook/ops"
+      ],
+      "note": "L1 triage"
+    },
+    {
+      "level_threshold": 2,
+      "channel": "email",
+      "targets": [
+        "risk-owner@example.com"
+      ],
+      "note": "L2 risk escalation"
+    },
+    {
+      "level_threshold": 3,
+      "channel": "email",
+      "targets": [
+        "duty-manager@example.com"
+      ],
+      "note": "L3 duty manager"
+    }
+  ]
+}

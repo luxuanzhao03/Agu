@@ -75,6 +75,10 @@ Design boundary:
 - Alert subscriptions with severity threshold and event filters.
 - Dedupe window and frequency control.
 - Notification inbox with ACK workflow.
+- Real channel dispatch integration (`email` / `im` / `dingtalk` / `wecom` / `pagerduty` / `oncall` escalation chain).
+- Delivery audit log API for channel send attempts.
+- On-call callback closed loop (`callback -> notification ACK -> callback history`).
+- Callback signature verification, provider mapping templates, and on-call incident reconcile flow.
 
 14. Strategy governance
 - Strategy version draft registration.
@@ -101,7 +105,7 @@ Design boundary:
 - Market/signal/backtest/pipeline/research/report/audit paths include license checks and audit metadata.
 
 19. Ops job center
-- Job definition registry (`pipeline_daily` / `research_workflow` / `report_generate` / `event_connector_sync` / `event_connector_replay`).
+- Job definition registry (`pipeline_daily` / `research_workflow` / `report_generate` / `event_connector_sync` / `event_connector_replay` / `compliance_evidence_export` / `alert_oncall_reconcile`).
 - Manual trigger with run history and structured run summary.
 - Full audit logging on register/trigger.
 
@@ -116,16 +120,22 @@ Design boundary:
 - Batch event ingest with upsert semantics and source-level audit.
 - PIT join validation against stored events (`publish_time` / `effective_time` checks).
 - Event feature enrichment (`event_score`, `negative_event_score`) for event-driven strategy.
-- Real announcement connector framework (`TUSHARE_ANNOUNCEMENT` / `FILE_ANNOUNCEMENT`).
+- Real announcement connector framework (`AKSHARE_ANNOUNCEMENT` / `TUSHARE_ANNOUNCEMENT` / `HTTP_JSON_ANNOUNCEMENT` / `FILE_ANNOUNCEMENT`).
 - Incremental checkpoint state per connector.
 - Failed-ingest queue with replay/backoff/dead-letter flow.
 - Connector SLA alert state machine persistence (dedupe + cooldown + recovery).
 - Automatic SLA escalation strategy (warning/critical repeat thresholds + escalation audit events).
+- SLA alert payload includes runbook URL for direct incident handling.
 - Batch failure repair-and-replay workflow for ops recovery.
+- Multi-source connector matrix with health scoring and automatic failover.
+- Source-level request budget governance + credential alias rotation.
+- Source health state API for DR visibility and routing.
 - Event standardization + NLP scoring pipeline.
 - NLP ruleset versioning + human feedback label loop.
+- Multi-label adjudication workflow + label consistency QA + label dataset snapshots.
 - Drift checks with hit-rate/score/contribution deltas and feedback-quality drift.
 - Drift monitor summary API for online governance dashboards.
+- Connector + NLP drift SLO burn-rate history APIs.
 - Event feature backtest comparison report (baseline vs event-enriched).
 
 22. Frontend ops dashboard
@@ -133,8 +143,17 @@ Design boundary:
 - Static assets at `/ui/ops-dashboard/*`.
 - Visualizes jobs/SLA/alerts/connectors/event coverage/NLP drift in one page.
 - Includes replay workbench for manual failure repair, selective replay, and repair+replay.
+- Includes source-matrix health panel (active source, health score, failover state).
 
-23. Deployment manifests
+23. Compliance evidence package export
+- One-click evidence bundle zip with SHA256 checksums.
+- Bundle includes audit hash-chain verify, strategy governance snapshot, and event governance snapshot.
+- Optional bundle signing + verification.
+- Dual-control countersign flow and countersign verification support.
+- Optional immutable-vault copy + scheduled auto-export via ops jobs.
+- External WORM/KMS policy integration hooks (endpoint-driven archive + key wrap receipt).
+
+24. Deployment manifests
 - Single-node Docker deployment (`deploy/docker-compose.single-node.yml`).
 - Private-cloud Kubernetes baseline (`deploy/k8s/private-cloud/trading-assistant.yaml`).
 
@@ -234,6 +253,7 @@ AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admi
 - `POST /events/connectors/register`
 - `GET /events/connectors`
 - `GET /events/connectors/overview`
+- `GET /events/connectors/source-health`
 - `POST /events/connectors/run`
 - `GET /events/connectors/runs`
 - `GET /events/connectors/failures`
@@ -245,6 +265,7 @@ AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admi
 - `POST /events/connectors/sla/sync-alerts`
 - `GET /events/connectors/sla/states`
 - `GET /events/connectors/sla/states/summary`
+- `GET /events/connectors/slo/history`
 - `GET /events/ops/coverage`
 - `POST /events/nlp/normalize/preview`
 - `POST /events/nlp/normalize/ingest`
@@ -255,9 +276,17 @@ AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admi
 - `POST /events/nlp/drift-check`
 - `GET /events/nlp/drift/snapshots`
 - `GET /events/nlp/drift/monitor`
+- `GET /events/nlp/drift/slo/history`
 - `POST /events/nlp/feedback`
 - `GET /events/nlp/feedback`
 - `GET /events/nlp/feedback/summary`
+- `POST /events/nlp/labels`
+- `GET /events/nlp/labels`
+- `POST /events/nlp/labels/adjudicate`
+- `GET /events/nlp/labels/consensus`
+- `GET /events/nlp/labels/consistency`
+- `POST /events/nlp/labels/snapshots`
+- `GET /events/nlp/labels/snapshots`
 - `POST /events/features/backtest-compare`
 - `GET /factors/snapshot`
 - `GET /strategies`
@@ -290,12 +319,19 @@ AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admi
 - `POST /alerts/subscriptions`
 - `GET /alerts/subscriptions`
 - `GET /alerts/notifications`
+- `GET /alerts/deliveries`
 - `POST /alerts/notifications/{notification_id}/ack`
+- `POST /alerts/oncall/callback`
+- `GET /alerts/oncall/events`
+- `POST /alerts/oncall/reconcile`
 - `GET /metrics/summary`
 - `GET /metrics/ops-dashboard`
 - `POST /model-risk/drift-check`
 - `POST /reports/generate`
 - `POST /compliance/preflight`
+- `POST /compliance/evidence/export`
+- `POST /compliance/evidence/verify`
+- `POST /compliance/evidence/countersign`
 - `POST /ops/jobs/register`
 - `GET /ops/jobs`
 - `POST /ops/jobs/{job_id}/run`
@@ -318,7 +354,37 @@ OPS_SCHEDULER_SLA_LOG_COOLDOWN_SECONDS=1800
 OPS_SCHEDULER_SYNC_ALERTS_FROM_AUDIT=true
 OPS_JOB_SLA_GRACE_MINUTES=15
 OPS_JOB_RUNNING_TIMEOUT_MINUTES=120
+COMPLIANCE_EVIDENCE_SIGNING_SECRET=
+COMPLIANCE_EVIDENCE_VAULT_DIR=reports/compliance_vault
+COMPLIANCE_EVIDENCE_EXTERNAL_WORM_ENDPOINT=
+COMPLIANCE_EVIDENCE_EXTERNAL_KMS_WRAP_ENDPOINT=
+COMPLIANCE_EVIDENCE_EXTERNAL_AUTH_TOKEN=
+COMPLIANCE_EVIDENCE_EXTERNAL_TIMEOUT_SECONDS=10
+COMPLIANCE_EVIDENCE_EXTERNAL_REQUIRE_SUCCESS=false
 EVENT_DB_PATH=data/event.db
+```
+
+## Alert Dispatch Config
+
+```text
+ALERT_EMAIL_ENABLED=false
+ALERT_SMTP_HOST=
+ALERT_SMTP_PORT=465
+ALERT_SMTP_USERNAME=
+ALERT_SMTP_PASSWORD=
+ALERT_SMTP_USE_TLS=false
+ALERT_SMTP_USE_SSL=true
+ALERT_EMAIL_FROM=
+ALERT_IM_ENABLED=false
+ALERT_IM_DEFAULT_WEBHOOK=
+ALERT_NOTIFY_TIMEOUT_SECONDS=10
+ALERT_RUNBOOK_BASE_URL=
+ONCALL_CALLBACK_SIGNING_SECRET=
+ONCALL_CALLBACK_REQUIRE_SIGNATURE=false
+ONCALL_CALLBACK_SIGNATURE_TTL_SECONDS=600
+ONCALL_CALLBACK_MAPPING_JSON=
+ONCALL_RECONCILE_DEFAULT_ENDPOINT=
+ONCALL_RECONCILE_TIMEOUT_SECONDS=10
 ```
 
 ## Example Calls

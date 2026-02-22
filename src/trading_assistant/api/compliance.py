@@ -8,6 +8,7 @@ from trading_assistant.audit.service import AuditService
 from trading_assistant.core.config import Settings, get_settings
 from trading_assistant.core.container import (
     get_audit_service,
+    get_compliance_evidence_service,
     get_data_provider,
     get_event_service,
     get_data_quality_service,
@@ -17,6 +18,12 @@ from trading_assistant.core.container import (
 )
 from trading_assistant.core.models import (
     ComplianceCheckItem,
+    ComplianceEvidenceCounterSignRequest,
+    ComplianceEvidenceCounterSignResult,
+    ComplianceEvidenceExportRequest,
+    ComplianceEvidenceExportResult,
+    ComplianceEvidenceVerifyRequest,
+    ComplianceEvidenceVerifyResult,
     CompliancePreflightRequest,
     CompliancePreflightResult,
     DataQualityRequest,
@@ -25,6 +32,7 @@ from trading_assistant.core.security import AuthContext, UserRole, require_roles
 from trading_assistant.data.composite_provider import CompositeDataProvider
 from trading_assistant.data.exceptions import DataProviderError
 from trading_assistant.governance.data_quality import DataQualityService
+from trading_assistant.governance.compliance_evidence import ComplianceEvidenceService
 from trading_assistant.governance.event_service import EventService
 from trading_assistant.governance.pit_validator import PITValidator
 from trading_assistant.strategy.governance_service import StrategyGovernanceService
@@ -115,3 +123,79 @@ def compliance_preflight(
         payload={"symbol": req.symbol, "strategy": req.strategy_name, "passed": passed, "checks": len(checks)},
     )
     return CompliancePreflightResult(passed=passed, checks=checks)
+
+
+@router.post("/evidence/export", response_model=ComplianceEvidenceExportResult)
+def compliance_evidence_export(
+    req: ComplianceEvidenceExportRequest,
+    service: ComplianceEvidenceService = Depends(get_compliance_evidence_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.ADMIN, UserRole.RISK)),
+) -> ComplianceEvidenceExportResult:
+    result = service.export_bundle(req)
+    audit.log(
+        event_type="compliance",
+        action="evidence_export",
+        payload={
+            "bundle_id": result.bundle_id,
+            "file_count": result.file_count,
+            "package_path": result.package_path,
+            "package_sha256": result.package_sha256,
+            "triggered_by": req.triggered_by,
+            "strategy_name": req.strategy_name or "",
+            "connector_name": req.connector_name or "",
+            "source_name": req.source_name or "",
+        },
+    )
+    return result
+
+
+@router.post("/evidence/verify", response_model=ComplianceEvidenceVerifyResult)
+def compliance_evidence_verify(
+    req: ComplianceEvidenceVerifyRequest,
+    service: ComplianceEvidenceService = Depends(get_compliance_evidence_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.ADMIN, UserRole.RISK)),
+) -> ComplianceEvidenceVerifyResult:
+    result = service.verify_package(req)
+    audit.log(
+        event_type="compliance",
+        action="evidence_verify",
+        status="OK" if result.manifest_valid and (not result.signature_checked or result.signature_valid) else "ERROR",
+        payload={
+            "package_path": req.package_path,
+            "package_exists": result.package_exists,
+            "manifest_valid": result.manifest_valid,
+            "signature_checked": result.signature_checked,
+            "signature_valid": result.signature_valid,
+            "message": result.message,
+        },
+    )
+    return result
+
+
+@router.post("/evidence/countersign", response_model=ComplianceEvidenceCounterSignResult)
+def compliance_evidence_countersign(
+    req: ComplianceEvidenceCounterSignRequest,
+    service: ComplianceEvidenceService = Depends(get_compliance_evidence_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.ADMIN, UserRole.RISK)),
+) -> ComplianceEvidenceCounterSignResult:
+    try:
+        result = service.countersign_package(req)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit.log(
+        event_type="compliance",
+        action="evidence_countersign",
+        payload={
+            "package_path": req.package_path,
+            "countersign_path": result.countersign_path,
+            "entry_count": result.entry_count,
+            "signer": req.signer,
+            "signing_key_id": req.signing_key_id,
+        },
+    )
+    return result

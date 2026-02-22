@@ -33,8 +33,14 @@ class RealAlertDispatcher:
         channel_normalized = channel.strip().lower()
         if channel_normalized == "email":
             return self._send_email(target=target, subject=subject, message=message)
-        if channel_normalized == "im":
-            return self._send_webhook(target=target, subject=subject, message=message, payload=payload)
+        if channel_normalized in {"im", "dingtalk", "wecom", "pagerduty"}:
+            return self._send_webhook(
+                channel=channel_normalized,
+                target=target,
+                subject=subject,
+                message=message,
+                payload=payload,
+            )
         return AlertSendResult(success=False, error_message=f"unsupported dispatch channel: {channel}")
 
     def _send_email(self, *, target: str, subject: str, message: str) -> AlertSendResult:
@@ -81,6 +87,7 @@ class RealAlertDispatcher:
     def _send_webhook(
         self,
         *,
+        channel: str,
         target: str,
         subject: str,
         message: str,
@@ -95,11 +102,43 @@ class RealAlertDispatcher:
             else:
                 return AlertSendResult(success=False, error_message="webhook target is empty")
 
-        body = {
-            "title": subject,
-            "text": message,
-            "payload": payload,
-        }
+        body: dict[str, Any]
+        if channel == "dingtalk":
+            body = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "title": subject,
+                    "text": f"### {subject}\n\n{message}",
+                },
+                "at": {"isAtAll": False},
+            }
+        elif channel == "wecom":
+            body = {
+                "msgtype": "markdown",
+                "markdown": {
+                    "content": f"**{subject}**\n{message}",
+                },
+            }
+        elif channel == "pagerduty":
+            routing_key = str(payload.get("pagerduty_routing_key") or "").strip()
+            if not routing_key:
+                return AlertSendResult(success=False, error_message="pagerduty_routing_key is required in payload")
+            body = {
+                "routing_key": routing_key,
+                "event_action": "trigger",
+                "payload": {
+                    "summary": subject,
+                    "source": str(payload.get("source") or "trading-assistant"),
+                    "severity": str(payload.get("severity") or "warning").lower(),
+                    "custom_details": payload | {"message": message},
+                },
+            }
+        else:
+            body = {
+                "title": subject,
+                "text": message,
+                "payload": payload,
+            }
         raw = json.dumps(body, ensure_ascii=False).encode("utf-8")
         req = request.Request(
             url=url,
@@ -115,4 +154,3 @@ class RealAlertDispatcher:
             return AlertSendResult(success=True, provider_status=str(status))
         except Exception as exc:  # noqa: BLE001
             return AlertSendResult(success=False, error_message=str(exc))
-

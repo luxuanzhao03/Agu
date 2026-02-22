@@ -1,0 +1,27 @@
+{
+  "provider": "pagerduty",
+  "incident_id": null,
+  "status": null,
+  "mapping_template": "pagerduty",
+  "timestamp": "2026-02-22T10:20:00Z",
+  "signature": "sha256=<hmac_hex>",
+  "delivery_id": 12345,
+  "notification_id": 67890,
+  "external_ticket_id": "PD-CASE-01",
+  "ack_by": "oncall_user_a",
+  "note": "triaged and accepted",
+  "raw_payload": {
+    "event_action": "acknowledged",
+    "incident": {
+      "id": "INC-1001",
+      "status": "acknowledged"
+    },
+    "payload": {
+      "custom_details": {
+        "notification_id": 67890,
+        "delivery_id": 12345
+      }
+    },
+    "ticket_id": "PD-CASE-01"
+  }
+}

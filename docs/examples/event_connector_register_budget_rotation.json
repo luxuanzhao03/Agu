@@ -1,0 +1,66 @@
+{
+  "connector_name": "ann_matrix_cn_v2",
+  "source_name": "exchange_announcement",
+  "connector_type": "HTTP_JSON_ANNOUNCEMENT",
+  "enabled": true,
+  "fetch_limit": 500,
+  "poll_interval_minutes": 5,
+  "replay_backoff_seconds": 180,
+  "max_retry": 6,
+  "created_by": "ops_architect",
+  "note": "multi-source DR + budget + credential rotation",
+  "config": {
+    "failover": {
+      "enabled": true,
+      "health_threshold": 40,
+      "max_candidates_per_run": 3
+    },
+    "source_matrix": [
+      {
+        "source_key": "vendor_primary",
+        "connector_type": "HTTP_JSON_ANNOUNCEMENT",
+        "priority": 10,
+        "enabled": true,
+        "request_budget_per_hour": 300,
+        "credential_aliases": ["vendor_key_a", "vendor_key_b"],
+        "config": {
+          "url": "https://vendor-a.example.com/ann/list",
+          "records_path": "data.items",
+          "symbol_field": "symbol",
+          "title_field": "title",
+          "summary_field": "summary",
+          "publish_time_field": "publish_time",
+          "credentials": {
+            "vendor_key_a": {"api_key": "ENV:VENDOR_A_KEY_A"},
+            "vendor_key_b": {"api_key": "ENV:VENDOR_A_KEY_B"}
+          }
+        }
+      },
+      {
+        "source_key": "vendor_backup",
+        "connector_type": "HTTP_JSON_ANNOUNCEMENT",
+        "priority": 20,
+        "enabled": true,
+        "request_budget_per_hour": 200,
+        "credential_aliases": ["vendor_b_key_a"],
+        "config": {
+          "url": "https://vendor-b.example.com/ann/feed",
+          "records_path": "payload.records",
+          "symbol_field": "ts_code",
+          "title_field": "headline",
+          "summary_field": "content",
+          "publish_time_field": "ts",
+          "credentials": {
+            "vendor_b_key_a": {"token": "ENV:VENDOR_B_TOKEN"}
+          }
+        }
+      }
+    ],
+    "sla": {
+      "freshness_warning_minutes": 60,
+      "freshness_critical_minutes": 180,
+      "freshness_escalation_minutes": 480
+    },
+    "runbook_url": "https://runbook.example.com/connectors/ann_matrix_cn_v2"
+  }
+}

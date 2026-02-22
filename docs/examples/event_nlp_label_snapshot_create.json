@@ -1,0 +1,9 @@
+{
+  "source_name": "exchange_announcement",
+  "start_date": "2026-02-01",
+  "end_date": "2026-02-21",
+  "min_labelers": 2,
+  "include_conflicts": true,
+  "created_by": "nlp_qc_lead",
+  "note": "monthly governance snapshot for model audit"
+}

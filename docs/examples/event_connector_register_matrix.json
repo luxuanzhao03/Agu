@@ -1,0 +1,83 @@
+{
+  "connector_name": "ann_matrix_cn",
+  "source_name": "ann_source_cn",
+  "connector_type": "AKSHARE_ANNOUNCEMENT",
+  "enabled": true,
+  "fetch_limit": 500,
+  "poll_interval_minutes": 5,
+  "replay_backoff_seconds": 300,
+  "max_retry": 8,
+  "created_by": "ops_admin",
+  "note": "multi-source DR connector",
+  "config": {
+    "runbook_url": "docs/runbooks/connector_sla_escalation.md",
+    "failover": {
+      "enabled": true,
+      "health_threshold": 40,
+      "max_candidates_per_run": 3
+    },
+    "source_matrix": [
+      {
+        "source_key": "akshare_primary",
+        "connector_type": "AKSHARE_ANNOUNCEMENT",
+        "priority": 10,
+        "enabled": true,
+        "config": {
+          "api_name": "stock_notice_report",
+          "symbol": "000001",
+          "lookback_days": 2,
+          "column_map": {
+            "event_id": [
+              "公告编号",
+              "id"
+            ],
+            "symbol": [
+              "代码",
+              "symbol"
+            ],
+            "title": [
+              "公告标题",
+              "title"
+            ],
+            "summary": [
+              "公告摘要",
+              "summary"
+            ],
+            "publish_time": [
+              "公告日期",
+              "publish_time"
+            ],
+            "url": [
+              "公告链接",
+              "url"
+            ]
+          }
+        }
+      },
+      {
+        "source_key": "http_backup",
+        "connector_type": "HTTP_JSON_ANNOUNCEMENT",
+        "priority": 20,
+        "enabled": true,
+        "config": {
+          "url": "https://example.com/api/announcements",
+          "method": "GET",
+          "records_path": "data.items",
+          "cursor_param": "cursor",
+          "limit_param": "limit",
+          "timeout_seconds": 8
+        }
+      },
+      {
+        "source_key": "file_emergency",
+        "connector_type": "FILE_ANNOUNCEMENT",
+        "priority": 90,
+        "enabled": true,
+        "config": {
+          "file_path": "data/announcement_backup.json",
+          "timezone": "Asia/Shanghai"
+        }
+      }
+    ]
+  }
+}
