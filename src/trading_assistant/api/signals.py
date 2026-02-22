@@ -11,6 +11,7 @@ from trading_assistant.core.container import (
     get_data_provider,
     get_event_service,
     get_factor_engine,
+    get_fundamental_service,
     get_pit_validator,
     get_risk_engine,
     get_signal_service,
@@ -33,6 +34,7 @@ from trading_assistant.data.composite_provider import CompositeDataProvider
 from trading_assistant.data.exceptions import DataProviderError
 from trading_assistant.data.utils import dataframe_content_hash
 from trading_assistant.factors.engine import FactorEngine
+from trading_assistant.fundamentals.service import FundamentalService
 from trading_assistant.governance.snapshot_service import DataSnapshotService
 from trading_assistant.governance.pit_validator import PITValidator
 from trading_assistant.governance.event_service import EventService
@@ -63,6 +65,7 @@ def generate_signals(
     provider: CompositeDataProvider = Depends(get_data_provider),
     license_service: DataLicenseService = Depends(get_data_license_service),
     factor_engine: FactorEngine = Depends(get_factor_engine),
+    fundamentals: FundamentalService = Depends(get_fundamental_service),
     pit: PITValidator = Depends(get_pit_validator),
     events: EventService = Depends(get_event_service),
     registry: StrategyRegistry = Depends(get_strategy_registry),
@@ -133,6 +136,15 @@ def generate_signals(
             lookback_days=req.event_lookback_days,
             decay_half_life_days=req.event_decay_half_life_days,
         )
+    use_fundamental_enrichment = settings.enable_fundamental_enrichment and req.enable_fundamental_enrichment
+    fundamental_stats: dict[str, object] = {"available": False, "source": None}
+    if use_fundamental_enrichment:
+        bars, fundamental_stats = fundamentals.enrich_bars(
+            symbol=req.symbol,
+            bars=bars,
+            as_of=req.end_date,
+            max_staleness_days=req.fundamental_max_staleness_days,
+        )
     snapshot_id = snapshots.register(
         DataSnapshotRegisterRequest(
             dataset_name="daily_bars",
@@ -177,6 +189,16 @@ def generate_signals(
             at_limit_down=at_limit_down,
             avg_turnover_20d=avg_turnover_20d,
             symbol_industry=req.industry,
+            fundamental_score=float(latest.get("fundamental_score", 0.5))
+            if bool(latest.get("fundamental_available", False))
+            else None,
+            fundamental_available=bool(latest.get("fundamental_available", False)),
+            fundamental_pit_ok=bool(latest.get("fundamental_pit_ok", True)),
+            fundamental_stale_days=(
+                int(latest.get("fundamental_stale_days", -1))
+                if int(latest.get("fundamental_stale_days", -1)) >= 0
+                else None
+            ),
         )
         risk_result = risk_engine.evaluate(risk_req)
         results.append(signal_service.to_trade_prep_sheet(signal, risk_result))
@@ -207,6 +229,13 @@ def generate_signals(
             "license_enforced": settings.enforce_data_license,
             "event_enriched": use_event_enrichment,
             "event_rows_used": int(event_stats.get("events_loaded", 0)),
+            "fundamental_enriched": use_fundamental_enrichment,
+            "fundamental_available": bool(fundamental_stats.get("available", False)),
+            "fundamental_source": fundamental_stats.get("source"),
+            "fundamental_pit_ok": fundamental_stats.get("pit_ok"),
+            "fundamental_score": round(float(latest.get("fundamental_score", 0.5)), 6)
+            if bool(latest.get("fundamental_available", False))
+            else None,
         },
         status="OK" if (license_check.allowed or not settings.enforce_data_license) else "ERROR",
     )

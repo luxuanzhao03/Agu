@@ -29,6 +29,8 @@ class SectorRotationStrategy(BaseStrategy):
         momentum20 = float(latest.get("momentum20", 0.0))
         momentum60 = float(latest.get("momentum60", 0.0))
         vol20 = float(latest.get("volatility20", 0.0))
+        fundamental_available = bool(latest.get("fundamental_available", False))
+        fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
 
         if sector_strength >= 0.6 and momentum20 > 0 and momentum20 >= momentum60 and vol20 < 0.05:
             action = SignalAction.BUY
@@ -40,7 +42,15 @@ class SectorRotationStrategy(BaseStrategy):
             action = SignalAction.WATCH
             reason = "Rotation signal not confirmed."
 
-        confidence = min(0.95, max(0.2, 0.5 * sector_strength + 0.5 * max(0.0, momentum20 + 0.5)))
+        if action == SignalAction.BUY and fundamental_available and fundamental_score < 0.35:
+            action = SignalAction.WATCH
+            reason = (
+                f"Rotation buy setup exists, but fundamental score {fundamental_score:.3f} is too weak; "
+                "downgraded to WATCH."
+            )
+
+        base_confidence = min(0.95, max(0.2, 0.5 * sector_strength + 0.5 * max(0.0, momentum20 + 0.5)))
+        confidence = base_confidence if not fundamental_available else min(0.95, max(0.2, 0.75 * base_confidence + 0.25 * fundamental_score))
         return [
             SignalCandidate(
                 symbol=str(latest["symbol"]),
@@ -55,7 +65,8 @@ class SectorRotationStrategy(BaseStrategy):
                     "risk_off_strength": round(risk_off_strength, 4),
                     "momentum20": round(momentum20, 4),
                     "momentum60": round(momentum60, 4),
+                    "fundamental_score": round(fundamental_score, 4),
+                    "fundamental_available": fundamental_available,
                 },
             )
         ]
-

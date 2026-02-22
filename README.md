@@ -1,178 +1,184 @@
-# A-share Semi-Automated Trading Assistant
+﻿# A股半自动交易辅助系统
 
-This repository is a production-oriented foundation for a **semi-automated** A-share trading assistant.
+本仓库是面向生产落地的 **半自动** A股交易辅助系统基础平台。
 
-Design boundary:
-- Research + decision support only.
-- No broker integration.
-- No auto order execution.
-- Human trader places orders manually.
+系统边界：
+- 仅用于投研与决策支持。
+- 不集成券商交易执行。
+- 不自动下单。
+- 最终交易动作由人工完成。
 
-## Implemented Scope
+## 已实现能力范围
 
-1. Data layer with provider fallback
-- `akshare` first, `tushare` fallback.
-- Unified daily-bar schema.
-- Trade calendar endpoint.
+1. 数据层（多数据源回退）
+- `akshare` 优先，`tushare` 回退。
+- 统一日线数据结构。
+- 交易日历接口。
+- 财报快照接口（按标的 + as_of 获取最近可用财务指标）。
 
-2. Factor engine
-- Trend, momentum, volatility, ATR, z-score, liquidity features.
+2. 因子引擎
+- 趋势、动量、波动率、ATR、z-score、流动性等因子。
+- 基本面因子（ROE、营收同比、净利同比、毛利率、负债率、现金流质量）。
+- 基本面综合评分（`fundamental_score`）与完整度评分（`fundamental_completeness`）。
 
-3. Strategy engine
+3. 策略引擎
 - `trend_following`
 - `mean_reversion`
 - `multi_factor`
 - `sector_rotation`
 - `event_driven`
-- Strategy registry and strategy metadata endpoints.
+- 策略注册与策略元数据接口。
 
-4. Risk engine
-- T+1 sell constraint.
-- ST filter.
-- Suspension filter.
-- Limit-up/limit-down execution warning.
-- Single-position cap.
-- Liquidity threshold.
-- Portfolio drawdown cap.
-- Industry concentration warning.
+4. 风险引擎
+- T+1 卖出约束。
+- ST 过滤。
+- 停牌过滤。
+- 涨跌停执行风险提示。
+- 单标的仓位上限。
+- 流动性阈值。
+- 组合回撤阈值。
+- 行业集中度预警。
+- 基本面质量门槛（低评分告警/阻断，PIT 时点违规阻断）。
 
-5. Signal center
-- Signal generation with strategy selection and strategy params.
-- Trade prep sheet output with risk explanation and compliance disclaimer.
+5. 信号中心
+- 支持策略选择与参数配置的信号生成。
+- 输出带风险解释与合规免责声明的交易准备单。
 
-6. Backtest engine
-- Single-symbol long-only baseline.
-- Slippage + commission.
-- T+1 availability logic.
-- Equity curve, trade list, and key metrics.
+6. 回测引擎
+- 单标的 long-only 基线回测。
+- 滑点 + 手续费建模。
+- T+1 可卖数量逻辑。
+- 权益曲线、成交记录与关键指标。
 
-7. Audit trail
-- SQLite-based audit event store.
-- API events, signal generation, backtests, and risk checks are logged.
+7. 审计链路
+- 基于 SQLite 的审计事件存储。
+- API 访问、信号生成、回测、风控检查均可审计。
 
-8. Batch pipeline
-- Daily pipeline run across symbol lists.
-- Aggregated result with blocked/warning counts.
+8. 批处理 Pipeline
+- 标的列表日批运行。
+- 汇总阻断/预警统计。
+- 输出每个标的的财报可用性、评分与来源信息。
 
-9. Data governance
-- Dataset quality report (missing fields, duplicates, invalid OHLC checks).
-- PIT-friendly dataset snapshot metadata (hash + provider + date range).
+9. 数据治理
+- 数据质量报告（缺失字段、重复、OHLC 非法值检查）。
+- 面向 PIT 的数据快照元数据（hash + provider + date range）。
 
-10. Portfolio workflow
-- Candidate optimization under symbol/industry caps.
-- Rebalance plan generation from current positions to target weights.
+10. 组合工作流
+- 在标的/行业约束下做候选组合优化。
+- 从当前持仓到目标权重的调仓计划生成。
 
-11. Replay workflow
-- Signal record persistence.
-- Manual execution record write-back.
-- Replay report: follow rate, delay, execution tracking.
+11. 回放工作流
+- 信号记录持久化。
+- 人工执行回写。
+- 回放报表：跟随率、延迟、执行追踪。
 
-12. Research workflow orchestration
-- Batch signal generation across symbols.
-- Optional portfolio optimization in same request.
+12. 研究工作流编排
+- 多标的批量信号生成。
+- 同请求可选组合优化。
 
-13. Alert center
-- Alert subscriptions with severity threshold and event filters.
-- Dedupe window and frequency control.
-- Notification inbox with ACK workflow.
-- Real channel dispatch integration (`email` / `im` / `dingtalk` / `wecom` / `pagerduty` / `oncall` escalation chain).
-- Delivery audit log API for channel send attempts.
-- On-call callback closed loop (`callback -> notification ACK -> callback history`).
-- Callback signature verification, provider mapping templates, and on-call incident reconcile flow.
+13. 告警中心
+- 按严重级别与事件类型订阅。
+- 去重窗口与频率控制。
+- 通知收件箱与 ACK 流程。
+- 支持真实通道派发（`email` / `im` / `dingtalk` / `wecom` / `pagerduty` / `oncall` 升级链路）。
+- 投递审计日志 API。
+- 值班回调闭环（`callback -> notification ACK -> callback history`）。
+- 回调签名校验、供应商映射模板与对账流程。
 
-14. Strategy governance
-- Strategy version draft registration.
-- Review submission and multi-role decision workflow.
-- Approval workflow and approved-version querying.
-- Optional runtime enforcement (`ENFORCE_APPROVED_STRATEGY=true`).
+14. 策略治理
+- 策略版本草稿注册。
+- 评审提交与多角色决策流程。
+- 审批流程与已批准版本查询。
+- 可选运行时强制（`ENFORCE_APPROVED_STRATEGY=true`）。
 
-15. RBAC access control
-- Optional API-key authentication with role-based permissions.
-- Roles: `research`, `risk`, `portfolio`, `audit`, `readonly`, `admin`.
+15. RBAC 访问控制
+- 可选 API Key 鉴权与角色权限。
+- 角色：`research`, `risk`, `portfolio`, `audit`, `readonly`, `admin`。
 
-16. PIT guard rails
-- Point-in-time validation endpoint.
-- Runtime checks before signal/backtest/pipeline execution.
-- Event-timestamp PIT validation endpoint.
+16. PIT 护栏
+- 时间点一致性校验接口。
+- 在信号/回测/pipeline 运行前做运行时校验。
+- 事件时间戳 PIT 校验接口。
 
-17. Report center
-- Signal/risk/replay report generation.
-- Markdown export with watermark and optional file output.
+17. 报告中心
+- 信号/风控/回放报告生成。
+- 支持带水印 Markdown 导出及可选文件落盘。
 
-18. Data license governance
-- License ledger (dataset/provider/scopes/expiry/export policy/watermark).
-- License check API and optional runtime enforcement (`ENFORCE_DATA_LICENSE=true`).
-- Market/signal/backtest/pipeline/research/report/audit paths include license checks and audit metadata.
+18. 数据许可证治理
+- 许可证台账（数据集/供应商/范围/到期/导出策略/水印）。
+- 许可证校验 API 与可选运行时强制（`ENFORCE_DATA_LICENSE=true`）。
+- market/signal/backtest/pipeline/research/report/audit 路径均接入许可证校验与审计元数据。
 
-19. Ops job center
-- Job definition registry (`pipeline_daily` / `research_workflow` / `report_generate` / `event_connector_sync` / `event_connector_replay` / `compliance_evidence_export` / `alert_oncall_reconcile`).
-- Manual trigger with run history and structured run summary.
-- Full audit logging on register/trigger.
+19. 运维作业中心
+- 作业定义注册（`pipeline_daily` / `research_workflow` / `report_generate` / `event_connector_sync` / `event_connector_replay` / `compliance_evidence_export` / `alert_oncall_reconcile`）。
+- 手工触发、运行历史、结构化运行摘要。
+- register/trigger 全链路审计。
 
-20. Scheduled runtime and ops dashboard
-- Cron-based scheduler tick for `schedule_cron` jobs with same-minute dedupe.
-- SLA checks for invalid cron, missed run, failed latest run, and running timeout.
-- Unified ops dashboard for job health, alert backlog, replay execution variance, and event-governance stats.
-- Optional background worker (`OPS_SCHEDULER_ENABLED=true`) for periodic auto tick.
+20. 定时运行与运维看板
+- 基于 cron 的定时调度 tick（同分钟去重）。
+- SLA 检查：无效 cron、漏跑、最近运行失败、运行超时。
+- 统一运维看板：作业健康、告警积压、执行偏差、事件治理统计。
+- 可选后台 Worker（`OPS_SCHEDULER_ENABLED=true`）自动 tick。
 
-21. Event governance, connectors, and PIT join validation
-- Event source registry with ingestion metadata and reliability profile.
-- Batch event ingest with upsert semantics and source-level audit.
-- PIT join validation against stored events (`publish_time` / `effective_time` checks).
-- Event feature enrichment (`event_score`, `negative_event_score`) for event-driven strategy.
-- Real announcement connector framework (`AKSHARE_ANNOUNCEMENT` / `TUSHARE_ANNOUNCEMENT` / `HTTP_JSON_ANNOUNCEMENT` / `FILE_ANNOUNCEMENT`).
-- Incremental checkpoint state per connector.
-- Failed-ingest queue with replay/backoff/dead-letter flow.
-- Connector SLA alert state machine persistence (dedupe + cooldown + recovery).
-- Automatic SLA escalation strategy (warning/critical repeat thresholds + escalation audit events).
-- SLA alert payload includes runbook URL for direct incident handling.
-- Batch failure repair-and-replay workflow for ops recovery.
-- Multi-source connector matrix with health scoring and automatic failover.
-- Source-level request budget governance + credential alias rotation.
-- Source health state API for DR visibility and routing.
-- Event standardization + NLP scoring pipeline.
-- NLP ruleset versioning + human feedback label loop.
-- Multi-label adjudication workflow + label consistency QA + label dataset snapshots.
-- Drift checks with hit-rate/score/contribution deltas and feedback-quality drift.
-- Drift monitor summary API for online governance dashboards.
-- Connector + NLP drift SLO burn-rate history APIs.
-- Event feature backtest comparison report (baseline vs event-enriched).
+21. 事件治理、连接器与 PIT 联接校验
+- 事件源注册与入库元数据管理。
+- 批量事件入库（upsert）+ 来源级审计。
+- PIT 联接校验（`publish_time` / `effective_time`）。
+- 事件特征增强（`event_score`, `negative_event_score`）。
+- 真实公告连接器框架（`AKSHARE_ANNOUNCEMENT` / `TUSHARE_ANNOUNCEMENT` / `HTTP_JSON_ANNOUNCEMENT` / `FILE_ANNOUNCEMENT`）。
+- 连接器增量检查点。
+- 失败队列：重放/退避/死信流程。
+- 连接器 SLA 状态机持久化（去重 + 冷却 + 恢复）。
+- 自动升级策略（warning/critical 重复阈值 + 升级审计事件）。
+- SLA 告警载荷包含 runbook URL。
+- 批量失败修复 + 重放。
+- 多源矩阵健康评分与自动切换。
+- 来源预算治理 + 凭证别名轮换。
+- 来源健康状态 API。
+- 事件标准化 + NLP 打分管线。
+- NLP 规则集版本治理 + 人工反馈标注闭环。
+- 多标注仲裁、标注一致性 QA、标签快照。
+- 漂移检查（命中率/分值/贡献变化 + 反馈质量漂移）。
+- 漂移监控汇总 API。
+- 连接器 + NLP 漂移 SLO burn-rate 历史 API。
+- 事件特征回测对比报告（baseline vs event-enriched）。
 
-22. Frontend ops dashboard
-- Browser UI at `GET /ops/dashboard`.
-- Static assets at `/ui/ops-dashboard/*`.
-- Visualizes jobs/SLA/alerts/connectors/event coverage/NLP drift in one page.
-- Includes replay workbench for manual failure repair, selective replay, and repair+replay.
-- Includes source-matrix health panel (active source, health score, failover state).
-- Header links to main portal (`/ui/`) and trading workbench (`/trading/workbench`).
+22. 前端运维看板
+- 页面入口：`GET /ops/dashboard`。
+- 静态资源：`/ui/ops-dashboard/*`。
+- 单页可视化：jobs/SLA/alerts/connectors/event coverage/NLP drift。
+- 内置回放工作台：手工修复、选中重放、修复后重放。
+- 包含来源矩阵健康面板（active source、健康分、切换状态）。
+- 页头可跳主界面（`/ui/`）与投研工作台（`/trading/workbench`）。
 
-23. Frontend trading workbench
-- Browser UI at `GET /trading/workbench`.
-- Static assets at `/ui/trading-workbench/*`.
-- Three-page workflow: strategy+params, result visualization, and prep-sheet+execution writeback.
-- Integrates `/strategies`, `/signals/generate`, `/backtest/run`, `/research/run`, `/replay/*` APIs.
-- Adds K-line/price trend chart with signal overlay via `/market/bars`.
-- Adds portfolio weight + industry exposure visualization and rebalance linkage via `/portfolio/rebalance/plan`.
-- Header links to main portal (`/ui/`) and ops dashboard (`/ops/dashboard`).
+23. 前端投研交易工作台
+- 页面入口：`GET /trading/workbench`。
+- 静态资源：`/ui/trading-workbench/*`。
+- 三段工作流：策略参数、结果可视化、执行回写。
+- 集成 `/strategies`, `/signals/generate`, `/backtest/run`, `/research/run`, `/replay/*`。
+- 增加 K 线/价格趋势叠加信号（`/market/bars`）。
+- 增加组合权重 + 行业暴露可视化与调仓联动（`/portfolio/rebalance/plan`）。
+- 增加“财报评分”列（信号表 + 研究候选表），展示每个标的当前基本面评分。
+- 页头可跳主界面（`/ui/`）与运维看板（`/ops/dashboard`）。
 
-24. Frontend main portal
-- Browser UI at `GET /ui/`.
-- Unified navigation to trading workbench and ops dashboard.
-- Provides entry-level process guidance and quick status summary.
+24. 前端主界面
+- 页面入口：`GET /ui/`。
+- 统一导航到投研与运维页面。
+- 提供流程化引导与快速状态摘要。
 
-25. Compliance evidence package export
-- One-click evidence bundle zip with SHA256 checksums.
-- Bundle includes audit hash-chain verify, strategy governance snapshot, and event governance snapshot.
-- Optional bundle signing + verification.
-- Dual-control countersign flow and countersign verification support.
-- Optional immutable-vault copy + scheduled auto-export via ops jobs.
-- External WORM/KMS policy integration hooks (endpoint-driven archive + key wrap receipt).
+25. 合规证据包导出
+- 一键导出证据包 zip + SHA256 校验。
+- 包含审计哈希链校验、策略治理快照、事件治理快照。
+- 支持签名与验证。
+- 支持双人复签与复签校验。
+- 支持 immutable-vault 拷贝与定时自动导出。
+- 支持外部 WORM/KMS 策略集成（端点归档 + key wrap 回执）。
 
-26. Deployment manifests
-- Single-node Docker deployment (`deploy/docker-compose.single-node.yml`).
-- Private-cloud Kubernetes baseline (`deploy/k8s/private-cloud/trading-assistant.yaml`).
+26. 部署清单
+- 单机 Docker 部署（`deploy/docker-compose.single-node.yml`）。
+- 私有云 Kubernetes 基线（`deploy/k8s/private-cloud/trading-assistant.yaml`）。
 
-## Quick Start
+## 快速开始
 
 ```bash
 python -m venv .venv
@@ -182,7 +188,7 @@ copy .env.example .env
 uvicorn trading_assistant.main:app --reload
 ```
 
-PowerShell shortcut:
+PowerShell 快捷方式：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
@@ -190,84 +196,88 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\run_pipeline.ps1 -Symbols "000001,000002"
 ```
 
-Windows one-click launcher:
+Windows 一键启动：
 
 ```bat
 start_system_windows.bat
 ```
+中文使用文档：
+- `docs/system_user_guide_zh.md`
+- `docs/system_quick_start_10min_zh.md`（10 分钟快速上手）
+- `docs/system_pretrade_checklist_zh.md`（开盘前/盘中/收盘后检查清单）
 
-Behavior:
-- auto switch to project root (`%~dp0`)
-- auto create `.venv` / `.env` if missing
-- auto install dependencies when package import is unavailable
-- auto start API in a new terminal with `OPS_SCHEDULER_ENABLED=true`
-- auto open:
+一键启动行为：
+- 自动切换到项目根目录（`%~dp0`）
+- 缺失时自动创建 `.venv` / `.env`
+- 检测导入失败时自动安装依赖
+- 新开终端启动 API，并设置 `OPS_SCHEDULER_ENABLED=true`
+- 自动打开：
   - `http://127.0.0.1:8000/ui/`
   - `http://127.0.0.1:8000/trading/workbench`
   - `http://127.0.0.1:8000/ops/dashboard`
 
-Optional args:
-- `start_system_windows.bat --dry-run` (print actions only)
-- `start_system_windows.bat --no-browser` (start backend only)
+可选参数：
+- `start_system_windows.bat --dry-run`（只打印动作，不执行）
+- `start_system_windows.bat --no-browser`（只启动后端，不打开浏览器）
 
-## Testing (Windows)
+## 测试（Windows）
 
-Use the test wrapper to avoid system `%TEMP%` permission issues:
+为避免系统 `%TEMP%` 权限问题，建议使用测试包装脚本：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_tests.ps1
 ```
 
-Run selected tests:
+运行指定测试：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_tests.ps1 tests\test_event_connector_service.py tests\test_event_nlp_governance.py
 ```
 
-Notes:
-- test temp files are redirected to `%LOCALAPPDATA%\\Temp\\codex-pytest-temp`
-- pytest cache/bytecode/temp artifacts are removed automatically after each run
-- pytest cache plugin is disabled in wrapper (`-p no:cacheprovider`)
-- pytest temporary workspace is redirected via `--basetemp=%LOCALAPPDATA%\\Temp\\codex-pytest-cases`
-- project fixture stores per-case dirs under `%LOCALAPPDATA%\\Temp\\codex-pytest-cases` (cleaned at session end and by wrapper)
-- if old cache folders were created with restrictive ACLs, run:
-  `powershell -ExecutionPolicy Bypass -File .\\scripts\\fix_test_cache_acl.ps1 -IncludeSourceBytecode`
+说明：
+- 测试临时目录重定向到 `%LOCALAPPDATA%\Temp\codex-pytest-temp`
+- 每次测试后自动清理 pytest 缓存/字节码/临时目录
+- 包装脚本中禁用 pytest cache plugin（`-p no:cacheprovider`）
+- pytest case 临时目录通过 `--basetemp=%LOCALAPPDATA%\Temp\codex-pytest-cases` 重定向
+- 项目 fixture 的 case 目录也写入 `%LOCALAPPDATA%\Temp\codex-pytest-cases`（会在会话结束及包装脚本中清理）
+- 若历史缓存目录 ACL 异常，可执行：
+  `powershell -ExecutionPolicy Bypass -File .\scripts\fix_test_cache_acl.ps1 -IncludeSourceBytecode`
 
-## Deployment
+## 部署
 
-Single node:
+单机：
 ```bash
 cd deploy
 docker compose -f docker-compose.single-node.yml up -d --build
 ```
 
-Private cloud:
+私有云：
 ```bash
 kubectl apply -f deploy/k8s/private-cloud/trading-assistant.yaml
 ```
 
-Ops dashboard UI:
+前端页面入口：
 ```text
 http://127.0.0.1:8000/ui/
 http://127.0.0.1:8000/ops/dashboard
 http://127.0.0.1:8000/trading/workbench
 ```
 
-## Optional Auth (RBAC)
+## 可选鉴权（RBAC）
 
-When `AUTH_ENABLED=true`, include API key header:
+当 `AUTH_ENABLED=true` 时，请在请求头中带上 API Key：
 
 ```text
 X-API-Key: <your-key>
 ```
 
-Configure key-role mapping in `.env`:
+在 `.env` 中配置 key-role 映射：
 
 ```text
 AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admin
 ```
 
-## API Overview
+## API 总览
 
 - `GET /health`
 - `GET /market/bars`
@@ -381,7 +391,7 @@ AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admi
 - `GET /system/auth/me`
 - `GET /system/auth/permissions`
 
-## Scheduler Config
+## 调度配置
 
 ```text
 OPS_SCHEDULER_ENABLED=false
@@ -401,7 +411,23 @@ COMPLIANCE_EVIDENCE_EXTERNAL_REQUIRE_SUCCESS=false
 EVENT_DB_PATH=data/event.db
 ```
 
-## Alert Dispatch Config
+## 财报因子配置
+
+```text
+ENABLE_FUNDAMENTAL_ENRICHMENT=true
+FUNDAMENTAL_MAX_STALENESS_DAYS=540
+FUNDAMENTAL_BUY_WARNING_SCORE=0.50
+FUNDAMENTAL_BUY_CRITICAL_SCORE=0.35
+FUNDAMENTAL_REQUIRE_DATA_FOR_BUY=false
+```
+
+说明：
+- `ENABLE_FUNDAMENTAL_ENRICHMENT`：全局开关。开启后，`signals/backtest/pipeline/research`默认会注入财报快照并计算基本面评分。
+- `FUNDAMENTAL_MAX_STALENESS_DAYS`：财报陈旧度阈值，超过后会在评分中施加衰减。
+- `FUNDAMENTAL_BUY_WARNING_SCORE` / `FUNDAMENTAL_BUY_CRITICAL_SCORE`：买入信号的财报质量分级门槛。
+- `FUNDAMENTAL_REQUIRE_DATA_FOR_BUY`：若开启且取不到财报快照，买入信号会进入人工确认路径（WARNING）。
+
+## 告警派发配置
 
 ```text
 ALERT_EMAIL_ENABLED=false
@@ -424,7 +450,7 @@ ONCALL_RECONCILE_DEFAULT_ENDPOINT=
 ONCALL_RECONCILE_TIMEOUT_SECONDS=10
 ```
 
-## Example Calls
+## 调用示例
 
 ```bash
 curl "http://127.0.0.1:8000/market/bars?symbol=000001&start_date=2025-01-01&end_date=2025-12-31&limit=5"
@@ -437,46 +463,46 @@ curl "http://127.0.0.1:8000/strategies"
 ```bash
 curl -X POST "http://127.0.0.1:8000/signals/generate" ^
   -H "Content-Type: application/json" ^
-  -d "{\"symbol\":\"000001\",\"start_date\":\"2025-01-01\",\"end_date\":\"2025-12-31\",\"strategy_name\":\"multi_factor\"}"
+  -d "{\"symbol\":\"000001\",\"start_date\":\"2025-01-01\",\"end_date\":\"2025-12-31\",\"strategy_name\":\"multi_factor\",\"enable_fundamental_enrichment\":true,\"fundamental_max_staleness_days\":540}"
 ```
 
 ```bash
 curl -X POST "http://127.0.0.1:8000/backtest/run" ^
   -H "Content-Type: application/json" ^
-  -d "{\"symbol\":\"000001\",\"start_date\":\"2025-01-01\",\"end_date\":\"2025-12-31\",\"strategy_name\":\"trend_following\"}"
+  -d "{\"symbol\":\"000001\",\"start_date\":\"2025-01-01\",\"end_date\":\"2025-12-31\",\"strategy_name\":\"trend_following\",\"enable_fundamental_enrichment\":true}"
 ```
 
-## Structure
+## 目录结构
 
 ```text
 src/trading_assistant/
-  alerts/     # Alert subscriptions + notification inbox
-  api/        # FastAPI routes
-  audit/      # Audit trail store/service (SQLite)
-  backtest/   # Backtest engine
-  core/       # Config, models, DI container
-  data/       # Data providers: akshare/tushare + fallback router
-  factors/    # Factor engine
-  governance/ # Snapshot/quality/license + event connectors/NLP/replay governance
-  ops/        # Job orchestration + scheduler + ops dashboard services
-  pipeline/   # Batch runner
-  portfolio/  # Optimizer + rebalance planner
-  replay/     # Signal-execution replay storage/report
-  risk/       # Risk rules and evaluator
-  signal/     # Trade prep generation
-  strategy/   # Strategy templates and registry
-  web/        # Frontend assets (ops dashboard)
-  main.py     # App entrypoint
+  alerts/     # 告警订阅 + 通知收件箱
+  api/        # FastAPI 路由
+  audit/      # 审计存储/服务（SQLite）
+  backtest/   # 回测引擎
+  core/       # 配置、模型、依赖注入容器
+  data/       # 数据源：akshare/tushare + 回退路由
+  factors/    # 因子引擎
+  governance/ # 快照/质量/license + 事件连接器/NLP/重放治理
+  ops/        # 作业编排 + 调度 + 运维看板服务
+  pipeline/   # 批处理运行器
+  portfolio/  # 优化器 + 调仓规划
+  replay/     # 信号-执行回放存储/报表
+  risk/       # 风控规则与评估
+  signal/     # 交易准备单生成
+  strategy/   # 策略模板与注册中心
+  web/        # 前端静态资源
+  main.py     # 应用入口
 tests/
 docs/
 ```
 
-## Notes
+## 说明
 
-- This is a base platform, not a complete investment advisory product.
-- For commercial use, complete compliance workflow and legal review are required.
-- See `docs/architecture.md` for the module-level design.
-- Deployment runbook: `docs/deployment.md`.
-- Version notes: `CHANGELOG.md`.
-- API payload examples are under `docs/examples/`.
-- Config loader supports `.env` fallback even if `pydantic-settings` is missing, but installing full dependencies is recommended.
+- 本仓库是基础平台，不是完整投资顾问产品。
+- 用于商业场景时，仍需完成合规流程与法律评估。
+- 模块级设计见 `docs/architecture.md`。
+- 部署手册见 `docs/deployment.md`。
+- 版本记录见 `CHANGELOG.md`。
+- API 请求示例见 `docs/examples/`。
+- 配置加载器支持在缺少 `pydantic-settings` 时从 `.env` 回退，但仍建议安装完整依赖。

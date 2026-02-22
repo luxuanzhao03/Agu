@@ -167,3 +167,73 @@ class IndustryExposureRule(RiskRule):
             )
         return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Industry exposure validation passed.")
 
+
+class FundamentalQualityRule(RiskRule):
+    name = "fundamental_quality"
+
+    def __init__(
+        self,
+        *,
+        warning_score: float,
+        critical_score: float,
+        require_data_for_buy: bool,
+    ) -> None:
+        self.warning_score = warning_score
+        self.critical_score = critical_score
+        self.require_data_for_buy = require_data_for_buy
+
+    def check(self, req: RiskCheckRequest) -> RuleHit:
+        if req.signal.action != SignalAction.BUY:
+            return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Not a BUY action.")
+
+        if req.fundamental_pit_ok is False:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.CRITICAL,
+                message="Fundamental PIT check failed (publish time later than trade as-of).",
+            )
+
+        if req.fundamental_score is None:
+            if self.require_data_for_buy:
+                return RuleHit(
+                    rule_name=self.name,
+                    passed=False,
+                    level=SignalLevel.WARNING,
+                    message="No fundamental snapshot found; require manual confirmation.",
+                )
+            return RuleHit(
+                rule_name=self.name,
+                passed=True,
+                level=SignalLevel.INFO,
+                message="No fundamental snapshot; fallback to technical/event factors.",
+            )
+
+        if req.fundamental_score < self.critical_score:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.CRITICAL,
+                message=(
+                    f"Fundamental score {req.fundamental_score:.3f} below critical floor "
+                    f"{self.critical_score:.3f}."
+                ),
+            )
+        if req.fundamental_score < self.warning_score:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.WARNING,
+                message=(
+                    f"Fundamental score {req.fundamental_score:.3f} below warning floor "
+                    f"{self.warning_score:.3f}."
+                ),
+            )
+        if req.fundamental_stale_days is not None and req.fundamental_stale_days >= 0 and req.fundamental_stale_days > 540:
+            return RuleHit(
+                rule_name=self.name,
+                passed=False,
+                level=SignalLevel.WARNING,
+                message=f"Fundamental snapshot is stale ({req.fundamental_stale_days} days).",
+            )
+        return RuleHit(rule_name=self.name, passed=True, level=SignalLevel.INFO, message="Fundamental quality passed.")

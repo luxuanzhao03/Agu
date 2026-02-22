@@ -11,6 +11,7 @@ from trading_assistant.core.container import (
     get_data_provider,
     get_event_service,
     get_factor_engine,
+    get_fundamental_service,
     get_pit_validator,
     get_snapshot_service,
     get_strategy_governance_service,
@@ -22,6 +23,7 @@ from trading_assistant.data.composite_provider import CompositeDataProvider
 from trading_assistant.data.exceptions import DataProviderError
 from trading_assistant.data.utils import dataframe_content_hash
 from trading_assistant.factors.engine import FactorEngine
+from trading_assistant.fundamentals.service import FundamentalService
 from trading_assistant.governance.pit_validator import PITValidator
 from trading_assistant.governance.event_service import EventService
 from trading_assistant.governance.license_service import DataLicenseService
@@ -39,6 +41,7 @@ def run_backtest(
     provider: CompositeDataProvider = Depends(get_data_provider),
     license_service: DataLicenseService = Depends(get_data_license_service),
     factor_engine: FactorEngine = Depends(get_factor_engine),
+    fundamentals: FundamentalService = Depends(get_fundamental_service),
     pit: PITValidator = Depends(get_pit_validator),
     events: EventService = Depends(get_event_service),
     registry: StrategyRegistry = Depends(get_strategy_registry),
@@ -106,6 +109,15 @@ def run_backtest(
             lookback_days=req.event_lookback_days,
             decay_half_life_days=req.event_decay_half_life_days,
         )
+    use_fundamental_enrichment = settings.enable_fundamental_enrichment and req.enable_fundamental_enrichment
+    fundamental_stats: dict[str, object] = {"available": False, "source": None}
+    if use_fundamental_enrichment:
+        bars, fundamental_stats = fundamentals.enrich_bars(
+            symbol=req.symbol,
+            bars=bars,
+            as_of=req.end_date,
+            max_staleness_days=req.fundamental_max_staleness_days,
+        )
     snapshot_id = snapshots.register(
         DataSnapshotRegisterRequest(
             dataset_name="daily_bars",
@@ -123,6 +135,9 @@ def run_backtest(
         max_drawdown=settings.max_drawdown,
         max_industry_exposure=settings.max_industry_exposure,
         min_turnover_20d=settings.min_turnover_20d,
+        fundamental_buy_warning_score=settings.fundamental_buy_warning_score,
+        fundamental_buy_critical_score=settings.fundamental_buy_critical_score,
+        fundamental_require_data_for_buy=settings.fundamental_require_data_for_buy,
     )
     engine = BacktestEngine(factor_engine=factor_engine, risk_engine=risk_engine)
     result = engine.run(bars=bars, req=req, strategy=strategy)
@@ -142,6 +157,10 @@ def run_backtest(
             "license_enforced": settings.enforce_data_license,
             "event_enriched": use_event_enrichment,
             "event_rows_used": int(event_stats.get("events_loaded", 0)),
+            "fundamental_enriched": use_fundamental_enrichment,
+            "fundamental_available": bool(fundamental_stats.get("available", False)),
+            "fundamental_source": fundamental_stats.get("source"),
+            "fundamental_pit_ok": fundamental_stats.get("pit_ok"),
         },
         status="OK" if (license_check.allowed or not settings.enforce_data_license) else "ERROR",
     )

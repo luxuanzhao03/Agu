@@ -66,6 +66,10 @@ class RiskCheckRequest(BaseModel):
     at_limit_down: bool = False
     avg_turnover_20d: float | None = Field(default=None, ge=0.0)
     symbol_industry: str | None = None
+    fundamental_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    fundamental_available: bool = False
+    fundamental_pit_ok: bool | None = None
+    fundamental_stale_days: int | None = Field(default=None, ge=0)
 
 
 class RuleHit(BaseModel):
@@ -101,6 +105,8 @@ class GenerateSignalRequest(BaseModel):
     strategy_name: str = Field(default="trend_following")
     strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
     enable_event_enrichment: bool = False
+    enable_fundamental_enrichment: bool = True
+    fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
     event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
     current_position: Position | None = None
@@ -204,6 +210,8 @@ class BacktestRequest(BaseModel):
     strategy_name: str = Field(default="trend_following")
     strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
     enable_event_enrichment: bool = False
+    enable_fundamental_enrichment: bool = True
+    fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
     event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
     initial_cash: float = Field(default=1_000_000.0, gt=0)
@@ -296,6 +304,8 @@ class PipelineRunRequest(BaseModel):
     strategy_name: str = Field(default="trend_following")
     strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
     enable_event_enrichment: bool = False
+    enable_fundamental_enrichment: bool = True
+    fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
     event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
     industry_map: dict[str, str] = Field(default_factory=dict)
@@ -318,6 +328,9 @@ class PipelineSymbolResult(BaseModel):
     quality_passed: bool = True
     snapshot_id: int | None = None
     event_rows_used: int = 0
+    fundamental_available: bool = False
+    fundamental_score: float | None = None
+    fundamental_source: str | None = None
 
 
 class PipelineRunResult(BaseModel):
@@ -537,6 +550,9 @@ class WorkflowSignalItem(BaseModel):
     suggested_position: float | None = None
     signal_id: str | None = None
     event_rows_used: int = 0
+    fundamental_available: bool = False
+    fundamental_score: float | None = None
+    fundamental_source: str | None = None
 
 
 class ResearchWorkflowRequest(BaseModel):
@@ -546,6 +562,8 @@ class ResearchWorkflowRequest(BaseModel):
     strategy_name: str = Field(default="multi_factor")
     strategy_params: dict[str, float | int | str | bool] = Field(default_factory=dict)
     enable_event_enrichment: bool = False
+    enable_fundamental_enrichment: bool = True
+    fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
     event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
     industry_map: dict[str, str] = Field(default_factory=dict)

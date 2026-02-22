@@ -46,5 +46,66 @@ class FactorEngine:
         if "negative_event_score" not in df.columns:
             df["negative_event_score"] = 0.0
 
+        # Fundamental enrichment placeholders + composite scoring.
+        for col in ("roe", "revenue_yoy", "net_profit_yoy", "gross_margin", "debt_to_asset", "ocf_to_profit", "eps"):
+            if col not in df.columns:
+                df[col] = np.nan
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "fundamental_available" not in df.columns:
+            df["fundamental_available"] = False
+        else:
+            df["fundamental_available"] = df["fundamental_available"].fillna(False).astype(bool)
+        if "fundamental_pit_ok" not in df.columns:
+            df["fundamental_pit_ok"] = True
+        else:
+            df["fundamental_pit_ok"] = df["fundamental_pit_ok"].fillna(True).astype(bool)
+        if "fundamental_is_stale" not in df.columns:
+            df["fundamental_is_stale"] = False
+        else:
+            df["fundamental_is_stale"] = df["fundamental_is_stale"].fillna(False).astype(bool)
+        if "fundamental_stale_days" not in df.columns:
+            df["fundamental_stale_days"] = -1
+        else:
+            df["fundamental_stale_days"] = pd.to_numeric(df["fundamental_stale_days"], errors="coerce").fillna(-1).astype(int)
+
+        profitability = self._scale_clip(df["roe"], low=0.0, high=20.0)
+        growth = 0.5 * self._scale_clip(df["revenue_yoy"], low=-20.0, high=40.0) + 0.5 * self._scale_clip(
+            df["net_profit_yoy"], low=-25.0, high=50.0
+        )
+        quality = 0.6 * self._scale_clip(df["gross_margin"], low=8.0, high=45.0) + 0.4 * self._scale_clip(
+            df["ocf_to_profit"], low=0.0, high=1.2
+        )
+        leverage = 1.0 - self._scale_clip(df["debt_to_asset"], low=25.0, high=80.0)
+
+        base_fundamental = (
+            0.30 * profitability.fillna(0.5)
+            + 0.30 * growth.fillna(0.5)
+            + 0.25 * quality.fillna(0.5)
+            + 0.15 * leverage.fillna(0.5)
+        )
+        completeness = (
+            df[["roe", "revenue_yoy", "net_profit_yoy", "gross_margin", "debt_to_asset", "ocf_to_profit"]]
+            .notna()
+            .sum(axis=1)
+            / 6.0
+        )
+        score = base_fundamental * completeness + 0.5 * (1.0 - completeness)
+        score = np.where(df["fundamental_is_stale"], score - 0.15, score)
+        score = np.where(df["fundamental_pit_ok"], score, score - 0.25)
+        score = np.clip(score, 0.0, 1.0)
+
+        df["fundamental_profitability_score"] = np.clip(profitability.fillna(0.5), 0.0, 1.0)
+        df["fundamental_growth_score"] = np.clip(growth.fillna(0.5), 0.0, 1.0)
+        df["fundamental_quality_score"] = np.clip(quality.fillna(0.5), 0.0, 1.0)
+        df["fundamental_leverage_score"] = np.clip(leverage.fillna(0.5), 0.0, 1.0)
+        df["fundamental_completeness"] = np.clip(completeness.fillna(0.0), 0.0, 1.0)
+        df["fundamental_score"] = score
+
         return df
 
+    @staticmethod
+    def _scale_clip(series: pd.Series, low: float, high: float) -> pd.Series:
+        if high <= low:
+            return pd.Series(np.full(len(series), 0.5), index=series.index, dtype=float)
+        out = (series - low) / (high - low)
+        return out.clip(0.0, 1.0)

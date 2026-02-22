@@ -23,6 +23,8 @@ class TrendFollowingStrategy(BaseStrategy):
         atr_mult = float(context.params.get("atr_multiplier", 2.0))
         df = features.sort_values("trade_date")
         latest = df.iloc[-1]
+        fundamental_available = bool(latest.get("fundamental_available", False))
+        fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
 
         if len(df) < 2:
             action = SignalAction.WATCH
@@ -44,8 +46,16 @@ class TrendFollowingStrategy(BaseStrategy):
                 action = SignalAction.WATCH
                 reason = "No clear trend entry or exit."
 
+        if action == SignalAction.BUY and fundamental_available and fundamental_score < 0.35:
+            action = SignalAction.WATCH
+            reason = (
+                f"Trend entry detected, but fundamental score {fundamental_score:.3f} is too weak; "
+                "downgraded to WATCH."
+            )
+
         strength = abs(float(latest.get("momentum20", 0.0)))
-        confidence = min(0.95, max(0.25, strength * 2 + 0.45))
+        base_confidence = min(0.95, max(0.25, strength * 2 + 0.45))
+        confidence = base_confidence if not fundamental_available else min(0.95, max(0.2, 0.75 * base_confidence + 0.25 * fundamental_score))
         return [
             SignalCandidate(
                 symbol=str(latest["symbol"]),
@@ -59,7 +69,8 @@ class TrendFollowingStrategy(BaseStrategy):
                     "ma20": round(float(latest.get("ma20", 0.0)), 4),
                     "ma60": round(float(latest.get("ma60", 0.0)), 4),
                     "atr14": round(float(latest.get("atr14", 0.0)), 4),
+                    "fundamental_score": round(fundamental_score, 4),
+                    "fundamental_available": fundamental_available,
                 },
             )
         ]
-

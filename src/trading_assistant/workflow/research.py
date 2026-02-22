@@ -16,6 +16,7 @@ from trading_assistant.core.models import (
 )
 from trading_assistant.data.composite_provider import CompositeDataProvider
 from trading_assistant.factors.engine import FactorEngine
+from trading_assistant.fundamentals.service import FundamentalService
 from trading_assistant.governance.pit_validator import PITValidator
 from trading_assistant.governance.event_service import EventService
 from trading_assistant.governance.license_service import DataLicenseService
@@ -39,8 +40,10 @@ class ResearchWorkflowService:
         event_service: EventService | None = None,
         license_service: DataLicenseService | None = None,
         enforce_data_license: bool = False,
+        fundamental_service: FundamentalService | None = None,
     ) -> None:
         self.provider = provider
+        self.fundamental_service = fundamental_service or FundamentalService(provider=provider)
         self.factor_engine = factor_engine
         self.registry = registry
         self.risk_engine = risk_engine
@@ -93,6 +96,14 @@ class ResearchWorkflowService:
                     lookback_days=req.event_lookback_days,
                     decay_half_life_days=req.event_decay_half_life_days,
                 )
+            fundamental_stats: dict[str, object] = {"available": False, "source": None}
+            if req.enable_fundamental_enrichment and self.fundamental_service is not None:
+                bars_for_features, fundamental_stats = self.fundamental_service.enrich_bars(
+                    symbol=symbol,
+                    bars=bars_for_features,
+                    as_of=req.end_date,
+                    max_staleness_days=req.fundamental_max_staleness_days,
+                )
             features = self.factor_engine.compute(bars_for_features)
             strategy_signals = strategy.generate(features, StrategyContext(params=req.strategy_params))
             if not strategy_signals:
@@ -109,6 +120,16 @@ class ResearchWorkflowService:
                     is_suspended=bool(status.get("is_suspended", False)),
                     avg_turnover_20d=float(features.iloc[-1].get("turnover20", 0.0)),
                     symbol_industry=industry,
+                    fundamental_score=float(features.iloc[-1].get("fundamental_score", 0.5))
+                    if bool(features.iloc[-1].get("fundamental_available", False))
+                    else None,
+                    fundamental_available=bool(features.iloc[-1].get("fundamental_available", False)),
+                    fundamental_pit_ok=bool(features.iloc[-1].get("fundamental_pit_ok", True)),
+                    fundamental_stale_days=(
+                        int(features.iloc[-1].get("fundamental_stale_days", -1))
+                        if int(features.iloc[-1].get("fundamental_stale_days", -1)) >= 0
+                        else None
+                    ),
                 )
             )
             signal_id = uuid4().hex
@@ -137,13 +158,22 @@ class ResearchWorkflowService:
                     suggested_position=signal.suggested_position,
                     signal_id=signal_id,
                     event_rows_used=int(event_stats.get("events_loaded", 0)),
+                    fundamental_available=bool(features.iloc[-1].get("fundamental_available", False)),
+                    fundamental_score=float(features.iloc[-1].get("fundamental_score", 0.5))
+                    if bool(features.iloc[-1].get("fundamental_available", False))
+                    else None,
+                    fundamental_source=str(fundamental_stats.get("source")) if fundamental_stats.get("source") else None,
                 )
             )
             if signal.action == SignalAction.BUY and (not risk.blocked):
+                fundamental_available = bool(features.iloc[-1].get("fundamental_available", False))
+                fundamental_score = float(features.iloc[-1].get("fundamental_score", 0.5)) if fundamental_available else 0.5
+                momentum = float(features.iloc[-1].get("momentum20", 0.0))
+                blended_expected_return = 0.7 * momentum + 0.3 * (fundamental_score - 0.5)
                 optimize_candidates.append(
                     OptimizeCandidate(
                         symbol=signal.symbol,
-                        expected_return=float(features.iloc[-1].get("momentum20", 0.0)),
+                        expected_return=blended_expected_return,
                         volatility=max(0.001, float(features.iloc[-1].get("volatility20", 0.01))),
                         industry=industry or "UNKNOWN",
                         liquidity_score=min(1.0, float(features.iloc[-1].get("turnover20", 0.0)) / 30_000_000),

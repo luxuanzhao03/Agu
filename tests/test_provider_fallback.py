@@ -46,6 +46,19 @@ class OkProvider(MarketDataProvider):
     def get_security_status(self, symbol: str) -> dict[str, bool]:
         return {"is_st": False, "is_suspended": False}
 
+    def get_fundamental_snapshot(self, symbol: str, as_of: date) -> dict[str, object]:
+        return {
+            "report_date": as_of,
+            "publish_date": as_of,
+            "roe": 12.0,
+            "revenue_yoy": 15.0,
+            "net_profit_yoy": 18.0,
+            "gross_margin": 35.0,
+            "debt_to_asset": 40.0,
+            "ocf_to_profit": 1.1,
+            "eps": 0.8,
+        }
+
 
 def test_fallback_to_second_provider() -> None:
     provider = CompositeDataProvider([FailedProvider(), OkProvider()])
@@ -66,3 +79,10 @@ def test_calendar_with_source() -> None:
     used_provider, cal = provider.get_trade_calendar_with_source(date(2025, 1, 2), date(2025, 1, 2))
     assert used_provider == "ok"
     assert len(cal) == 1
+
+
+def test_fundamental_snapshot_fallback_with_source() -> None:
+    provider = CompositeDataProvider([FailedProvider(), OkProvider()])
+    used_provider, snapshot = provider.get_fundamental_snapshot_with_source("000001", date(2025, 1, 2))
+    assert used_provider == "ok"
+    assert snapshot["roe"] == 12.0

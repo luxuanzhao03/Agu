@@ -59,6 +59,11 @@ class Settings(BaseSettings):
     max_drawdown: float = Field(default=0.12)
     max_industry_exposure: float = Field(default=0.2)
     min_turnover_20d: float = Field(default=5_000_000.0)
+    enable_fundamental_enrichment: bool = Field(default=True)
+    fundamental_max_staleness_days: int = Field(default=540)
+    fundamental_buy_warning_score: float = Field(default=0.50)
+    fundamental_buy_critical_score: float = Field(default=0.35)
+    fundamental_require_data_for_buy: bool = Field(default=False)
 
     audit_db_path: str = Field(default="data/audit.db")
     snapshot_db_path: str = Field(default="data/snapshot.db")

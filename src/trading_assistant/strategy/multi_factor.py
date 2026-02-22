@@ -10,7 +10,7 @@ class MultiFactorStrategy(BaseStrategy):
     info = StrategyInfo(
         name="multi_factor",
         title="Multi Factor",
-        description="Lightweight technical multi-factor scorer for candidate ranking.",
+        description="Technical + fundamental multi-factor scorer for candidate ranking.",
         frequency="D/W",
         params_schema={
             "buy_threshold": "float",
@@ -19,6 +19,8 @@ class MultiFactorStrategy(BaseStrategy):
             "w_quality": "float",
             "w_low_vol": "float",
             "w_liquidity": "float",
+            "w_fundamental": "float",
+            "min_fundamental_score_buy": "float",
         },
     )
 
@@ -30,9 +32,11 @@ class MultiFactorStrategy(BaseStrategy):
         buy_threshold = float(context.params.get("buy_threshold", 0.55))
         sell_threshold = float(context.params.get("sell_threshold", 0.35))
         w_momentum = float(context.params.get("w_momentum", 0.35))
-        w_quality = float(context.params.get("w_quality", 0.25))
-        w_low_vol = float(context.params.get("w_low_vol", 0.2))
-        w_liquidity = float(context.params.get("w_liquidity", 0.2))
+        w_quality = float(context.params.get("w_quality", 0.20))
+        w_low_vol = float(context.params.get("w_low_vol", 0.15))
+        w_liquidity = float(context.params.get("w_liquidity", 0.15))
+        w_fundamental = float(context.params.get("w_fundamental", 0.15))
+        min_fundamental_score_buy = float(context.params.get("min_fundamental_score_buy", 0.35))
 
         latest = features.sort_values("trade_date").iloc[-1]
         momentum = max(-0.5, min(0.5, float(latest.get("momentum60", 0.0)))) + 0.5
@@ -40,12 +44,15 @@ class MultiFactorStrategy(BaseStrategy):
         low_vol = 1.0 - min(1.0, float(latest.get("volatility20", 0.0)) * 5)
         turnover = float(latest.get("turnover20", 0.0))
         liquidity = min(1.0, turnover / 30_000_000)
+        fundamental_available = bool(latest.get("fundamental_available", False))
+        fundamental = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
 
         score = (
             momentum * w_momentum
             + quality * w_quality
             + low_vol * w_low_vol
             + liquidity * w_liquidity
+            + fundamental * w_fundamental
         )
 
         if score >= buy_threshold:
@@ -57,6 +64,13 @@ class MultiFactorStrategy(BaseStrategy):
         else:
             action = SignalAction.WATCH
             reason = f"Multi-factor score {score:.3f} in neutral range."
+
+        if action == SignalAction.BUY and fundamental_available and fundamental < min_fundamental_score_buy:
+            action = SignalAction.WATCH
+            reason = (
+                f"Technical score reached buy zone, but fundamental score {fundamental:.3f} "
+                f"< {min_fundamental_score_buy:.3f}; downgraded to WATCH."
+            )
 
         return [
             SignalCandidate(
@@ -73,7 +87,8 @@ class MultiFactorStrategy(BaseStrategy):
                     "quality": round(quality, 4),
                     "low_vol": round(low_vol, 4),
                     "liquidity": round(liquidity, 4),
+                    "fundamental_score": round(fundamental, 4),
+                    "fundamental_available": fundamental_available,
                 },
             )
         ]
-

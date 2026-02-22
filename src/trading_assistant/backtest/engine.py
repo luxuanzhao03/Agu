@@ -85,6 +85,11 @@ class BacktestEngine:
             signal = signals[-1]
             close = float(window.iloc[-1]["close"])
             turnover20 = float(features.iloc[-1].get("turnover20", 0.0))
+            fundamental_available = bool(features.iloc[-1].get("fundamental_available", False))
+            fundamental_score = (
+                float(features.iloc[-1].get("fundamental_score", 0.5)) if fundamental_available else None
+            )
+            stale_days_raw = int(features.iloc[-1].get("fundamental_stale_days", -1))
 
             position_value = state.quantity * close
             equity = state.cash + position_value
@@ -119,6 +124,10 @@ class BacktestEngine:
                 at_limit_up=False,
                 at_limit_down=False,
                 avg_turnover_20d=turnover20,
+                fundamental_score=fundamental_score,
+                fundamental_available=fundamental_available,
+                fundamental_pit_ok=bool(features.iloc[-1].get("fundamental_pit_ok", True)),
+                fundamental_stale_days=stale_days_raw if stale_days_raw >= 0 else None,
             )
             risk_result = self.risk_engine.evaluate(risk_req)
             if risk_result.blocked:

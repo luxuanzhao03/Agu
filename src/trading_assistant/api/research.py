@@ -45,6 +45,8 @@ def run_research_workflow(
             "optimized": result.optimized_portfolio is not None,
             "event_enriched": req.enable_event_enrichment or req.strategy_name == "event_driven",
             "event_rows_used": sum(item.event_rows_used for item in result.signals),
+            "fundamental_enriched": req.enable_fundamental_enrichment,
+            "fundamental_available_signals": sum(1 for item in result.signals if item.fundamental_available),
         },
     )
     return result

@@ -41,6 +41,8 @@ def run_daily_pipeline(
             "symbols": len(req.symbols),
             "event_enriched": req.enable_event_enrichment or req.strategy_name == "event_driven",
             "event_rows_used": sum(r.event_rows_used for r in result.results),
+            "fundamental_enriched": req.enable_fundamental_enrichment,
+            "fundamental_available_symbols": sum(1 for r in result.results if r.fundamental_available),
         },
     )
     return result

@@ -11,6 +11,7 @@ from trading_assistant.core.models import (
 )
 from trading_assistant.risk.rules import (
     DrawdownRule,
+    FundamentalQualityRule,
     IndustryExposureRule,
     LimitPriceRule,
     LiquidityRule,
@@ -29,6 +30,9 @@ class RiskEngine:
         max_drawdown: float,
         max_industry_exposure: float,
         min_turnover_20d: float,
+        fundamental_buy_warning_score: float = 0.50,
+        fundamental_buy_critical_score: float = 0.35,
+        fundamental_require_data_for_buy: bool = False,
     ) -> None:
         self.rules: list[RiskRule] = [
             TPlusOneRule(),
@@ -39,6 +43,11 @@ class RiskEngine:
             LiquidityRule(min_turnover_20d=min_turnover_20d),
             DrawdownRule(max_drawdown=max_drawdown),
             IndustryExposureRule(max_industry_exposure=max_industry_exposure),
+            FundamentalQualityRule(
+                warning_score=fundamental_buy_warning_score,
+                critical_score=fundamental_buy_critical_score,
+                require_data_for_buy=fundamental_require_data_for_buy,
+            ),
         ]
         self.max_drawdown = max_drawdown
         self.max_industry_exposure = max_industry_exposure

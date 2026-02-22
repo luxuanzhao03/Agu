@@ -48,6 +48,19 @@ class GrowingProvider(MarketDataProvider):
     def get_security_status(self, symbol: str) -> dict[str, bool]:
         return {"is_st": False, "is_suspended": False}
 
+    def get_fundamental_snapshot(self, symbol: str, as_of: date) -> dict[str, object]:
+        return {
+            "report_date": date(2024, 12, 31),
+            "publish_date": date(2025, 1, 1),
+            "roe": 13.0,
+            "revenue_yoy": 10.0,
+            "net_profit_yoy": 14.0,
+            "gross_margin": 31.0,
+            "debt_to_asset": 43.0,
+            "ocf_to_profit": 0.95,
+            "eps": 0.88,
+        }
+
 
 def test_research_workflow_runs(tmp_path: Path) -> None:
     workflow = ResearchWorkflowService(
@@ -74,6 +87,7 @@ def test_research_workflow_runs(tmp_path: Path) -> None:
         )
     )
     assert len(result.signals) >= 1
+    assert any(item.fundamental_available for item in result.signals)
 
 
 def test_research_workflow_blocks_when_license_enforced(tmp_path: Path) -> None:

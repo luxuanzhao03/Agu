@@ -25,6 +25,8 @@ class EventDrivenStrategy(BaseStrategy):
         event_score = float(context.params.get("event_score", latest.get("event_score", 0.0)))
         negative_event = float(context.params.get("negative_event_score", latest.get("negative_event_score", 0.0)))
         momentum20 = float(latest.get("momentum20", 0.0))
+        fundamental_available = bool(latest.get("fundamental_available", False))
+        fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
 
         if event_score >= 0.7 and momentum20 >= -0.03:
             action = SignalAction.BUY
@@ -36,7 +38,15 @@ class EventDrivenStrategy(BaseStrategy):
             action = SignalAction.WATCH
             reason = "No dominant event signal."
 
-        confidence = min(0.95, max(0.2, max(event_score, negative_event)))
+        if action == SignalAction.BUY and fundamental_available and fundamental_score < 0.35:
+            action = SignalAction.WATCH
+            reason = (
+                f"Event trigger is positive, but fundamental score {fundamental_score:.3f} is too weak; "
+                "downgraded to WATCH."
+            )
+
+        base_confidence = min(0.95, max(0.2, max(event_score, negative_event)))
+        confidence = base_confidence if not fundamental_available else min(0.95, max(0.2, 0.7 * base_confidence + 0.3 * fundamental_score))
         return [
             SignalCandidate(
                 symbol=str(latest["symbol"]),
@@ -49,7 +59,8 @@ class EventDrivenStrategy(BaseStrategy):
                 metadata={
                     "event_score": round(event_score, 4),
                     "negative_event_score": round(negative_event, 4),
+                    "fundamental_score": round(fundamental_score, 4),
+                    "fundamental_available": fundamental_available,
                 },
             )
         ]
-

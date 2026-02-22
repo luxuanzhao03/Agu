@@ -27,6 +27,8 @@ class MeanReversionStrategy(BaseStrategy):
         latest = features.sort_values("trade_date").iloc[-1]
         z = float(latest.get("zscore20", 0.0))
         turnover = float(latest.get("turnover20", 0.0))
+        fundamental_available = bool(latest.get("fundamental_available", False))
+        fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
 
         if turnover < min_turnover:
             action = SignalAction.WATCH
@@ -41,7 +43,15 @@ class MeanReversionStrategy(BaseStrategy):
             action = SignalAction.WATCH
             reason = "Z-score in neutral zone."
 
-        confidence = min(0.95, max(0.2, abs(z) / 3))
+        if action == SignalAction.BUY and fundamental_available and fundamental_score < 0.35:
+            action = SignalAction.WATCH
+            reason = (
+                f"Mean-reversion setup exists, but fundamental score {fundamental_score:.3f} is too weak; "
+                "downgraded to WATCH."
+            )
+
+        base_confidence = min(0.95, max(0.2, abs(z) / 3))
+        confidence = base_confidence if not fundamental_available else min(0.95, max(0.2, 0.7 * base_confidence + 0.3 * fundamental_score))
         return [
             SignalCandidate(
                 symbol=str(latest["symbol"]),
@@ -54,7 +64,8 @@ class MeanReversionStrategy(BaseStrategy):
                 metadata={
                     "zscore20": round(z, 4),
                     "turnover20": round(turnover, 2),
+                    "fundamental_score": round(fundamental_score, 4),
+                    "fundamental_available": fundamental_available,
                 },
             )
         ]
-

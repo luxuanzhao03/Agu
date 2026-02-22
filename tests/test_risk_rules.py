@@ -74,3 +74,44 @@ def test_liquidity_warning_does_not_block() -> None:
     assert result.blocked is False
     assert result.level == SignalLevel.WARNING
 
+
+def test_fundamental_critical_blocks_buy() -> None:
+    engine = build_engine()
+    req = RiskCheckRequest(
+        signal=build_signal(SignalAction.BUY),
+        avg_turnover_20d=20_000_000,
+        fundamental_score=0.20,
+        fundamental_available=True,
+        fundamental_pit_ok=True,
+    )
+    result = engine.evaluate(req)
+    assert result.blocked is True
+    assert result.level == SignalLevel.CRITICAL
+
+
+def test_fundamental_warning_keeps_manual_confirmation() -> None:
+    engine = build_engine()
+    req = RiskCheckRequest(
+        signal=build_signal(SignalAction.BUY),
+        avg_turnover_20d=20_000_000,
+        fundamental_score=0.45,
+        fundamental_available=True,
+        fundamental_pit_ok=True,
+    )
+    result = engine.evaluate(req)
+    assert result.blocked is False
+    assert result.level == SignalLevel.WARNING
+
+
+def test_fundamental_pit_failure_blocks_buy() -> None:
+    engine = build_engine()
+    req = RiskCheckRequest(
+        signal=build_signal(SignalAction.BUY),
+        avg_turnover_20d=20_000_000,
+        fundamental_score=0.80,
+        fundamental_available=True,
+        fundamental_pit_ok=False,
+    )
+    result = engine.evaluate(req)
+    assert result.blocked is True
+    assert result.level == SignalLevel.CRITICAL

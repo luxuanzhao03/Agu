@@ -796,7 +796,7 @@ function renderSignalRows() {
   if (!host) return;
   const preps = state.latestSignalPreps || [];
   if (!preps.length) {
-    host.innerHTML = '<tr><td colspan="8" class="muted">暂无信号结果。请先在“策略与参数页”运行信号生成。</td></tr>';
+    host.innerHTML = '<tr><td colspan="9" class="muted">暂无信号结果。请先在“策略与参数页”运行信号生成。</td></tr>';
     return;
   }
 
@@ -806,11 +806,15 @@ function renderSignalRows() {
       const signal = sheet.signal || {};
       const risk = sheet.risk || {};
       const signalId = signal.metadata && signal.metadata.signal_id ? String(signal.metadata.signal_id) : "-";
+      const fundamentalScore = signal.metadata && Number.isFinite(Number(signal.metadata.fundamental_score))
+        ? Number(signal.metadata.fundamental_score)
+        : null;
       return `<tr class="${active}" data-prep-idx="${idx}">
         <td>${esc(signal.symbol || "-")}</td>
         <td>${esc(signal.trade_date || "-")}</td>
         <td>${statusChip(signal.action || "WATCH")}</td>
         <td>${fmtPct(signal.confidence || 0, 2)}</td>
+        <td>${fundamentalScore === null ? "-" : fmtNum(fundamentalScore, 3)}</td>
         <td>${statusChip(risk.level || "INFO")}</td>
         <td>${risk.blocked ? statusChip("BLOCKED") : statusChip("PASS")}</td>
         <td>${esc(signal.reason || "-")}</td>
@@ -865,7 +869,7 @@ function renderResearchRows() {
     ? state.latestResearchResult.signals
     : [];
   if (!rows.length) {
-    host.innerHTML = '<tr><td colspan="8" class="muted">暂无研究候选结果。请先运行研究工作流。</td></tr>';
+    host.innerHTML = '<tr><td colspan="9" class="muted">暂无研究候选结果。请先运行研究工作流。</td></tr>';
     return;
   }
 
@@ -876,6 +880,7 @@ function renderResearchRows() {
       <td>${esc(r.provider)}</td>
       <td>${statusChip(r.action)}</td>
       <td>${fmtPct(r.confidence, 2)}</td>
+      <td>${r.fundamental_score === null || r.fundamental_score === undefined ? "-" : fmtNum(r.fundamental_score, 3)}</td>
       <td>${r.blocked ? statusChip("BLOCKED") : statusChip("PASS")}</td>
       <td>${statusChip(r.level)}</td>
       <td>${fmtNum(r.event_rows_used, 0)}</td>

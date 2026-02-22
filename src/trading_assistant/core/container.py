@@ -16,6 +16,7 @@ from trading_assistant.data.base import MarketDataProvider
 from trading_assistant.data.composite_provider import CompositeDataProvider
 from trading_assistant.data.tushare_provider import TushareProvider
 from trading_assistant.factors.engine import FactorEngine
+from trading_assistant.fundamentals.service import FundamentalService
 from trading_assistant.governance.event_connector_service import EventConnectorService
 from trading_assistant.governance.event_connector_store import EventConnectorStore
 from trading_assistant.governance.event_feature_compare import EventFeatureBacktestCompareService
@@ -93,6 +94,9 @@ def get_risk_engine() -> RiskEngine:
         max_drawdown=settings.max_drawdown,
         max_industry_exposure=settings.max_industry_exposure,
         min_turnover_20d=settings.min_turnover_20d,
+        fundamental_buy_warning_score=settings.fundamental_buy_warning_score,
+        fundamental_buy_critical_score=settings.fundamental_buy_critical_score,
+        fundamental_require_data_for_buy=settings.fundamental_require_data_for_buy,
     )
 
 
@@ -120,6 +124,7 @@ def get_pipeline_runner() -> DailyPipelineRunner:
     settings = get_settings()
     return DailyPipelineRunner(
         provider=get_data_provider(),
+        fundamental_service=get_fundamental_service(),
         factor_engine=get_factor_engine(),
         registry=get_strategy_registry(),
         risk_engine=get_risk_engine(),
@@ -131,6 +136,11 @@ def get_pipeline_runner() -> DailyPipelineRunner:
         license_service=get_data_license_service(),
         enforce_data_license=settings.enforce_data_license,
     )
+
+
+@lru_cache
+def get_fundamental_service() -> FundamentalService:
+    return FundamentalService(provider=get_data_provider())
 
 
 @lru_cache
@@ -251,6 +261,7 @@ def get_research_workflow_service() -> ResearchWorkflowService:
     settings = get_settings()
     return ResearchWorkflowService(
         provider=get_data_provider(),
+        fundamental_service=get_fundamental_service(),
         factor_engine=get_factor_engine(),
         registry=get_strategy_registry(),
         risk_engine=get_risk_engine(),

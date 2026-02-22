@@ -49,6 +49,19 @@ class OkProvider(MarketDataProvider):
     def get_security_status(self, symbol: str) -> dict[str, bool]:
         return {"is_st": False, "is_suspended": False}
 
+    def get_fundamental_snapshot(self, symbol: str, as_of: date) -> dict[str, object]:
+        return {
+            "report_date": date(2024, 12, 31),
+            "publish_date": date(2025, 1, 1),
+            "roe": 11.0,
+            "revenue_yoy": 12.0,
+            "net_profit_yoy": 16.0,
+            "gross_margin": 32.0,
+            "debt_to_asset": 45.0,
+            "ocf_to_profit": 1.0,
+            "eps": 0.7,
+        }
+
 
 def test_pipeline_runs_for_symbols(tmp_path: Path) -> None:
     provider = CompositeDataProvider([OkProvider()])
@@ -76,6 +89,8 @@ def test_pipeline_runs_for_symbols(tmp_path: Path) -> None:
     result = runner.run(req)
     assert len(result.results) == 2
     assert all(item.snapshot_id is not None for item in result.results)
+    assert all(item.fundamental_available for item in result.results)
+    assert all(item.fundamental_source == "ok" for item in result.results)
 
 
 def test_pipeline_blocks_when_license_enforced(tmp_path: Path) -> None:

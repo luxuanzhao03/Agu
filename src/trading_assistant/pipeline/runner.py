@@ -16,6 +16,7 @@ from trading_assistant.core.models import (
 from trading_assistant.data.composite_provider import CompositeDataProvider
 from trading_assistant.data.utils import dataframe_content_hash
 from trading_assistant.factors.engine import FactorEngine
+from trading_assistant.fundamentals.service import FundamentalService
 from trading_assistant.governance.data_quality import DataQualityService
 from trading_assistant.governance.event_service import EventService
 from trading_assistant.governance.license_service import DataLicenseService
@@ -41,8 +42,10 @@ class DailyPipelineRunner:
         event_service: EventService | None = None,
         license_service: DataLicenseService | None = None,
         enforce_data_license: bool = False,
+        fundamental_service: FundamentalService | None = None,
     ) -> None:
         self.provider = provider
+        self.fundamental_service = fundamental_service or FundamentalService(provider=provider)
         self.factor_engine = factor_engine
         self.registry = registry
         self.risk_engine = risk_engine
@@ -149,11 +152,20 @@ class DailyPipelineRunner:
                     lookback_days=req.event_lookback_days,
                     decay_half_life_days=req.event_decay_half_life_days,
                 )
+            fundamental_stats: dict[str, object] = {"available": False, "source": None}
+            if req.enable_fundamental_enrichment and self.fundamental_service is not None:
+                bars_for_features, fundamental_stats = self.fundamental_service.enrich_bars(
+                    symbol=symbol,
+                    bars=bars_for_features,
+                    as_of=req.end_date,
+                    max_staleness_days=req.fundamental_max_staleness_days,
+                )
 
             features = self.factor_engine.compute(bars_for_features)
             candidates = strategy.generate(features, StrategyContext(params=req.strategy_params))
             blocked_count = 0
             warning_count = 0
+            latest = features.sort_values("trade_date").iloc[-1]
             for signal in candidates:
                 risk_req = RiskCheckRequest(
                     signal=signal,
@@ -161,6 +173,16 @@ class DailyPipelineRunner:
                     is_suspended=bool(status.get("is_suspended", False)),
                     avg_turnover_20d=float(features.iloc[-1].get("turnover20", 0.0)),
                     symbol_industry=req.industry_map.get(symbol),
+                    fundamental_score=float(latest.get("fundamental_score", 0.5))
+                    if bool(latest.get("fundamental_available", False))
+                    else None,
+                    fundamental_available=bool(latest.get("fundamental_available", False)),
+                    fundamental_pit_ok=bool(latest.get("fundamental_pit_ok", True)),
+                    fundamental_stale_days=(
+                        int(latest.get("fundamental_stale_days", -1))
+                        if int(latest.get("fundamental_stale_days", -1)) >= 0
+                        else None
+                    ),
                 )
                 risk_result = self.risk_engine.evaluate(risk_req)
                 _ = self.signal_service.to_trade_prep_sheet(signal, risk_result)
@@ -179,6 +201,11 @@ class DailyPipelineRunner:
                     quality_passed=quality.passed,
                     snapshot_id=snapshot_id,
                     event_rows_used=int(event_stats.get("events_loaded", 0)),
+                    fundamental_available=bool(fundamental_stats.get("available", False)),
+                    fundamental_score=float(latest.get("fundamental_score", 0.5))
+                    if bool(latest.get("fundamental_available", False))
+                    else None,
+                    fundamental_source=str(fundamental_stats.get("source")) if fundamental_stats.get("source") else None,
                 )
             )
 
