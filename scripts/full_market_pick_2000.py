@@ -73,6 +73,7 @@ class ScanRow:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="One-click full market scan for CNY 2000 account")
+    parser.add_argument("--run-id", default="", help="run id for progress tracking")
     parser.add_argument(
         "--start-date",
         default=(date.today() - timedelta(days=240)).isoformat(),
@@ -94,6 +95,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-jsonl", default="reports/full_market_signals_2000.jsonl", help="output jsonl path")
     parser.add_argument("--output-summary", default="reports/full_market_summary_2000.json", help="output summary json path")
     parser.add_argument("--output-csv", default="reports/buy_candidates_2000.csv", help="output csv path")
+    parser.add_argument("--progress-file", default="", help="optional progress json path")
     parser.add_argument(
         "--keep-proxy",
         action="store_true",
@@ -680,6 +682,17 @@ def _write_summary_json(
     output_summary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _write_progress(progress_file: Path | None, payload: dict[str, Any]) -> None:
+    if progress_file is None:
+        return
+    try:
+        progress_file.parent.mkdir(parents=True, exist_ok=True)
+        progress_file.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        # progress write is best-effort and must not block scan
+        return
+
+
 def main() -> None:
     args = parse_args()
     start_date = _parse_date(args.start_date)
@@ -727,6 +740,8 @@ def main() -> None:
     output_jsonl = ROOT_DIR / args.output_jsonl
     output_summary = ROOT_DIR / args.output_summary
     output_csv = ROOT_DIR / args.output_csv
+    progress_file = (ROOT_DIR / args.progress_file) if str(args.progress_file or "").strip() else None
+    run_id = str(args.run_id or "").strip()
     output_jsonl.parent.mkdir(parents=True, exist_ok=True)
     output_summary.parent.mkdir(parents=True, exist_ok=True)
     output_csv.parent.mkdir(parents=True, exist_ok=True)
@@ -735,6 +750,23 @@ def main() -> None:
     total_buy_pass = 0
     total_errors = 0
     total = len(symbols)
+    started_at_iso = pd.Timestamp.utcnow().isoformat()
+    _write_progress(
+        progress_file,
+        {
+            "run_id": run_id or None,
+            "status": "RUNNING",
+            "total_symbols": int(total),
+            "scanned_symbols": 0,
+            "buy_pass_symbols": 0,
+            "error_symbols": 0,
+            "progress_pct": 0.0,
+            "started_at": started_at_iso,
+            "updated_at": started_at_iso,
+            "finished_at": None,
+            "message": "scan started",
+        },
+    )
     with output_jsonl.open("w", encoding="utf-8") as sink:
         for idx, symbol in enumerate(symbols, start=1):
             row = _scan_symbol(
@@ -758,6 +790,25 @@ def main() -> None:
                 total_errors += 1
             if _is_buy_candidate(row_dict):
                 total_buy_pass += 1
+            if idx % 20 == 0 or idx == total:
+                now_iso = pd.Timestamp.utcnow().isoformat()
+                _write_progress(
+                    progress_file,
+                    {
+                        "run_id": run_id or None,
+                        "status": "RUNNING",
+                        "total_symbols": int(total),
+                        "scanned_symbols": int(total_scanned),
+                        "buy_pass_symbols": int(total_buy_pass),
+                        "error_symbols": int(total_errors),
+                        "progress_pct": round(float(total_scanned) / max(float(total), 1.0) * 100.0, 2),
+                        "current_symbol": symbol,
+                        "started_at": started_at_iso,
+                        "updated_at": now_iso,
+                        "finished_at": None,
+                        "message": f"scanning {symbol}",
+                    },
+                )
             if idx % 50 == 0 or idx == total:
                 print(f"[progress] {idx}/{total} scanned, buy_pass={total_buy_pass}, errors={total_errors}")
             if sleep_sec > 0:
@@ -773,6 +824,23 @@ def main() -> None:
         top_rows=top_rows,
         output_jsonl=output_jsonl,
         output_csv=output_csv,
+    )
+    finished_at_iso = pd.Timestamp.utcnow().isoformat()
+    _write_progress(
+        progress_file,
+        {
+            "run_id": run_id or None,
+            "status": "COMPLETED",
+            "total_symbols": int(total_scanned),
+            "scanned_symbols": int(total_scanned),
+            "buy_pass_symbols": int(total_buy_pass),
+            "error_symbols": int(total_errors),
+            "progress_pct": 100.0,
+            "started_at": started_at_iso,
+            "updated_at": finished_at_iso,
+            "finished_at": finished_at_iso,
+            "message": "scan completed",
+        },
     )
 
     print(f"[done] jsonl  : {output_jsonl}")

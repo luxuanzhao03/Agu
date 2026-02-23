@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import time
 from datetime import date, datetime, timezone
 from pathlib import Path
+from threading import Lock
+from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -75,6 +78,172 @@ class FullMarket2000ScanResponse(BaseModel):
     top_candidates: list[FullMarket2000Candidate] = Field(default_factory=list)
 
 
+class FullMarket2000ScanProgressResponse(BaseModel):
+    run_id: str | None = None
+    status: str = "IDLE"
+    scanned_symbols: int = 0
+    total_symbols: int = 0
+    buy_pass_symbols: int = 0
+    error_symbols: int = 0
+    progress_pct: float = 0.0
+    started_at: datetime | None = None
+    updated_at: datetime | None = None
+    finished_at: datetime | None = None
+    message: str | None = None
+
+
+class FullMarket2000ScanCancelRequest(BaseModel):
+    run_id: str | None = None
+
+
+class FullMarket2000ScanCancelResponse(BaseModel):
+    run_id: str | None = None
+    status: str
+    message: str
+
+
+_FULL_MARKET_PROGRESS_LOCK = Lock()
+_FULL_MARKET_PROGRESS_STATE: dict[str, Any] = {
+    "run_id": None,
+    "status": "IDLE",
+    "scanned_symbols": 0,
+    "total_symbols": 0,
+    "buy_pass_symbols": 0,
+    "error_symbols": 0,
+    "progress_pct": 0.0,
+    "started_at": None,
+    "updated_at": None,
+    "finished_at": None,
+    "message": "idle",
+    "progress_path": None,
+}
+_FULL_MARKET_RUNTIME_LOCK = Lock()
+_FULL_MARKET_RUNTIME_STATE: dict[str, Any] = {
+    "run_id": None,
+    "process": None,
+    "cancel_requested": False,
+}
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return int(default)
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return float(default)
+
+
+def _set_full_market_progress(**updates: Any) -> None:
+    with _FULL_MARKET_PROGRESS_LOCK:
+        _FULL_MARKET_PROGRESS_STATE.update(updates)
+        if "updated_at" not in updates:
+            _FULL_MARKET_PROGRESS_STATE["updated_at"] = _utc_now()
+
+
+def _get_full_market_progress() -> dict[str, Any]:
+    with _FULL_MARKET_PROGRESS_LOCK:
+        return dict(_FULL_MARKET_PROGRESS_STATE)
+
+
+def _set_full_market_runtime(**updates: Any) -> None:
+    with _FULL_MARKET_RUNTIME_LOCK:
+        _FULL_MARKET_RUNTIME_STATE.update(updates)
+
+
+def _get_full_market_runtime() -> dict[str, Any]:
+    with _FULL_MARKET_RUNTIME_LOCK:
+        return dict(_FULL_MARKET_RUNTIME_STATE)
+
+
+def _clear_full_market_runtime(*, run_id: str | None = None) -> None:
+    with _FULL_MARKET_RUNTIME_LOCK:
+        if run_id is not None and _FULL_MARKET_RUNTIME_STATE.get("run_id") != run_id:
+            return
+        _FULL_MARKET_RUNTIME_STATE["run_id"] = None
+        _FULL_MARKET_RUNTIME_STATE["process"] = None
+        _FULL_MARKET_RUNTIME_STATE["cancel_requested"] = False
+
+
+def _terminate_process(proc: subprocess.Popen[str], timeout_sec: int = 8) -> None:
+    if proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=timeout_sec)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=timeout_sec)
+
+
+def _read_full_market_progress_file(progress_path: Path) -> dict[str, Any]:
+    if not progress_path.exists():
+        return {}
+    try:
+        payload = json.loads(progress_path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _merge_full_market_progress(base: dict[str, Any], from_file: dict[str, Any]) -> dict[str, Any]:
+    out = dict(base)
+    for key in (
+        "run_id",
+        "status",
+        "scanned_symbols",
+        "total_symbols",
+        "buy_pass_symbols",
+        "error_symbols",
+        "progress_pct",
+        "started_at",
+        "updated_at",
+        "finished_at",
+        "message",
+    ):
+        if key in from_file and from_file.get(key) is not None:
+            out[key] = from_file.get(key)
+
+    base_status = str(base.get("status") or "").upper()
+    if base_status in {"CANCELLING", "CANCELED", "FAILED", "TIMEOUT", "COMPLETED"}:
+        out["status"] = base_status
+        if base.get("message") is not None:
+            out["message"] = base.get("message")
+        if base.get("finished_at") is not None:
+            out["finished_at"] = base.get("finished_at")
+        if base.get("updated_at") is not None:
+            out["updated_at"] = base.get("updated_at")
+
+    total = max(0, _safe_int(out.get("total_symbols"), 0))
+    scanned = max(0, _safe_int(out.get("scanned_symbols"), 0))
+    buy_pass = max(0, _safe_int(out.get("buy_pass_symbols"), 0))
+    errors = max(0, _safe_int(out.get("error_symbols"), 0))
+    pct = _safe_float(out.get("progress_pct"), -1.0)
+    if pct < 0:
+        pct = round((float(scanned) / float(total) * 100.0), 2) if total > 0 else 0.0
+    pct = min(100.0, max(0.0, pct))
+
+    status = str(out.get("status") or "IDLE").upper()
+    if status == "COMPLETED":
+        pct = 100.0
+    out["status"] = status
+    out["total_symbols"] = total
+    out["scanned_symbols"] = scanned
+    out["buy_pass_symbols"] = buy_pass
+    out["error_symbols"] = errors
+    out["progress_pct"] = pct
+    return out
+
+
 def _resolve_project_root() -> Path:
     # .../src/trading_assistant/api/research.py -> project root
     return Path(__file__).resolve().parents[3]
@@ -124,13 +293,83 @@ def run_research_workflow(
     return result
 
 
+@router.get("/full-market-2000-scan/progress", response_model=FullMarket2000ScanProgressResponse)
+def get_full_market_2000_scan_progress(
+    _auth: AuthContext = Depends(require_roles(UserRole.RESEARCH, UserRole.PORTFOLIO, UserRole.RISK, UserRole.ADMIN)),
+) -> FullMarket2000ScanProgressResponse:
+    state = _get_full_market_progress()
+    progress_file_payload: dict[str, Any] = {}
+    progress_path_raw = state.get("progress_path")
+    if isinstance(progress_path_raw, str) and progress_path_raw:
+        progress_file_payload = _read_full_market_progress_file(Path(progress_path_raw))
+    merged = _merge_full_market_progress(state, progress_file_payload)
+    return FullMarket2000ScanProgressResponse(
+        run_id=merged.get("run_id"),
+        status=str(merged.get("status") or "IDLE"),
+        scanned_symbols=_safe_int(merged.get("scanned_symbols"), 0),
+        total_symbols=_safe_int(merged.get("total_symbols"), 0),
+        buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
+        error_symbols=_safe_int(merged.get("error_symbols"), 0),
+        progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
+        started_at=merged.get("started_at"),
+        updated_at=merged.get("updated_at"),
+        finished_at=merged.get("finished_at"),
+        message=(str(merged.get("message")) if merged.get("message") is not None else None),
+    )
+
+
+@router.post("/full-market-2000-scan/cancel", response_model=FullMarket2000ScanCancelResponse)
+def cancel_full_market_2000_scan(
+    req: FullMarket2000ScanCancelRequest,
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.RESEARCH, UserRole.PORTFOLIO, UserRole.RISK, UserRole.ADMIN)),
+) -> FullMarket2000ScanCancelResponse:
+    runtime = _get_full_market_runtime()
+    run_id = runtime.get("run_id")
+    proc = runtime.get("process")
+    if req.run_id and run_id and req.run_id != run_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"run_id mismatch: active_run_id={run_id}, requested_run_id={req.run_id}",
+        )
+
+    if run_id is None or proc is None or proc.poll() is not None:
+        progress_state = _get_full_market_progress()
+        status = str(progress_state.get("status") or "IDLE")
+        return FullMarket2000ScanCancelResponse(
+            run_id=progress_state.get("run_id"),
+            status=status,
+            message="no running full-market scan to cancel",
+        )
+
+    _set_full_market_runtime(cancel_requested=True)
+    now = _utc_now()
+    _set_full_market_progress(
+        run_id=run_id,
+        status="CANCELLING",
+        updated_at=now,
+        message="cancel requested by user",
+    )
+    audit.log(
+        event_type="research_workflow",
+        action="full_market_2000_scan_cancel",
+        payload={"run_id": run_id},
+        status="OK",
+    )
+    return FullMarket2000ScanCancelResponse(
+        run_id=run_id,
+        status="CANCELLING",
+        message="cancel request accepted",
+    )
+
+
 @router.post("/full-market-2000-scan", response_model=FullMarket2000ScanResponse)
 def run_full_market_2000_scan(
     req: FullMarket2000ScanRequest,
     audit: AuditService = Depends(get_audit_service),
     _auth: AuthContext = Depends(require_roles(UserRole.RESEARCH, UserRole.PORTFOLIO, UserRole.RISK, UserRole.ADMIN)),
 ) -> FullMarket2000ScanResponse:
-    started_at = datetime.now(timezone.utc)
+    started_at = _utc_now()
     run_id = uuid4().hex
 
     root = _resolve_project_root()
@@ -141,10 +380,37 @@ def run_full_market_2000_scan(
     output_summary = root / "reports" / f"full_market_summary_2000_{run_id}.json"
     output_jsonl = root / "reports" / f"full_market_signals_2000_{run_id}.jsonl"
     output_csv = root / "reports" / f"buy_candidates_2000_{run_id}.csv"
+    progress_path = root / "reports" / f"full_market_progress_2000_{run_id}.json"
+
+    active_runtime = _get_full_market_runtime()
+    active_run_id = active_runtime.get("run_id")
+    active_proc = active_runtime.get("process")
+    if active_run_id and active_proc is not None and active_proc.poll() is None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"another full-market scan is running (run_id={active_run_id}), cancel it first",
+        )
+
+    _set_full_market_progress(
+        run_id=run_id,
+        status="RUNNING",
+        scanned_symbols=0,
+        total_symbols=0,
+        buy_pass_symbols=0,
+        error_symbols=0,
+        progress_pct=0.0,
+        started_at=started_at,
+        updated_at=started_at,
+        finished_at=None,
+        message="scan started",
+        progress_path=str(progress_path),
+    )
 
     cmd = [
         sys.executable,
         str(script_path),
+        "--run-id",
+        run_id,
         "--start-date",
         req.start_date.isoformat(),
         "--end-date",
@@ -171,44 +437,190 @@ def run_full_market_2000_scan(
         str(output_jsonl.relative_to(root)),
         "--output-csv",
         str(output_csv.relative_to(root)),
+        "--progress-file",
+        str(progress_path.relative_to(root)),
     ]
 
+    proc: subprocess.Popen[str] | None = None
+    stdout_text = ""
+    stderr_text = ""
+    timeout_sec = max(60, int(req.timeout_minutes) * 60)
+    deadline = time.monotonic() + float(timeout_sec)
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
             cwd=str(root),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=max(60, int(req.timeout_minutes) * 60),
-            check=False,
         )
+        _set_full_market_runtime(run_id=run_id, process=proc, cancel_requested=False)
+        while proc.poll() is None:
+            runtime = _get_full_market_runtime()
+            cancel_requested = bool(runtime.get("cancel_requested")) and runtime.get("run_id") == run_id
+            if cancel_requested:
+                _terminate_process(proc)
+                stdout_text, stderr_text = proc.communicate()
+                latest_progress = _read_full_market_progress_file(progress_path)
+                merged = _merge_full_market_progress(_get_full_market_progress(), latest_progress)
+                finished_at = _utc_now()
+                _set_full_market_progress(
+                    run_id=run_id,
+                    status="CANCELED",
+                    scanned_symbols=_safe_int(merged.get("scanned_symbols"), 0),
+                    total_symbols=_safe_int(merged.get("total_symbols"), 0),
+                    buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
+                    error_symbols=_safe_int(merged.get("error_symbols"), 0),
+                    progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
+                    finished_at=finished_at,
+                    updated_at=finished_at,
+                    message="scan cancelled by user",
+                    progress_path=str(progress_path),
+                )
+                raise HTTPException(status_code=409, detail=f"scan cancelled by user (run_id={run_id})")
+
+            if time.monotonic() >= deadline:
+                _terminate_process(proc)
+                stdout_text, stderr_text = proc.communicate()
+                latest_progress = _read_full_market_progress_file(progress_path)
+                merged = _merge_full_market_progress(_get_full_market_progress(), latest_progress)
+                finished_at = _utc_now()
+                _set_full_market_progress(
+                    run_id=run_id,
+                    status="TIMEOUT",
+                    scanned_symbols=_safe_int(merged.get("scanned_symbols"), 0),
+                    total_symbols=_safe_int(merged.get("total_symbols"), 0),
+                    buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
+                    error_symbols=_safe_int(merged.get("error_symbols"), 0),
+                    progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
+                    finished_at=finished_at,
+                    updated_at=finished_at,
+                    message=f"scan timed out after {req.timeout_minutes} minutes",
+                    progress_path=str(progress_path),
+                )
+                raise HTTPException(status_code=504, detail=f"scan timed out after {req.timeout_minutes} minutes")
+
+            time.sleep(1.0)
+
+        stdout_text, stderr_text = proc.communicate()
+    except HTTPException:
+        raise
     except subprocess.TimeoutExpired as exc:
+        latest_progress = _read_full_market_progress_file(progress_path)
+        merged = _merge_full_market_progress(_get_full_market_progress(), latest_progress)
+        finished_at = _utc_now()
+        _set_full_market_progress(
+            run_id=run_id,
+            status="TIMEOUT",
+            scanned_symbols=_safe_int(merged.get("scanned_symbols"), 0),
+            total_symbols=_safe_int(merged.get("total_symbols"), 0),
+            buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
+            error_symbols=_safe_int(merged.get("error_symbols"), 0),
+            progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
+            finished_at=finished_at,
+            updated_at=finished_at,
+            message=f"scan timed out after {req.timeout_minutes} minutes",
+            progress_path=str(progress_path),
+        )
         raise HTTPException(status_code=504, detail=f"scan timed out after {req.timeout_minutes} minutes") from exc
     except Exception as exc:
+        if proc is not None and proc.poll() is None:
+            try:
+                _terminate_process(proc)
+                stdout_text, stderr_text = proc.communicate()
+            except Exception:
+                pass
+        latest_progress = _read_full_market_progress_file(progress_path)
+        merged = _merge_full_market_progress(_get_full_market_progress(), latest_progress)
+        finished_at = _utc_now()
+        _set_full_market_progress(
+            run_id=run_id,
+            status="FAILED",
+            scanned_symbols=_safe_int(merged.get("scanned_symbols"), 0),
+            total_symbols=_safe_int(merged.get("total_symbols"), 0),
+            buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
+            error_symbols=_safe_int(merged.get("error_symbols"), 0),
+            progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
+            finished_at=finished_at,
+            updated_at=finished_at,
+            message=f"failed to launch scan: {exc}",
+            progress_path=str(progress_path),
+        )
         raise HTTPException(status_code=500, detail=f"failed to launch scan: {exc}") from exc
+    finally:
+        _clear_full_market_runtime(run_id=run_id)
 
-    stdout_tail = _tail_text(proc.stdout)
-    stderr_tail = _tail_text(proc.stderr)
-    if proc.returncode != 0:
+    stdout_tail = _tail_text(stdout_text)
+    stderr_tail = _tail_text(stderr_text)
+    proc_returncode = proc.returncode if proc is not None else -1
+    if proc_returncode != 0:
+        latest_progress = _read_full_market_progress_file(progress_path)
+        merged = _merge_full_market_progress(_get_full_market_progress(), latest_progress)
+        finished_at = _utc_now()
+        _set_full_market_progress(
+            run_id=run_id,
+            status="FAILED",
+            scanned_symbols=_safe_int(merged.get("scanned_symbols"), 0),
+            total_symbols=_safe_int(merged.get("total_symbols"), 0),
+            buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
+            error_symbols=_safe_int(merged.get("error_symbols"), 0),
+            progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
+            finished_at=finished_at,
+            updated_at=finished_at,
+            message=f"scan failed (return_code={proc_returncode})",
+            progress_path=str(progress_path),
+        )
         raise HTTPException(
             status_code=500,
             detail=(
                 "full-market scan failed.\n"
-                f"return_code={proc.returncode}\n"
+                f"return_code={proc_returncode}\n"
                 f"stdout_tail:\n{stdout_tail}\n"
                 f"stderr_tail:\n{stderr_tail}"
             ),
         )
 
     if not output_summary.exists():
+        latest_progress = _read_full_market_progress_file(progress_path)
+        merged = _merge_full_market_progress(_get_full_market_progress(), latest_progress)
+        finished_at = _utc_now()
+        _set_full_market_progress(
+            run_id=run_id,
+            status="FAILED",
+            scanned_symbols=_safe_int(merged.get("scanned_symbols"), 0),
+            total_symbols=_safe_int(merged.get("total_symbols"), 0),
+            buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
+            error_symbols=_safe_int(merged.get("error_symbols"), 0),
+            progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
+            finished_at=finished_at,
+            updated_at=finished_at,
+            message="scan finished but summary missing",
+            progress_path=str(progress_path),
+        )
         raise HTTPException(status_code=500, detail=f"scan finished but summary missing: {output_summary}")
 
     try:
         summary = json.loads(output_summary.read_text(encoding="utf-8"))
     except Exception as exc:
+        latest_progress = _read_full_market_progress_file(progress_path)
+        merged = _merge_full_market_progress(_get_full_market_progress(), latest_progress)
+        finished_at = _utc_now()
+        _set_full_market_progress(
+            run_id=run_id,
+            status="FAILED",
+            scanned_symbols=_safe_int(merged.get("scanned_symbols"), 0),
+            total_symbols=_safe_int(merged.get("total_symbols"), 0),
+            buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
+            error_symbols=_safe_int(merged.get("error_symbols"), 0),
+            progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
+            finished_at=finished_at,
+            updated_at=finished_at,
+            message=f"failed to parse scan summary: {exc}",
+            progress_path=str(progress_path),
+        )
         raise HTTPException(status_code=500, detail=f"failed to parse scan summary: {exc}") from exc
 
-    finished_at = datetime.now(timezone.utc)
+    finished_at = _utc_now()
     top_candidates = list(summary.get("top_candidates") or [])
 
     response = FullMarket2000ScanResponse(
@@ -225,6 +637,20 @@ def run_full_market_2000_scan(
         csv_path=str(output_csv),
         jsonl_path=str(output_jsonl),
         top_candidates=[FullMarket2000Candidate(**item) for item in top_candidates],
+    )
+    _set_full_market_progress(
+        run_id=run_id,
+        status="COMPLETED",
+        scanned_symbols=response.total_symbols,
+        total_symbols=response.total_symbols,
+        buy_pass_symbols=response.buy_pass_symbols,
+        error_symbols=response.error_symbols,
+        progress_pct=100.0,
+        started_at=started_at,
+        updated_at=finished_at,
+        finished_at=finished_at,
+        message="scan completed",
+        progress_path=str(progress_path),
     )
 
     audit.log(
@@ -244,6 +670,7 @@ def run_full_market_2000_scan(
             "summary_path": response.summary_path,
             "csv_path": response.csv_path,
             "jsonl_path": response.jsonl_path,
+            "progress_path": str(progress_path),
             "stdout_tail": stdout_tail,
             "stderr_tail": stderr_tail,
         },

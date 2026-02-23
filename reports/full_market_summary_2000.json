@@ -1,9 +1,0 @@
-{
-  "generated_at": "2026-02-23T06:23:08.999045+00:00",
-  "total_symbols": 1,
-  "buy_pass_symbols": 0,
-  "error_symbols": 0,
-  "jsonl_path": "D:\\lianghua\\trading\\reports\\full_market_signals_2000.jsonl",
-  "csv_path": "D:\\lianghua\\trading\\reports\\buy_candidates_2000.csv",
-  "top_candidates": []
-}

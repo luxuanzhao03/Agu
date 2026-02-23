@@ -27,6 +27,7 @@ def test_trading_workbench_ui_route() -> None:
     assert "runDataFetchPrefetchBtn" in resp.text
     assert "runDataFetchAllBtn" in resp.text
     assert "runFullMarket2000ScanBtn" in resp.text
+    assert "cancelFullMarket2000ScanBtn" in resp.text
     assert "dataFetchCapabilityRows" in resp.text
     assert "dataFetchPrefetchRows" in resp.text
     assert "fullMarket2000ScanRows" in resp.text
@@ -63,7 +64,12 @@ def test_trading_workbench_ui_route() -> None:
     assert "runDataFetchAll" in js.text
     assert "buildFullMarket2000ScanRequest" in js.text
     assert "runFullMarket2000Scan" in js.text
+    assert "cancelFullMarket2000Scan" in js.text
+    assert "syncFullMarket2000ScanActionButtons" in js.text
     assert "renderFullMarket2000Scan" in js.text
+    assert "loadFullMarket2000ScanProgress" in js.text
+    assert "/research/full-market-2000-scan/progress" in js.text
+    assert "/research/full-market-2000-scan/cancel" in js.text
     assert "loadDataFetchTushareCapabilities" in js.text
     assert "runDataFetchTusharePrefetch" in js.text
     assert "renderDataFetchWorkbench" in js.text
