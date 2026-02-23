@@ -4,11 +4,15 @@ import argparse
 import csv
 import json
 import math
+import multiprocessing as mp
 import os
+import socket
 import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import date, timedelta
+from multiprocessing import TimeoutError as MPTimeoutError
+from multiprocessing.pool import Pool
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +75,100 @@ class ScanRow:
     error: str | None = None
 
 
+_WORKER_CONTEXT: dict[str, Any] = {}
+
+
+def _set_global_network_timeout(timeout_sec: float) -> None:
+    if timeout_sec > 0:
+        socket.setdefaulttimeout(float(timeout_sec))
+
+
+def _build_providers(token: str) -> list[MarketDataProvider]:
+    providers: list[MarketDataProvider] = []
+    try:
+        providers.append(TushareProvider(token=token))
+    except Exception as exc:
+        print(f"[warn] tushare init failed: {exc}")
+    try:
+        providers.append(AkshareProvider())
+    except Exception as exc:
+        print(f"[warn] akshare init failed: {exc}")
+    return providers
+
+
+def _init_scan_worker(config: dict[str, Any]) -> None:
+    global _WORKER_CONTEXT
+    token = str(config["token"])
+    keep_proxy = bool(config.get("keep_proxy", False))
+    if not keep_proxy:
+        _clear_proxy_env()
+    _set_global_network_timeout(float(config.get("network_timeout_sec", 12.0)))
+
+    providers = _build_providers(token=token)
+    if not providers:
+        raise RuntimeError("no data provider available in worker")
+
+    _WORKER_CONTEXT = {
+        "providers": providers,
+        "factor_engine": FactorEngine(),
+        "strategy": SmallCapitalAdaptiveStrategy(),
+        "risk_engine": RiskEngine(
+            max_single_position=float(config["max_single_position"]),
+            max_drawdown=0.12,
+            max_industry_exposure=0.20,
+            min_turnover_20d=5_000_000,
+        ),
+        "start_date": _parse_date(str(config["start_date"])),
+        "end_date": _parse_date(str(config["end_date"])),
+        "principal": float(config["principal"]),
+        "lot_size": int(config["lot_size"]),
+        "cash_buffer_ratio": float(config["cash_buffer_ratio"]),
+        "max_single_position": float(config["max_single_position"]),
+        "min_edge_bps": float(config["min_edge_bps"]),
+    }
+
+
+def _scan_symbol_in_worker(symbol: str) -> dict[str, Any]:
+    ctx = _WORKER_CONTEXT
+    if not ctx:
+        raise RuntimeError("worker context not initialized")
+    row = _scan_symbol(
+        symbol=symbol,
+        start_date=ctx["start_date"],
+        end_date=ctx["end_date"],
+        providers=ctx["providers"],
+        factor_engine=ctx["factor_engine"],
+        strategy=ctx["strategy"],
+        risk_engine=ctx["risk_engine"],
+        principal=ctx["principal"],
+        lot_size=ctx["lot_size"],
+        cash_buffer_ratio=ctx["cash_buffer_ratio"],
+        max_single_position=ctx["max_single_position"],
+        min_edge_bps=ctx["min_edge_bps"],
+    )
+    return asdict(row)
+
+
+def _build_timeout_row(symbol: str, timeout_sec: float) -> ScanRow:
+    return ScanRow(
+        symbol=symbol,
+        provider="-",
+        action="TIMEOUT",
+        confidence=0.0,
+        blocked=True,
+        risk_level="WARNING",
+        close=None,
+        suggested_position=None,
+        suggested_lots=0,
+        max_buy_price=None,
+        buy_price_low=None,
+        buy_price_high=None,
+        reason=f"symbol timeout ({timeout_sec:.1f}s), skipped",
+        small_capital_note=None,
+        error=f"symbol timeout after {timeout_sec:.1f}s",
+    )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="One-click full market scan for CNY 2000 account")
     parser.add_argument("--run-id", default="", help="run id for progress tracking")
@@ -89,6 +187,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--cash-buffer-ratio", type=float, default=0.10, help="cash buffer ratio")
     parser.add_argument("--max-single-position", type=float, default=0.60, help="max single position ratio")
     parser.add_argument("--min-edge-bps", type=float, default=140.0, help="minimum expected edge bps")
+    parser.add_argument(
+        "--symbol-timeout-sec",
+        type=float,
+        default=45.0,
+        help="per-symbol timeout seconds; timeout symbols are skipped",
+    )
+    parser.add_argument(
+        "--network-timeout-sec",
+        type=float,
+        default=12.0,
+        help="global socket timeout seconds for external data calls",
+    )
     parser.add_argument("--max-symbols", type=int, default=0, help="0 means all symbols")
     parser.add_argument("--sleep-ms", type=int, default=0, help="sleep milliseconds between symbols")
     parser.add_argument("--top-n", type=int, default=30, help="top candidate count for csv")
@@ -665,6 +775,7 @@ def _write_summary_json(
     total: int,
     buy_pass: int,
     errors: int,
+    timeouts: int,
     top_rows: list[dict[str, Any]],
     output_jsonl: Path,
     output_csv: Path,
@@ -675,6 +786,7 @@ def _write_summary_json(
         "total_symbols": int(total),
         "buy_pass_symbols": int(buy_pass),
         "error_symbols": int(errors),
+        "timeout_symbols": int(timeouts),
         "jsonl_path": str(output_jsonl),
         "csv_path": str(output_csv),
         "top_candidates": top_rows,
@@ -711,30 +823,64 @@ def main() -> None:
     if not token:
         raise RuntimeError("TUSHARE_TOKEN missing (set env or .env)")
 
-    providers: list[MarketDataProvider] = []
-    try:
-        providers.append(TushareProvider(token=token))
-    except Exception as exc:
-        print(f"[warn] tushare init failed: {exc}")
-    try:
-        providers.append(AkshareProvider())
-    except Exception as exc:
-        print(f"[warn] akshare init failed: {exc}")
-    if not providers:
-        raise RuntimeError("no data provider available")
+    _set_global_network_timeout(float(max(0.1, float(args.network_timeout_sec))))
 
     print("[info] loading stock universe ...")
     symbols = _load_universe(token=token, max_symbols=max(0, int(args.max_symbols)))
     print(f"[info] universe size: {len(symbols)}")
 
-    factor_engine = FactorEngine()
-    strategy = SmallCapitalAdaptiveStrategy()
-    risk_engine = RiskEngine(
-        max_single_position=float(args.max_single_position),
-        max_drawdown=0.12,
-        max_industry_exposure=0.20,
-        min_turnover_20d=5_000_000,
-    )
+    symbol_timeout_sec = float(max(5.0, float(args.symbol_timeout_sec)))
+    worker_config = {
+        "token": token,
+        "keep_proxy": bool(args.keep_proxy),
+        "network_timeout_sec": float(max(0.1, float(args.network_timeout_sec))),
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "principal": float(args.principal),
+        "lot_size": int(args.lot_size),
+        "cash_buffer_ratio": float(args.cash_buffer_ratio),
+        "max_single_position": float(args.max_single_position),
+        "min_edge_bps": float(args.min_edge_bps),
+    }
+
+    mp_ctx = mp.get_context("spawn")
+
+    def _open_worker_pool() -> Pool:
+        return mp_ctx.Pool(
+            processes=1,
+            initializer=_init_scan_worker,
+            initargs=(worker_config,),
+        )
+
+    worker_pool: Pool | None = None
+    fallback_mode = False
+    fallback_note: str | None = None
+    fallback_providers: list[MarketDataProvider] | None = None
+    fallback_factor_engine: FactorEngine | None = None
+    fallback_strategy: SmallCapitalAdaptiveStrategy | None = None
+    fallback_risk_engine: RiskEngine | None = None
+    try:
+        worker_pool = _open_worker_pool()
+    except Exception as exc:
+        fallback_mode = True
+        fallback_note = (
+            "worker pool unavailable; fallback to in-process scan, "
+            "hard symbol timeout disabled"
+        )
+        print(f"[warn] {fallback_note}: {exc}")
+
+    if fallback_mode:
+        fallback_providers = _build_providers(token=token)
+        if not fallback_providers:
+            raise RuntimeError("no data provider available")
+        fallback_factor_engine = FactorEngine()
+        fallback_strategy = SmallCapitalAdaptiveStrategy()
+        fallback_risk_engine = RiskEngine(
+            max_single_position=float(args.max_single_position),
+            max_drawdown=0.12,
+            max_industry_exposure=0.20,
+            min_turnover_20d=5_000_000,
+        )
 
     sleep_sec = max(0, int(args.sleep_ms)) / 1000.0
     output_jsonl = ROOT_DIR / args.output_jsonl
@@ -749,6 +895,7 @@ def main() -> None:
     total_scanned = 0
     total_buy_pass = 0
     total_errors = 0
+    total_timeouts = 0
     total = len(symbols)
     started_at_iso = pd.Timestamp.utcnow().isoformat()
     _write_progress(
@@ -760,6 +907,7 @@ def main() -> None:
             "scanned_symbols": 0,
             "buy_pass_symbols": 0,
             "error_symbols": 0,
+            "timeout_symbols": 0,
             "progress_pct": 0.0,
             "started_at": started_at_iso,
             "updated_at": started_at_iso,
@@ -767,30 +915,99 @@ def main() -> None:
             "message": "scan started",
         },
     )
-    with output_jsonl.open("w", encoding="utf-8") as sink:
-        for idx, symbol in enumerate(symbols, start=1):
-            row = _scan_symbol(
-                symbol=symbol,
-                start_date=start_date,
-                end_date=end_date,
-                providers=providers,
-                factor_engine=factor_engine,
-                strategy=strategy,
-                risk_engine=risk_engine,
-                principal=float(args.principal),
-                lot_size=int(args.lot_size),
-                cash_buffer_ratio=float(args.cash_buffer_ratio),
-                max_single_position=float(args.max_single_position),
-                min_edge_bps=float(args.min_edge_bps),
-            )
-            row_dict = asdict(row)
-            sink.write(json.dumps(row_dict, ensure_ascii=False) + "\n")
-            total_scanned += 1
-            if row.error is not None:
-                total_errors += 1
-            if _is_buy_candidate(row_dict):
-                total_buy_pass += 1
-            if idx % 20 == 0 or idx == total:
+    try:
+        with output_jsonl.open("w", encoding="utf-8") as sink:
+            for idx, symbol in enumerate(symbols, start=1):
+                row_dict: dict[str, Any]
+                try:
+                    if worker_pool is None:
+                        if (
+                            fallback_providers is None
+                            or fallback_factor_engine is None
+                            or fallback_strategy is None
+                            or fallback_risk_engine is None
+                        ):
+                            raise RuntimeError("fallback context unavailable")
+                        row = _scan_symbol(
+                            symbol=symbol,
+                            start_date=start_date,
+                            end_date=end_date,
+                            providers=fallback_providers,
+                            factor_engine=fallback_factor_engine,
+                            strategy=fallback_strategy,
+                            risk_engine=fallback_risk_engine,
+                            principal=float(args.principal),
+                            lot_size=int(args.lot_size),
+                            cash_buffer_ratio=float(args.cash_buffer_ratio),
+                            max_single_position=float(args.max_single_position),
+                            min_edge_bps=float(args.min_edge_bps),
+                        )
+                        row_dict = asdict(row)
+                    else:
+                        async_res = worker_pool.apply_async(_scan_symbol_in_worker, args=(symbol,))
+                        row_dict = async_res.get(timeout=symbol_timeout_sec)
+                except MPTimeoutError:
+                    timeout_row = _build_timeout_row(symbol=symbol, timeout_sec=symbol_timeout_sec)
+                    row_dict = asdict(timeout_row)
+                    try:
+                        worker_pool.terminate()
+                        worker_pool.join()
+                    except Exception:
+                        pass
+                    try:
+                        worker_pool = _open_worker_pool()
+                    except Exception as pool_exc:
+                        worker_pool = None
+                        fallback_mode = True
+                        fallback_note = (
+                            "worker pool restart failed; fallback to in-process scan, "
+                            "hard symbol timeout disabled"
+                        )
+                        print(f"[warn] {fallback_note}: {pool_exc}")
+                        if fallback_providers is None:
+                            fallback_providers = _build_providers(token=token)
+                        if not fallback_providers:
+                            raise RuntimeError("no data provider available")
+                        if fallback_factor_engine is None:
+                            fallback_factor_engine = FactorEngine()
+                        if fallback_strategy is None:
+                            fallback_strategy = SmallCapitalAdaptiveStrategy()
+                        if fallback_risk_engine is None:
+                            fallback_risk_engine = RiskEngine(
+                                max_single_position=float(args.max_single_position),
+                                max_drawdown=0.12,
+                                max_industry_exposure=0.20,
+                                min_turnover_20d=5_000_000,
+                            )
+                except Exception as exc:
+                    row_dict = asdict(
+                        ScanRow(
+                            symbol=symbol,
+                            provider="-",
+                            action="ERROR",
+                            confidence=0.0,
+                            blocked=True,
+                            risk_level="CRITICAL",
+                            close=None,
+                            suggested_position=None,
+                            suggested_lots=0,
+                            max_buy_price=None,
+                            buy_price_low=None,
+                            buy_price_high=None,
+                            reason="scan worker failed",
+                            small_capital_note=None,
+                            error=str(exc),
+                        )
+                    )
+
+                sink.write(json.dumps(row_dict, ensure_ascii=False) + "\n")
+                total_scanned += 1
+                if str(row_dict.get("action", "")).upper() == "TIMEOUT":
+                    total_timeouts += 1
+                elif row_dict.get("error") is not None:
+                    total_errors += 1
+                if _is_buy_candidate(row_dict):
+                    total_buy_pass += 1
                 now_iso = pd.Timestamp.utcnow().isoformat()
                 _write_progress(
                     progress_file,
@@ -801,18 +1018,33 @@ def main() -> None:
                         "scanned_symbols": int(total_scanned),
                         "buy_pass_symbols": int(total_buy_pass),
                         "error_symbols": int(total_errors),
+                        "timeout_symbols": int(total_timeouts),
                         "progress_pct": round(float(total_scanned) / max(float(total), 1.0) * 100.0, 2),
                         "current_symbol": symbol,
                         "started_at": started_at_iso,
                         "updated_at": now_iso,
                         "finished_at": None,
-                        "message": f"scanning {symbol}",
+                        "message": f"scanning {symbol}" if not fallback_mode else f"scanning {symbol} ({fallback_note})",
                     },
                 )
-            if idx % 50 == 0 or idx == total:
-                print(f"[progress] {idx}/{total} scanned, buy_pass={total_buy_pass}, errors={total_errors}")
-            if sleep_sec > 0:
-                time.sleep(sleep_sec)
+                if idx % 50 == 0 or idx == total:
+                    print(
+                        f"[progress] {idx}/{total} scanned, buy_pass={total_buy_pass}, "
+                        f"errors={total_errors}, timeouts={total_timeouts}"
+                    )
+                if sleep_sec > 0:
+                    time.sleep(sleep_sec)
+    finally:
+        if worker_pool is not None:
+            try:
+                worker_pool.close()
+                worker_pool.join()
+            except Exception:
+                try:
+                    worker_pool.terminate()
+                    worker_pool.join()
+                except Exception:
+                    pass
 
     top_rows = _collect_top_candidates_from_jsonl(jsonl_path=output_jsonl, top_n=int(args.top_n))
     _write_top_csv(top_rows=top_rows, output_csv=output_csv)
@@ -821,6 +1053,7 @@ def main() -> None:
         total=total_scanned,
         buy_pass=total_buy_pass,
         errors=total_errors,
+        timeouts=total_timeouts,
         top_rows=top_rows,
         output_jsonl=output_jsonl,
         output_csv=output_csv,
@@ -835,6 +1068,7 @@ def main() -> None:
             "scanned_symbols": int(total_scanned),
             "buy_pass_symbols": int(total_buy_pass),
             "error_symbols": int(total_errors),
+            "timeout_symbols": int(total_timeouts),
             "progress_pct": 100.0,
             "started_at": started_at_iso,
             "updated_at": finished_at_iso,

@@ -20,7 +20,7 @@ class EventDrivenStrategy(BaseStrategy):
             return []
 
         context = context or StrategyContext()
-        latest = features.sort_values("trade_date").iloc[-1]
+        latest = features.iloc[-1]
 
         event_score = float(context.params.get("event_score", latest.get("event_score", 0.0)))
         negative_event = float(context.params.get("negative_event_score", latest.get("negative_event_score", 0.0)))

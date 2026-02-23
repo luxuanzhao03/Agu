@@ -24,7 +24,7 @@ class MeanReversionStrategy(BaseStrategy):
         z_exit = float(context.params.get("z_exit", 0.0))
         min_turnover = float(context.params.get("min_turnover", 5_000_000.0))
 
-        latest = features.sort_values("trade_date").iloc[-1]
+        latest = features.iloc[-1]
         z = float(latest.get("zscore20", 0.0))
         turnover = float(latest.get("turnover20", 0.0))
         fundamental_available = bool(latest.get("fundamental_available", False))

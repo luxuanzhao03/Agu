@@ -72,7 +72,7 @@ class SmallCapitalAdaptiveStrategy(BaseStrategy):
         min_commission_cny = float(market.get("min_commission_cny", 5.0))
         transfer_fee_rate = float(market.get("transfer_fee_rate", 0.00001))
 
-        latest = features.sort_values("trade_date").iloc[-1]
+        latest = features.iloc[-1]
         close = max(0.0, float(latest.get("close", 0.0)))
         ma20 = float(latest.get("ma20", close))
         ma60 = float(latest.get("ma60", ma20))

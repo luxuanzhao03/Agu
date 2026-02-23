@@ -128,3 +128,35 @@ def test_backtest_keeps_equity_points_even_without_daily_signals() -> None:
     )
     result = engine.run(bars, req=req, strategy=SparseStrategy())
     assert len(result.equity_curve) == len(bars)
+
+
+def test_backtest_precomputed_features_keeps_results_consistent() -> None:
+    risk_engine = RiskEngine(
+        max_single_position=0.2,
+        max_drawdown=0.5,
+        max_industry_exposure=0.5,
+        min_turnover_20d=1000,
+    )
+    bars = build_bars()
+    engine = BacktestEngine(factor_engine=FactorEngine(), risk_engine=risk_engine)
+    req = BacktestRequest(
+        symbol="000001",
+        start_date=date(2025, 1, 2),
+        end_date=date(2025, 1, 9),
+        strategy_name="toggle",
+        initial_cash=100000,
+        max_single_position=0.2,
+    )
+    baseline = engine.run(bars, req=req, strategy=ToggleStrategy())
+    precomputed = engine.factor_engine.compute(bars.sort_values("trade_date").reset_index(drop=True))
+    optimized = engine.run(
+        bars,
+        req=req,
+        strategy=ToggleStrategy(),
+        precomputed_features=precomputed,
+    )
+    assert optimized.metrics.model_dump() == baseline.metrics.model_dump()
+    assert [item.model_dump() for item in optimized.trades] == [item.model_dump() for item in baseline.trades]
+    assert [item.model_dump() for item in optimized.equity_curve] == [
+        item.model_dump() for item in baseline.equity_curve
+    ]

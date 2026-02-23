@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import itertools
 import json
 import statistics
@@ -220,6 +221,17 @@ class AutoTuneService:
             min_validation_bars=req.min_validation_bars,
         )
         has_validation = validation_bars is not None and (not validation_bars.empty)
+        supports_precomputed = self._backtest_supports_precomputed_features()
+        train_features = (
+            self.backtest_engine.factor_engine.compute(train_bars)
+            if supports_precomputed
+            else None
+        )
+        validation_features = (
+            self.backtest_engine.factor_engine.compute(validation_bars)
+            if (supports_precomputed and has_validation and validation_bars is not None and (not validation_bars.empty))
+            else None
+        )
 
         param_candidates = self._build_candidate_params(req=req, params_schema=strategy.info.params_schema)
         if not param_candidates:
@@ -230,8 +242,11 @@ class AutoTuneService:
             strategy=strategy,
             train_bars=train_bars,
             validation_bars=validation_bars,
+            train_features=train_features,
+            validation_features=validation_features,
             params=dict(req.base_strategy_params),
             has_validation=has_validation,
+            supports_precomputed=supports_precomputed,
         )
 
         candidate_results: list[AutoTuneCandidateResult] = []
@@ -241,8 +256,11 @@ class AutoTuneService:
                 strategy=strategy,
                 train_bars=train_bars,
                 validation_bars=validation_bars,
+                train_features=train_features,
+                validation_features=validation_features,
                 params=params,
                 has_validation=has_validation,
+                supports_precomputed=supports_precomputed,
             )
             candidate_results.append(item)
 
@@ -251,6 +269,7 @@ class AutoTuneService:
             strategy=strategy,
             bars=train_bars,
             candidate_results=candidate_results,
+            supports_precomputed=supports_precomputed,
         )
         candidate_results.sort(key=lambda x: (x.objective_score, x.train_score), reverse=True)
         ranked: list[AutoTuneCandidateResult] = []
@@ -364,8 +383,11 @@ class AutoTuneService:
         strategy,
         train_bars: pd.DataFrame,
         validation_bars: pd.DataFrame | None,
+        train_features: pd.DataFrame | None,
+        validation_features: pd.DataFrame | None,
         params: dict[str, float | int | str | bool],
         has_validation: bool,
+        supports_precomputed: bool,
     ) -> AutoTuneCandidateResult:
         train_req = BacktestRequest(
             symbol=req.symbol,
@@ -392,7 +414,13 @@ class AutoTuneService:
             impact_cost_exponent=req.impact_cost_exponent,
             fill_probability_floor=req.fill_probability_floor,
         )
-        train_result = self.backtest_engine.run(train_bars, train_req, strategy)
+        train_result = self._run_backtest(
+            bars=train_bars,
+            req=train_req,
+            strategy=strategy,
+            precomputed_features=train_features,
+            supports_precomputed=supports_precomputed,
+        )
         train_score = self._objective_score(metrics=train_result.metrics, req=req)
         if train_result.metrics.trade_count < req.min_trade_count:
             train_score -= req.low_trade_penalty
@@ -406,7 +434,13 @@ class AutoTuneService:
                     "end_date": self._bars_end(validation_bars, req.end_date),
                 }
             )
-            validation_result = self.backtest_engine.run(validation_bars, validation_req, strategy)
+            validation_result = self._run_backtest(
+                bars=validation_bars,
+                req=validation_req,
+                strategy=strategy,
+                precomputed_features=validation_features,
+                supports_precomputed=supports_precomputed,
+            )
             validation_score = self._objective_score(metrics=validation_result.metrics, req=req)
             if validation_result.metrics.trade_count < req.min_trade_count:
                 validation_score -= req.low_trade_penalty
@@ -447,6 +481,7 @@ class AutoTuneService:
         strategy,
         bars: pd.DataFrame,
         candidate_results: list[AutoTuneCandidateResult],
+        supports_precomputed: bool,
     ) -> None:
         if not candidate_results:
             return
@@ -460,6 +495,20 @@ class AutoTuneService:
             self._params_hash(item.strategy_params): item for item in ordered[:top_n]
         }
         fold_scores_by_token: dict[str, list[float]] = {}
+        windows = self._walk_forward_validation_slices(
+            bars=bars,
+            slices=req.walk_forward_slices,
+            min_train_bars=max(20, min(req.min_train_bars, 240)),
+            min_validation_bars=max(10, min(req.min_validation_bars, 120)),
+            validation_ratio=req.validation_ratio,
+        )
+        if not windows:
+            return
+        window_features = (
+            [self.backtest_engine.factor_engine.compute(item) for item in windows]
+            if supports_precomputed
+            else None
+        )
 
         for idx, item in enumerate(candidate_results):
             token = self._params_hash(item.strategy_params)
@@ -471,6 +520,9 @@ class AutoTuneService:
                 strategy=strategy,
                 bars=bars,
                 params=item.strategy_params,
+                windows=windows,
+                window_features=window_features,
+                supports_precomputed=supports_precomputed,
             )
             fold_scores_by_token[token] = fold_scores
             sample_count = len(fold_scores)
@@ -535,8 +587,11 @@ class AutoTuneService:
         strategy,
         bars: pd.DataFrame,
         params: dict[str, float | int | str | bool],
+        windows: list[pd.DataFrame] | None = None,
+        window_features: list[pd.DataFrame] | None = None,
+        supports_precomputed: bool = False,
     ) -> tuple[list[float], list[float]]:
-        windows = self._walk_forward_validation_slices(
+        windows = windows or self._walk_forward_validation_slices(
             bars=bars,
             slices=req.walk_forward_slices,
             min_train_bars=max(20, min(req.min_train_bars, 240)),
@@ -548,7 +603,7 @@ class AutoTuneService:
 
         scores: list[float] = []
         returns: list[float] = []
-        for validation_bars in windows:
+        for idx, validation_bars in enumerate(windows):
             fold_req = BacktestRequest(
                 symbol=req.symbol,
                 start_date=self._bars_start(validation_bars, req.start_date),
@@ -574,7 +629,18 @@ class AutoTuneService:
                 impact_cost_exponent=req.impact_cost_exponent,
                 fill_probability_floor=req.fill_probability_floor,
             )
-            fold_result = self.backtest_engine.run(validation_bars, fold_req, strategy)
+            precomputed = (
+                window_features[idx]
+                if (window_features is not None and idx < len(window_features))
+                else None
+            )
+            fold_result = self._run_backtest(
+                bars=validation_bars,
+                req=fold_req,
+                strategy=strategy,
+                precomputed_features=precomputed,
+                supports_precomputed=supports_precomputed,
+            )
             fold_score = self._objective_score(metrics=fold_result.metrics, req=req)
             if fold_result.metrics.trade_count < req.min_trade_count:
                 fold_score -= req.low_trade_penalty
@@ -668,6 +734,34 @@ class AutoTuneService:
         if reasons:
             return False, "guard_blocked: " + "; ".join(reasons)
         return True, "eligible"
+
+    def _backtest_supports_precomputed_features(self) -> bool:
+        run_fn = self.backtest_engine.run
+        try:
+            params = inspect.signature(run_fn).parameters
+        except (TypeError, ValueError):
+            return False
+        return "precomputed_features" in params
+
+    def _run_backtest(
+        self,
+        *,
+        bars: pd.DataFrame,
+        req: BacktestRequest,
+        strategy,
+        precomputed_features: pd.DataFrame | None = None,
+        supports_precomputed: bool | None = None,
+    ):
+        if supports_precomputed is None:
+            supports_precomputed = self._backtest_supports_precomputed_features()
+        if precomputed_features is not None and supports_precomputed:
+            return self.backtest_engine.run(
+                bars,
+                req,
+                strategy,
+                precomputed_features=precomputed_features,
+            )
+        return self.backtest_engine.run(bars, req, strategy)
 
     @staticmethod
     def _bars_start(bars: pd.DataFrame, fallback: date) -> date:

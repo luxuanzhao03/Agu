@@ -85,6 +85,7 @@ class Settings(BaseSettings):
     small_cap_unlock_critical_ratio: float = Field(default=0.45)
     small_cap_overhang_warning_score: float = Field(default=0.75)
     autotune_runtime_override_enabled: bool = Field(default=True)
+    challenge_max_parallel_workers: int = Field(default=0, ge=0, le=64)
 
     audit_db_path: str = Field(default="data/audit.db")
     snapshot_db_path: str = Field(default="data/snapshot.db")

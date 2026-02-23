@@ -42,7 +42,7 @@ class MultiFactorStrategy(BaseStrategy):
         min_fundamental_score_buy = float(context.params.get("min_fundamental_score_buy", 0.35))
         min_tushare_score_buy = float(context.params.get("min_tushare_score_buy", 0.30))
 
-        latest = features.sort_values("trade_date").iloc[-1]
+        latest = features.iloc[-1]
         momentum = max(-0.5, min(0.5, float(latest.get("momentum60", 0.0)))) + 0.5
         quality = max(-0.5, min(0.5, float(latest.get("momentum20", 0.0)))) + 0.5
         low_vol = 1.0 - min(1.0, float(latest.get("volatility20", 0.0)) * 5)

@@ -57,7 +57,13 @@ class BacktestEngine:
         self.factor_engine = factor_engine
         self.risk_engine = risk_engine
 
-    def run(self, bars: pd.DataFrame, req: BacktestRequest, strategy: BaseStrategy) -> BacktestResult:
+    def run(
+        self,
+        bars: pd.DataFrame,
+        req: BacktestRequest,
+        strategy: BaseStrategy,
+        precomputed_features: pd.DataFrame | None = None,
+    ) -> BacktestResult:
         if bars.empty:
             return BacktestResult(
                 symbol=req.symbol,
@@ -76,6 +82,25 @@ class BacktestEngine:
             )
 
         sorted_bars = bars.sort_values("trade_date").reset_index(drop=True)
+        all_features = precomputed_features
+        if all_features is None:
+            all_features = self.factor_engine.compute(sorted_bars)
+        if all_features.empty:
+            all_features = self.factor_engine.compute(sorted_bars)
+        all_features = all_features.reset_index(drop=True)
+        if len(all_features) != len(sorted_bars):
+            raise ValueError("precomputed_features row count must match bars row count")
+
+        if "trade_date" in all_features.columns and "trade_date" in sorted_bars.columns:
+            feat_dates = pd.to_datetime(all_features["trade_date"], errors="coerce")
+            bar_dates = pd.to_datetime(sorted_bars["trade_date"], errors="coerce")
+            if not feat_dates.equals(bar_dates):
+                all_features = all_features.sort_values("trade_date").reset_index(drop=True)
+                feat_dates = pd.to_datetime(all_features["trade_date"], errors="coerce")
+                if not feat_dates.equals(bar_dates):
+                    raise ValueError("precomputed_features trade_date does not align with bars")
+
+        trade_dates = pd.to_datetime(sorted_bars["trade_date"], errors="coerce")
         state = BacktestState(
             cash=req.initial_cash,
             quantity=0,
@@ -87,10 +112,10 @@ class BacktestEngine:
         buy_date = None
 
         for i in range(len(sorted_bars)):
-            window = sorted_bars.iloc[: i + 1]
-            features = self.factor_engine.compute(window)
-            latest_bar = window.iloc[-1]
-            parsed_trade_date = pd.to_datetime(latest_bar.get("trade_date"), errors="coerce")
+            features = all_features.iloc[: i + 1]
+            latest_feature = all_features.iloc[i]
+            latest_bar = sorted_bars.iloc[i]
+            parsed_trade_date = trade_dates.iloc[i]
             trade_date = parsed_trade_date.date() if not pd.isna(parsed_trade_date) else req.start_date
             context = StrategyContext(
                 params=req.strategy_params,
@@ -140,22 +165,22 @@ class BacktestEngine:
                 max_single_position=float(req.max_single_position),
                 max_positions=max(1, int(float(req.strategy_params.get("max_positions", 3)))),
             )
-            turnover20 = float(features.iloc[-1].get("turnover20", 0.0))
-            fundamental_available = bool(features.iloc[-1].get("fundamental_available", False))
+            turnover20 = float(latest_feature.get("turnover20", 0.0))
+            fundamental_available = bool(latest_feature.get("fundamental_available", False))
             fundamental_score = (
-                float(features.iloc[-1].get("fundamental_score", 0.5)) if fundamental_available else None
+                float(latest_feature.get("fundamental_score", 0.5)) if fundamental_available else None
             )
             def _opt_float(value):
                 return float(value) if (value is not None and value == value) else None
 
-            tushare_disclosure_risk = _opt_float(features.iloc[-1].get("tushare_disclosure_risk_score"))
-            tushare_audit_risk = _opt_float(features.iloc[-1].get("tushare_audit_opinion_risk"))
-            tushare_forecast_mid = _opt_float(features.iloc[-1].get("tushare_forecast_pchg_mid"))
-            tushare_pledge_ratio = _opt_float(features.iloc[-1].get("tushare_pledge_ratio"))
-            tushare_unlock_ratio = _opt_float(features.iloc[-1].get("tushare_share_float_unlock_ratio"))
-            tushare_holder_crowding = _opt_float(features.iloc[-1].get("tushare_holder_crowding_ratio"))
-            tushare_overhang_risk = _opt_float(features.iloc[-1].get("tushare_overhang_risk_score"))
-            stale_days_raw = int(features.iloc[-1].get("fundamental_stale_days", -1))
+            tushare_disclosure_risk = _opt_float(latest_feature.get("tushare_disclosure_risk_score"))
+            tushare_audit_risk = _opt_float(latest_feature.get("tushare_audit_opinion_risk"))
+            tushare_forecast_mid = _opt_float(latest_feature.get("tushare_forecast_pchg_mid"))
+            tushare_pledge_ratio = _opt_float(latest_feature.get("tushare_pledge_ratio"))
+            tushare_unlock_ratio = _opt_float(latest_feature.get("tushare_share_float_unlock_ratio"))
+            tushare_holder_crowding = _opt_float(latest_feature.get("tushare_holder_crowding_ratio"))
+            tushare_overhang_risk = _opt_float(latest_feature.get("tushare_overhang_risk_score"))
+            stale_days_raw = int(latest_feature.get("fundamental_stale_days", -1))
             small_principal = float(req.small_capital_principal or req.initial_cash)
             small_lot = max(1, int(req.lot_size))
             required_cash = required_cash_for_min_lot(
@@ -176,8 +201,8 @@ class BacktestEngine:
             )
             expected_edge_bps = infer_expected_edge_bps(
                 confidence=float(signal.confidence),
-                momentum20=float(features.iloc[-1].get("momentum20", 0.0)),
-                event_score=float(features.iloc[-1].get("event_score", 0.0))
+                momentum20=float(latest_feature.get("momentum20", 0.0)),
+                event_score=float(latest_feature.get("event_score", 0.0))
                 if "event_score" in features.columns
                 else None,
                 fundamental_score=fundamental_score,
@@ -207,14 +232,14 @@ class BacktestEngine:
                 signal=signal,
                 position=position,
                 portfolio=portfolio,
-                is_st=bool(window.iloc[-1].get("is_st", False)),
-                is_suspended=bool(window.iloc[-1].get("is_suspended", False)),
-                at_limit_up=bool(window.iloc[-1].get("at_limit_up", False)),
-                at_limit_down=bool(window.iloc[-1].get("at_limit_down", False)),
+                is_st=bool(latest_bar.get("is_st", False)),
+                is_suspended=bool(latest_bar.get("is_suspended", False)),
+                at_limit_up=bool(latest_bar.get("at_limit_up", False)),
+                at_limit_down=bool(latest_bar.get("at_limit_down", False)),
                 avg_turnover_20d=turnover20,
                 fundamental_score=fundamental_score,
                 fundamental_available=fundamental_available,
-                fundamental_pit_ok=bool(features.iloc[-1].get("fundamental_pit_ok", True)),
+                fundamental_pit_ok=bool(latest_feature.get("fundamental_pit_ok", True)),
                 fundamental_stale_days=stale_days_raw if stale_days_raw >= 0 else None,
                 tushare_disclosure_risk_score=tushare_disclosure_risk,
                 tushare_audit_opinion_risk=tushare_audit_risk,
@@ -257,11 +282,11 @@ class BacktestEngine:
                     trades=trades,
                     available_qty=available_qty,
                     turnover20=turnover20,
-                    is_suspended=bool(window.iloc[-1].get("is_suspended", False)),
-                    at_limit_up=bool(window.iloc[-1].get("at_limit_up", False)),
-                    at_limit_down=bool(window.iloc[-1].get("at_limit_down", False)),
-                    is_one_word_limit_up=bool(window.iloc[-1].get("is_one_word_limit_up", False)),
-                    is_one_word_limit_down=bool(window.iloc[-1].get("is_one_word_limit_down", False)),
+                    is_suspended=bool(latest_bar.get("is_suspended", False)),
+                    at_limit_up=bool(latest_bar.get("at_limit_up", False)),
+                    at_limit_down=bool(latest_bar.get("at_limit_down", False)),
+                    is_one_word_limit_up=bool(latest_bar.get("is_one_word_limit_up", False)),
+                    is_one_word_limit_down=bool(latest_bar.get("is_one_word_limit_down", False)),
                 )
                 if signal.action == SignalAction.BUY and state.quantity > 0:
                     buy_date = trade_date

@@ -31,6 +31,9 @@ def test_trading_workbench_ui_route() -> None:
     assert "dataFetchCapabilityRows" in resp.text
     assert "dataFetchPrefetchRows" in resp.text
     assert "fullMarket2000ScanRows" in resp.text
+    assert "fullMarket2000SymbolTimeoutSecInput" in resp.text
+    assert "fullMarket2000NetworkTimeoutSecInput" in resp.text
+    assert "fullMarket2000KpiTimeouts" in resp.text
     assert 'data-tab="holdings"' in resp.text
     assert "submitHoldingTradeBtn" in resp.text
     assert "runHoldingAnalyzeBtn" in resp.text

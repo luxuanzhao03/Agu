@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import subprocess
 import sys
 import time
@@ -36,6 +37,8 @@ class FullMarket2000ScanRequest(BaseModel):
     cash_buffer_ratio: float = Field(default=0.10, ge=0.0, le=0.90)
     max_single_position: float = Field(default=0.60, gt=0.0, le=1.0)
     min_edge_bps: float = Field(default=140.0, ge=0.0, le=5_000.0)
+    symbol_timeout_sec: float = Field(default=45.0, ge=5.0, le=600.0)
+    network_timeout_sec: float = Field(default=12.0, ge=1.0, le=120.0)
     max_symbols: int = Field(default=0, ge=0, le=20_000)
     sleep_ms: int = Field(default=0, ge=0, le=5_000)
     top_n: int = Field(default=30, ge=1, le=500)
@@ -72,6 +75,7 @@ class FullMarket2000ScanResponse(BaseModel):
     total_symbols: int
     buy_pass_symbols: int
     error_symbols: int
+    timeout_symbols: int = 0
     summary_path: str
     csv_path: str
     jsonl_path: str
@@ -85,6 +89,7 @@ class FullMarket2000ScanProgressResponse(BaseModel):
     total_symbols: int = 0
     buy_pass_symbols: int = 0
     error_symbols: int = 0
+    timeout_symbols: int = 0
     progress_pct: float = 0.0
     started_at: datetime | None = None
     updated_at: datetime | None = None
@@ -110,6 +115,7 @@ _FULL_MARKET_PROGRESS_STATE: dict[str, Any] = {
     "total_symbols": 0,
     "buy_pass_symbols": 0,
     "error_symbols": 0,
+    "timeout_symbols": 0,
     "progress_pct": 0.0,
     "started_at": None,
     "updated_at": None,
@@ -141,6 +147,30 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except Exception:
         return float(default)
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        try:
+            out = datetime.fromisoformat(raw)
+        except Exception:
+            return None
+        return out if out.tzinfo is not None else out.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _missing_scan_runtime_deps() -> list[str]:
+    required = ("tushare", "akshare", "pandas")
+    return [name for name in required if importlib.util.find_spec(name) is None]
 
 
 def _set_full_market_progress(**updates: Any) -> None:
@@ -204,6 +234,7 @@ def _merge_full_market_progress(base: dict[str, Any], from_file: dict[str, Any])
         "total_symbols",
         "buy_pass_symbols",
         "error_symbols",
+        "timeout_symbols",
         "progress_pct",
         "started_at",
         "updated_at",
@@ -227,6 +258,7 @@ def _merge_full_market_progress(base: dict[str, Any], from_file: dict[str, Any])
     scanned = max(0, _safe_int(out.get("scanned_symbols"), 0))
     buy_pass = max(0, _safe_int(out.get("buy_pass_symbols"), 0))
     errors = max(0, _safe_int(out.get("error_symbols"), 0))
+    timeouts = max(0, _safe_int(out.get("timeout_symbols"), 0))
     pct = _safe_float(out.get("progress_pct"), -1.0)
     if pct < 0:
         pct = round((float(scanned) / float(total) * 100.0), 2) if total > 0 else 0.0
@@ -240,6 +272,7 @@ def _merge_full_market_progress(base: dict[str, Any], from_file: dict[str, Any])
     out["scanned_symbols"] = scanned
     out["buy_pass_symbols"] = buy_pass
     out["error_symbols"] = errors
+    out["timeout_symbols"] = timeouts
     out["progress_pct"] = pct
     return out
 
@@ -303,6 +336,45 @@ def get_full_market_2000_scan_progress(
     if isinstance(progress_path_raw, str) and progress_path_raw:
         progress_file_payload = _read_full_market_progress_file(Path(progress_path_raw))
     merged = _merge_full_market_progress(state, progress_file_payload)
+
+    status = str(merged.get("status") or "IDLE").upper()
+    if status in {"RUNNING", "CANCELLING"}:
+        runtime = _get_full_market_runtime()
+        runtime_run_id = runtime.get("run_id")
+        runtime_proc = runtime.get("process")
+        runtime_alive = runtime_proc is not None and runtime_proc.poll() is None
+        same_run = bool(merged.get("run_id")) and merged.get("run_id") == runtime_run_id
+
+        # If no live process exists for this run and heartbeat is stale, mark it failed
+        # so the UI does not stay in an infinite "running" state after abnormal exits.
+        if not (same_run and runtime_alive):
+            updated_at = _parse_datetime(merged.get("updated_at"))
+            now = _utc_now()
+            stale_sec = (now - updated_at).total_seconds() if updated_at is not None else 0.0
+            if stale_sec >= 30.0:
+                merged["status"] = "FAILED"
+                merged["finished_at"] = merged.get("finished_at") or now
+                merged["updated_at"] = now
+                merged["message"] = (
+                    f"scan heartbeat stale for {int(stale_sec)}s with no live process; "
+                    "scan likely exited unexpectedly"
+                )
+                _set_full_market_progress(
+                    run_id=merged.get("run_id"),
+                    status="FAILED",
+                    scanned_symbols=_safe_int(merged.get("scanned_symbols"), 0),
+                    total_symbols=_safe_int(merged.get("total_symbols"), 0),
+                    buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
+                    error_symbols=_safe_int(merged.get("error_symbols"), 0),
+                    timeout_symbols=_safe_int(merged.get("timeout_symbols"), 0),
+                    progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
+                    started_at=merged.get("started_at"),
+                    updated_at=merged.get("updated_at"),
+                    finished_at=merged.get("finished_at"),
+                    message=str(merged.get("message") or ""),
+                    progress_path=state.get("progress_path"),
+                )
+
     return FullMarket2000ScanProgressResponse(
         run_id=merged.get("run_id"),
         status=str(merged.get("status") or "IDLE"),
@@ -310,6 +382,7 @@ def get_full_market_2000_scan_progress(
         total_symbols=_safe_int(merged.get("total_symbols"), 0),
         buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
         error_symbols=_safe_int(merged.get("error_symbols"), 0),
+        timeout_symbols=_safe_int(merged.get("timeout_symbols"), 0),
         progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
         started_at=merged.get("started_at"),
         updated_at=merged.get("updated_at"),
@@ -376,6 +449,16 @@ def run_full_market_2000_scan(
     script_path = root / "scripts" / "full_market_pick_2000.py"
     if not script_path.exists():
         raise HTTPException(status_code=500, detail=f"scan script not found: {script_path}")
+    missing_deps = _missing_scan_runtime_deps()
+    if missing_deps:
+        missing = ", ".join(missing_deps)
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "scan runtime self-check failed: "
+                f"python={sys.executable}, missing_deps=[{missing}]"
+            ),
+        )
 
     output_summary = root / "reports" / f"full_market_summary_2000_{run_id}.json"
     output_jsonl = root / "reports" / f"full_market_signals_2000_{run_id}.jsonl"
@@ -398,6 +481,7 @@ def run_full_market_2000_scan(
         total_symbols=0,
         buy_pass_symbols=0,
         error_symbols=0,
+        timeout_symbols=0,
         progress_pct=0.0,
         started_at=started_at,
         updated_at=started_at,
@@ -425,6 +509,10 @@ def run_full_market_2000_scan(
         str(req.max_single_position),
         "--min-edge-bps",
         str(req.min_edge_bps),
+        "--symbol-timeout-sec",
+        str(req.symbol_timeout_sec),
+        "--network-timeout-sec",
+        str(req.network_timeout_sec),
         "--max-symbols",
         str(req.max_symbols),
         "--sleep-ms",
@@ -471,6 +559,7 @@ def run_full_market_2000_scan(
                     total_symbols=_safe_int(merged.get("total_symbols"), 0),
                     buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
                     error_symbols=_safe_int(merged.get("error_symbols"), 0),
+                    timeout_symbols=_safe_int(merged.get("timeout_symbols"), 0),
                     progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
                     finished_at=finished_at,
                     updated_at=finished_at,
@@ -492,6 +581,7 @@ def run_full_market_2000_scan(
                     total_symbols=_safe_int(merged.get("total_symbols"), 0),
                     buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
                     error_symbols=_safe_int(merged.get("error_symbols"), 0),
+                    timeout_symbols=_safe_int(merged.get("timeout_symbols"), 0),
                     progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
                     finished_at=finished_at,
                     updated_at=finished_at,
@@ -516,6 +606,7 @@ def run_full_market_2000_scan(
             total_symbols=_safe_int(merged.get("total_symbols"), 0),
             buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
             error_symbols=_safe_int(merged.get("error_symbols"), 0),
+            timeout_symbols=_safe_int(merged.get("timeout_symbols"), 0),
             progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
             finished_at=finished_at,
             updated_at=finished_at,
@@ -540,6 +631,7 @@ def run_full_market_2000_scan(
             total_symbols=_safe_int(merged.get("total_symbols"), 0),
             buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
             error_symbols=_safe_int(merged.get("error_symbols"), 0),
+            timeout_symbols=_safe_int(merged.get("timeout_symbols"), 0),
             progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
             finished_at=finished_at,
             updated_at=finished_at,
@@ -564,6 +656,7 @@ def run_full_market_2000_scan(
             total_symbols=_safe_int(merged.get("total_symbols"), 0),
             buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
             error_symbols=_safe_int(merged.get("error_symbols"), 0),
+            timeout_symbols=_safe_int(merged.get("timeout_symbols"), 0),
             progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
             finished_at=finished_at,
             updated_at=finished_at,
@@ -591,6 +684,7 @@ def run_full_market_2000_scan(
             total_symbols=_safe_int(merged.get("total_symbols"), 0),
             buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
             error_symbols=_safe_int(merged.get("error_symbols"), 0),
+            timeout_symbols=_safe_int(merged.get("timeout_symbols"), 0),
             progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
             finished_at=finished_at,
             updated_at=finished_at,
@@ -612,6 +706,7 @@ def run_full_market_2000_scan(
             total_symbols=_safe_int(merged.get("total_symbols"), 0),
             buy_pass_symbols=_safe_int(merged.get("buy_pass_symbols"), 0),
             error_symbols=_safe_int(merged.get("error_symbols"), 0),
+            timeout_symbols=_safe_int(merged.get("timeout_symbols"), 0),
             progress_pct=_safe_float(merged.get("progress_pct"), 0.0),
             finished_at=finished_at,
             updated_at=finished_at,
@@ -633,6 +728,7 @@ def run_full_market_2000_scan(
         total_symbols=int(summary.get("total_symbols", 0)),
         buy_pass_symbols=int(summary.get("buy_pass_symbols", 0)),
         error_symbols=int(summary.get("error_symbols", 0)),
+        timeout_symbols=int(summary.get("timeout_symbols", 0)),
         summary_path=str(output_summary),
         csv_path=str(output_csv),
         jsonl_path=str(output_jsonl),
@@ -645,6 +741,7 @@ def run_full_market_2000_scan(
         total_symbols=response.total_symbols,
         buy_pass_symbols=response.buy_pass_symbols,
         error_symbols=response.error_symbols,
+        timeout_symbols=response.timeout_symbols,
         progress_pct=100.0,
         started_at=started_at,
         updated_at=finished_at,
@@ -667,6 +764,7 @@ def run_full_market_2000_scan(
             "total_symbols": response.total_symbols,
             "buy_pass_symbols": response.buy_pass_symbols,
             "error_symbols": response.error_symbols,
+            "timeout_symbols": response.timeout_symbols,
             "summary_path": response.summary_path,
             "csv_path": response.csv_path,
             "jsonl_path": response.jsonl_path,

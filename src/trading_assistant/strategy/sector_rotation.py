@@ -25,7 +25,7 @@ class SectorRotationStrategy(BaseStrategy):
             context.params.get("risk_off_strength", context.market_state.get("risk_off_strength", 0.5))
         )
 
-        latest = features.sort_values("trade_date").iloc[-1]
+        latest = features.iloc[-1]
         momentum20 = float(latest.get("momentum20", 0.0))
         momentum60 = float(latest.get("momentum60", 0.0))
         vol20 = float(latest.get("volatility20", 0.0))

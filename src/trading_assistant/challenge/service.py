@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
+import logging
+import multiprocessing as mp
 from uuid import uuid4
 
 import pandas as pd
@@ -23,6 +26,34 @@ from trading_assistant.fundamentals.service import FundamentalService
 from trading_assistant.governance.event_service import EventService
 from trading_assistant.strategy.registry import StrategyRegistry
 
+logger = logging.getLogger(__name__)
+
+
+def _run_single_strategy_subprocess(req_payload: dict[str, object], strategy_name: str) -> dict[str, object]:
+    from trading_assistant.core.container import get_strategy_challenge_service
+    from trading_assistant.core.models import StrategyChallengeRequest
+
+    service = get_strategy_challenge_service()
+    req = StrategyChallengeRequest.model_validate(req_payload)
+    single_req = req.model_copy(update={"strategy_names": [strategy_name]})
+    single_result = service.run(single_req)
+    selected = next((item for item in single_result.results if item.strategy_name == strategy_name), None)
+    if selected is None and single_result.results:
+        selected = single_result.results[0]
+    if selected is None:
+        selected = StrategyChallengeStrategyResult(
+            strategy_name=strategy_name,
+            qualified=False,
+            qualification_reasons=["runtime_error"],
+            ranking_score=None,
+            error="no strategy result generated in subprocess",
+        )
+    return {
+        "strategy_name": strategy_name,
+        "evaluated_count": int(single_result.evaluated_count),
+        "result": selected.model_dump(mode="json"),
+    }
+
 
 class StrategyChallengeService:
     def __init__(
@@ -34,6 +65,7 @@ class StrategyChallengeService:
         registry: StrategyRegistry,
         event_service: EventService | None = None,
         fundamental_service: FundamentalService | None = None,
+        max_parallel_workers: int = 1,
     ) -> None:
         self.autotune = autotune
         self.provider = provider
@@ -41,77 +73,13 @@ class StrategyChallengeService:
         self.registry = registry
         self.event_service = event_service
         self.fundamental_service = fundamental_service
+        self.max_parallel_workers = max(1, int(max_parallel_workers))
 
     def run(self, req: StrategyChallengeRequest) -> StrategyChallengeResult:
         strategy_names = self._resolve_strategy_names(req.strategy_names)
         run_id = uuid4().hex
 
-        results: list[StrategyChallengeStrategyResult] = []
-        total_evaluated = 0
-        for strategy_name in strategy_names:
-            try:
-                autotune_req = self._build_autotune_request(req=req, strategy_name=strategy_name)
-                autotune_result = self.autotune.run(autotune_req)
-                total_evaluated += int(autotune_result.evaluated_count)
-
-                best = autotune_result.best
-                if best is None:
-                    results.append(
-                        StrategyChallengeStrategyResult(
-                            strategy_name=strategy_name,
-                            provider=autotune_result.provider,
-                            autotune_run_id=autotune_result.run_id,
-                            evaluated_count=autotune_result.evaluated_count,
-                            qualified=False,
-                            qualification_reasons=["no_best_candidate"],
-                            ranking_score=None,
-                            error="autotune returned no candidate",
-                        )
-                    )
-                    continue
-
-                full_metrics, provider_name = self._run_full_backtest(
-                    req=req,
-                    strategy_name=strategy_name,
-                    strategy_params=best.strategy_params,
-                )
-                base_result = StrategyChallengeStrategyResult(
-                    strategy_name=strategy_name,
-                    provider=provider_name or autotune_result.provider,
-                    autotune_run_id=autotune_result.run_id,
-                    evaluated_count=autotune_result.evaluated_count,
-                    best_params=dict(best.strategy_params),
-                    best_objective_score=float(best.objective_score),
-                    validation_metrics=best.validation_metrics,
-                    full_backtest_metrics=full_metrics,
-                    walk_forward_samples=int(best.walk_forward_samples),
-                    walk_forward_return_std=best.walk_forward_return_std,
-                    stability_penalty=float(best.stability_penalty),
-                    return_variance_penalty=float(best.return_variance_penalty),
-                    param_drift_penalty=float(best.param_drift_penalty),
-                )
-                qualified, reasons = self._evaluate_gate(req=req, result=base_result)
-                ranking_score = self._ranking_score(req=req, result=base_result, qualified=qualified)
-                results.append(
-                    base_result.model_copy(
-                        update={
-                            "qualified": qualified,
-                            "qualification_reasons": reasons,
-                            "ranking_score": ranking_score,
-                            "error": None,
-                        }
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001
-                results.append(
-                    StrategyChallengeStrategyResult(
-                        strategy_name=strategy_name,
-                        qualified=False,
-                        qualification_reasons=["runtime_error"],
-                        ranking_score=None,
-                        error=str(exc),
-                    )
-                )
+        results, total_evaluated = self._evaluate_strategies(req=req, strategy_names=strategy_names)
 
         ordered = sorted(results, key=self._result_sort_key, reverse=True)
         qualified = [item for item in ordered if item.qualified]
@@ -150,6 +118,148 @@ class StrategyChallengeService:
             rollout_plan=self._build_rollout_plan(req=req, champion=champion),
             results=ordered,
         )
+
+    def _evaluate_strategies(
+        self,
+        *,
+        req: StrategyChallengeRequest,
+        strategy_names: list[str],
+    ) -> tuple[list[StrategyChallengeStrategyResult], int]:
+        if self.max_parallel_workers <= 1 or len(strategy_names) <= 1:
+            return self._evaluate_strategies_sequential(req=req, strategy_names=strategy_names)
+        return self._evaluate_strategies_parallel(req=req, strategy_names=strategy_names)
+
+    def _evaluate_strategies_sequential(
+        self,
+        *,
+        req: StrategyChallengeRequest,
+        strategy_names: list[str],
+    ) -> tuple[list[StrategyChallengeStrategyResult], int]:
+        results: list[StrategyChallengeStrategyResult] = []
+        total_evaluated = 0
+        for strategy_name in strategy_names:
+            item, evaluated_count = self._evaluate_single_strategy(req=req, strategy_name=strategy_name)
+            results.append(item)
+            total_evaluated += int(evaluated_count)
+        return results, total_evaluated
+
+    def _evaluate_strategies_parallel(
+        self,
+        *,
+        req: StrategyChallengeRequest,
+        strategy_names: list[str],
+    ) -> tuple[list[StrategyChallengeStrategyResult], int]:
+        worker_count = max(1, min(int(self.max_parallel_workers), len(strategy_names)))
+        if worker_count <= 1:
+            return self._evaluate_strategies_sequential(req=req, strategy_names=strategy_names)
+
+        payload = req.model_dump(mode="json")
+        results: list[StrategyChallengeStrategyResult] = []
+        total_evaluated = 0
+        try:
+            mp_ctx = mp.get_context("spawn")
+            with ProcessPoolExecutor(max_workers=worker_count, mp_context=mp_ctx) as executor:
+                future_map = {
+                    executor.submit(_run_single_strategy_subprocess, payload, strategy_name): strategy_name
+                    for strategy_name in strategy_names
+                }
+                for future in as_completed(future_map):
+                    strategy_name = future_map[future]
+                    try:
+                        result_payload = future.result()
+                        raw_result = result_payload.get("result")
+                        item = StrategyChallengeStrategyResult.model_validate(raw_result)
+                        if not item.strategy_name:
+                            item = item.model_copy(update={"strategy_name": strategy_name})
+                        results.append(item)
+                        total_evaluated += int(result_payload.get("evaluated_count", 0))
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning("Challenge subprocess failed for %s: %s", strategy_name, exc)
+                        results.append(
+                            StrategyChallengeStrategyResult(
+                                strategy_name=strategy_name,
+                                qualified=False,
+                                qualification_reasons=["runtime_error"],
+                                ranking_score=None,
+                                error=str(exc),
+                            )
+                        )
+            return results, total_evaluated
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Challenge parallel execution failed; fallback to sequential: %s", exc)
+            return self._evaluate_strategies_sequential(req=req, strategy_names=strategy_names)
+
+    def _evaluate_single_strategy(
+        self,
+        *,
+        req: StrategyChallengeRequest,
+        strategy_name: str,
+    ) -> tuple[StrategyChallengeStrategyResult, int]:
+        try:
+            autotune_req = self._build_autotune_request(req=req, strategy_name=strategy_name)
+            autotune_result = self.autotune.run(autotune_req)
+            evaluated_count = int(autotune_result.evaluated_count)
+
+            best = autotune_result.best
+            if best is None:
+                return (
+                    StrategyChallengeStrategyResult(
+                        strategy_name=strategy_name,
+                        provider=autotune_result.provider,
+                        autotune_run_id=autotune_result.run_id,
+                        evaluated_count=autotune_result.evaluated_count,
+                        qualified=False,
+                        qualification_reasons=["no_best_candidate"],
+                        ranking_score=None,
+                        error="autotune returned no candidate",
+                    ),
+                    evaluated_count,
+                )
+
+            full_metrics, provider_name = self._run_full_backtest(
+                req=req,
+                strategy_name=strategy_name,
+                strategy_params=best.strategy_params,
+            )
+            base_result = StrategyChallengeStrategyResult(
+                strategy_name=strategy_name,
+                provider=provider_name or autotune_result.provider,
+                autotune_run_id=autotune_result.run_id,
+                evaluated_count=autotune_result.evaluated_count,
+                best_params=dict(best.strategy_params),
+                best_objective_score=float(best.objective_score),
+                validation_metrics=best.validation_metrics,
+                full_backtest_metrics=full_metrics,
+                walk_forward_samples=int(best.walk_forward_samples),
+                walk_forward_return_std=best.walk_forward_return_std,
+                stability_penalty=float(best.stability_penalty),
+                return_variance_penalty=float(best.return_variance_penalty),
+                param_drift_penalty=float(best.param_drift_penalty),
+            )
+            qualified, reasons = self._evaluate_gate(req=req, result=base_result)
+            ranking_score = self._ranking_score(req=req, result=base_result, qualified=qualified)
+            return (
+                base_result.model_copy(
+                    update={
+                        "qualified": qualified,
+                        "qualification_reasons": reasons,
+                        "ranking_score": ranking_score,
+                        "error": None,
+                    }
+                ),
+                evaluated_count,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return (
+                StrategyChallengeStrategyResult(
+                    strategy_name=strategy_name,
+                    qualified=False,
+                    qualification_reasons=["runtime_error"],
+                    ranking_score=None,
+                    error=str(exc),
+                ),
+                0,
+            )
 
     def _resolve_strategy_names(self, names: list[str]) -> list[str]:
         if names:

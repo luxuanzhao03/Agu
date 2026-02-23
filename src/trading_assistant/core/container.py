@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from pathlib import Path
+import shutil
+import sqlite3
 from functools import lru_cache
 
 from trading_assistant.autotune.service import AutoTuneService
@@ -148,6 +152,12 @@ def get_autotune_service() -> AutoTuneService:
 
 @lru_cache
 def get_strategy_challenge_service() -> StrategyChallengeService:
+    settings = get_settings()
+    configured_workers = int(settings.challenge_max_parallel_workers)
+    if configured_workers > 0:
+        challenge_workers = configured_workers
+    else:
+        challenge_workers = max(1, (os.cpu_count() or 1) - 1)
     return StrategyChallengeService(
         autotune=get_autotune_service(),
         provider=get_data_provider(),
@@ -155,6 +165,7 @@ def get_strategy_challenge_service() -> StrategyChallengeService:
         registry=get_strategy_registry(),
         event_service=get_event_service(),
         fundamental_service=get_fundamental_service(),
+        max_parallel_workers=challenge_workers,
     )
 
 
@@ -178,7 +189,36 @@ def get_portfolio_backtest_engine() -> PortfolioBacktestEngine:
 @lru_cache
 def get_audit_service() -> AuditService:
     settings = get_settings()
-    return AuditService(store=AuditStore(settings.audit_db_path))
+    audit_db_path = settings.audit_db_path
+    try:
+        return AuditService(store=AuditStore(audit_db_path))
+    except sqlite3.OperationalError as exc:
+        # Common during abrupt shutdown when the main DB file is valid but rollback journal recovery fails.
+        recoverable_tokens = ("disk i/o error", "database disk image is malformed")
+        if not any(token in str(exc).lower() for token in recoverable_tokens):
+            raise
+
+        source = Path(audit_db_path)
+        recovered = source.with_name(f"{source.stem}_recovered{source.suffix}")
+        try:
+            if source.exists():
+                shutil.copy2(source, recovered)
+            logger.warning(
+                "Audit DB open failed (%s). Fallback to recovered copy: %s -> %s",
+                exc,
+                source,
+                recovered,
+            )
+            return AuditService(store=AuditStore(str(recovered)))
+        except Exception as recover_exc:  # noqa: BLE001
+            if recovered.exists():
+                logger.warning(
+                    "Audit DB copy failed (%s). Try existing recovered copy: %s",
+                    recover_exc,
+                    recovered,
+                )
+                return AuditService(store=AuditStore(str(recovered)))
+            raise
 
 
 @lru_cache

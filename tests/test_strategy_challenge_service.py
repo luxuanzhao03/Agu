@@ -210,3 +210,51 @@ def test_strategy_challenge_partial_failed_status(tmp_path: Path) -> None:
     assert out.run_status == StrategyChallengeRunStatus.PARTIAL_FAILED
     assert out.error_count == 1
     assert "mean_reversion" in out.failed_strategies
+
+
+def test_strategy_challenge_uses_parallel_path_when_enabled(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.max_parallel_workers = 2
+    req = StrategyChallengeRequest(
+        symbol="000001",
+        start_date=date(2024, 1, 1),
+        end_date=date(2025, 12, 31),
+        strategy_names=["trend_following", "mean_reversion"],
+    )
+
+    called = {"parallel": False}
+
+    def _fake_parallel(*, req: StrategyChallengeRequest, strategy_names: list[str]):
+        _ = (req, strategy_names)
+        called["parallel"] = True
+        return [], 0
+
+    service._evaluate_strategies_parallel = _fake_parallel  # type: ignore[method-assign]
+    results, evaluated = service._evaluate_strategies(req=req, strategy_names=req.strategy_names)
+    assert called["parallel"] is True
+    assert results == []
+    assert evaluated == 0
+
+
+def test_strategy_challenge_uses_sequential_path_when_disabled(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    service.max_parallel_workers = 1
+    req = StrategyChallengeRequest(
+        symbol="000001",
+        start_date=date(2024, 1, 1),
+        end_date=date(2025, 12, 31),
+        strategy_names=["trend_following", "mean_reversion"],
+    )
+
+    called = {"sequential": False}
+
+    def _fake_sequential(*, req: StrategyChallengeRequest, strategy_names: list[str]):
+        _ = (req, strategy_names)
+        called["sequential"] = True
+        return [], 0
+
+    service._evaluate_strategies_sequential = _fake_sequential  # type: ignore[method-assign]
+    results, evaluated = service._evaluate_strategies(req=req, strategy_names=req.strategy_names)
+    assert called["sequential"] is True
+    assert results == []
+    assert evaluated == 0

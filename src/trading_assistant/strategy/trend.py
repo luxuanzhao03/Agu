@@ -21,7 +21,7 @@ class TrendFollowingStrategy(BaseStrategy):
 
         context = context or StrategyContext()
         atr_mult = float(context.params.get("atr_multiplier", 2.0))
-        df = features.sort_values("trade_date")
+        df = features
         latest = df.iloc[-1]
         fundamental_available = bool(latest.get("fundamental_available", False))
         fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5

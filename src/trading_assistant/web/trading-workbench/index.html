@@ -422,6 +422,14 @@
                 <input id="fullMarket2000SleepMsInput" type="number" min="0" max="5000" step="10" value="0" />
               </label>
               <label>
+                全市场单标的超时（秒）
+                <input id="fullMarket2000SymbolTimeoutSecInput" type="number" min="5" max="600" step="1" value="45" />
+              </label>
+              <label>
+                全市场网络超时（秒）
+                <input id="fullMarket2000NetworkTimeoutSecInput" type="number" min="1" max="120" step="1" value="12" />
+              </label>
+              <label>
                 全市场任务超时（分钟）
                 <input id="fullMarket2000TimeoutMinInput" type="number" min="1" max="1440" step="1" value="120" />
               </label>
@@ -630,6 +638,7 @@
             <article class="kpi-card"><p>总标的</p><h3 id="fullMarket2000KpiTotal">-</h3></article>
             <article class="kpi-card"><p>可买通过</p><h3 id="fullMarket2000KpiBuyPass">-</h3></article>
             <article class="kpi-card"><p>错误数</p><h3 id="fullMarket2000KpiErrors">-</h3></article>
+            <article class="kpi-card"><p>超时数</p><h3 id="fullMarket2000KpiTimeouts">-</h3></article>
             <article class="kpi-card"><p>粒度</p><h3 id="fullMarket2000KpiGranularity">-</h3></article>
           </div>
           <p id="fullMarket2000ScanMeta" class="muted">尚未执行全市场扫描。</p>
@@ -932,116 +941,116 @@
             <h3>挑战赛配置（/challenge/run）</h3>
             <div class="form-grid">
               <label>
-                run_by
+                运行人（run_by）
                 <input id="challengeRunByInput" type="text" value="workbench_user" />
               </label>
               <label>
-                per_strategy_max_combinations
+                每策略最大参数组合数（per_strategy_max_combinations）
                 <input id="challengePerStrategyMaxCombInput" type="number" min="1" max="5000" value="120" />
               </label>
               <label>
-                validation_ratio
+                验证集比例（validation_ratio）
                 <input id="challengeValidationRatioInput" type="number" min="0" max="0.8" step="0.01" value="0.2" />
               </label>
               <label>
-                validation_weight
+                验证集权重（validation_weight）
                 <input id="challengeValidationWeightInput" type="number" min="0" max="1" step="0.01" value="0.4" />
               </label>
               <label>
-                min_train_bars
+                最少训练K线数（min_train_bars）
                 <input id="challengeMinTrainBarsInput" type="number" min="20" max="5000" value="120" />
               </label>
               <label>
-                min_validation_bars
+                最少验证K线数（min_validation_bars）
                 <input id="challengeMinValidationBarsInput" type="number" min="10" max="5000" value="40" />
               </label>
               <label>
-                min_trade_count
+                最少交易次数（min_trade_count）
                 <input id="challengeMinTradeCountInput" type="number" min="0" max="5000" value="1" />
               </label>
               <label>
-                walk_forward_slices
+                滚动前瞻切片数（walk_forward_slices）
                 <input id="challengeWalkForwardSlicesInput" type="number" min="0" max="12" value="4" />
               </label>
               <label>
-                stability_eval_top_n
+                稳定性评估TopN（stability_eval_top_n）
                 <input id="challengeStabilityTopNInput" type="number" min="0" max="500" value="24" />
               </label>
               <label>
-                low_sample_penalty
+                小样本惩罚系数（low_sample_penalty）
                 <input id="challengeLowSamplePenaltyInput" type="number" min="0" max="5" step="0.01" value="0.1" />
               </label>
 
               <label class="inline">
-                <input id="challengeGateRequireValidationInput" type="checkbox" checked /> gate_require_validation
+                <input id="challengeGateRequireValidationInput" type="checkbox" checked /> 启用验证门槛（gate_require_validation）
               </label>
               <label>
-                gate_min_validation_total_return
+                验证集最低总收益（gate_min_validation_total_return）
                 <input id="challengeGateMinValidationReturnInput" type="number" min="-1" max="5" step="0.001" value="0" />
               </label>
               <label>
-                gate_max_validation_drawdown
+                验证集最大回撤上限（gate_max_validation_drawdown）
                 <input id="challengeGateMaxValidationDrawdownInput" type="number" min="0" max="1" step="0.001" value="0.25" />
               </label>
               <label>
-                gate_min_validation_sharpe
+                验证集最低夏普（gate_min_validation_sharpe）
                 <input id="challengeGateMinValidationSharpeInput" type="number" min="-10" max="20" step="0.01" value="0" />
               </label>
               <label>
-                gate_min_validation_trade_count
+                验证集最低交易次数（gate_min_validation_trade_count）
                 <input id="challengeGateMinValidationTradeCountInput" type="number" min="0" max="10000" value="1" />
               </label>
               <label>
-                gate_min_walk_forward_samples
+                最少前瞻样本数（gate_min_walk_forward_samples）
                 <input id="challengeGateMinWfSamplesInput" type="number" min="0" max="50" value="2" />
               </label>
               <label>
-                gate_max_walk_forward_return_std
+                前瞻收益波动上限（gate_max_walk_forward_return_std）
                 <input id="challengeGateMaxWfStdInput" type="number" min="0" max="5" step="0.001" value="0.2" />
               </label>
 
               <label>
-                rank_weight_validation_return
+                排名权重-验证收益（rank_weight_validation_return）
                 <input id="challengeRankWeightReturnInput" type="number" min="0" max="5" step="0.01" value="0.55" />
               </label>
               <label>
-                rank_weight_validation_sharpe
+                排名权重-验证夏普（rank_weight_validation_sharpe）
                 <input id="challengeRankWeightSharpeInput" type="number" min="0" max="5" step="0.01" value="0.25" />
               </label>
               <label>
-                rank_weight_stability
+                排名权重-稳定性（rank_weight_stability）
                 <input id="challengeRankWeightStabilityInput" type="number" min="0" max="5" step="0.01" value="0.2" />
               </label>
               <label>
-                rank_weight_drawdown_penalty
+                排名权重-回撤惩罚（rank_weight_drawdown_penalty）
                 <input id="challengeRankWeightDrawdownInput" type="number" min="0" max="5" step="0.01" value="0.35" />
               </label>
               <label>
-                rank_weight_variance_penalty
+                排名权重-波动惩罚（rank_weight_variance_penalty）
                 <input id="challengeRankWeightVarianceInput" type="number" min="0" max="5" step="0.01" value="0.2" />
               </label>
               <label>
-                rollout_gray_days
+                灰度上线天数（rollout_gray_days）
                 <input id="challengeRolloutGrayDaysInput" type="number" min="7" max="20" value="10" />
               </label>
 
               <div>
                 <p class="muted">参赛策略（全不勾选=后端按默认6策略）</p>
                 <div id="challengeStrategyPickers" class="inline-picks">
-                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="trend_following" checked /> trend_following</label>
-                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="mean_reversion" checked /> mean_reversion</label>
-                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="multi_factor" checked /> multi_factor</label>
-                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="sector_rotation" checked /> sector_rotation</label>
-                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="event_driven" checked /> event_driven</label>
-                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="small_capital_adaptive" checked /> small_capital_adaptive</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="trend_following" checked /> 趋势跟随（trend_following）</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="mean_reversion" checked /> 均值回归（mean_reversion）</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="multi_factor" checked /> 多因子（multi_factor）</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="sector_rotation" checked /> 行业轮动（sector_rotation）</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="event_driven" checked /> 事件驱动（event_driven）</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="small_capital_adaptive" checked /> 小资金自适应（small_capital_adaptive）</label>
                 </div>
               </div>
               <label>
-                base_strategy_params_map(JSON，可选)
+                基础参数映射（base_strategy_params_map，JSON，可选）
                 <textarea id="challengeBaseParamsMapInput" rows="4" placeholder="{&#10;  &quot;trend_following&quot;: { &quot;entry_ma_fast&quot;: 20, &quot;entry_ma_slow&quot;: 60, &quot;atr_multiplier&quot;: 2.0 }&#10;}"></textarea>
               </label>
               <label>
-                search_space_map(JSON，可选)
+                搜索空间映射（search_space_map，JSON，可选）
                 <textarea id="challengeSearchSpaceMapInput" rows="6" placeholder="{&#10;  &quot;trend_following&quot;: {&quot;entry_ma_fast&quot;:[10,15,20],&quot;entry_ma_slow&quot;:[40,60,80]},&#10;  &quot;mean_reversion&quot;: {&quot;z_enter&quot;:[1.8,2.0,2.2]}&#10;}"></textarea>
               </label>
             </div>

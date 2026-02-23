@@ -1807,6 +1807,14 @@ function buildFullMarket2000ScanRequest() {
       min: 0,
       max: 5000,
     }),
+    symbol_timeout_sec: toNumber(el("fullMarket2000SymbolTimeoutSecInput")?.value, "全市场扫描 symbol_timeout_sec", {
+      min: 5,
+      max: 600,
+    }),
+    network_timeout_sec: toNumber(el("fullMarket2000NetworkTimeoutSecInput")?.value, "全市场扫描 network_timeout_sec", {
+      min: 1,
+      max: 120,
+    }),
     top_n: toNumber(el("fullMarket2000TopNInput")?.value, "全市场扫描 top_n", {
       integer: true,
       min: 1,
@@ -2027,13 +2035,32 @@ async function loadFullMarket2000ScanProgress({ silent = false } = {}) {
   const total = Number(resp.total_symbols || 0);
   const scanned = Number(resp.scanned_symbols || 0);
   const pct = Number(resp.progress_pct || 0);
-  if (!silent && status === "RUNNING") {
-    setDataFetchMessage(
-      `全市场扫描进行中：${fmtNum(scanned, 0)}/${fmtNum(total, 0)}（${fmtNum(pct, 2)}%），可买通过 ${fmtNum(
-        resp.buy_pass_symbols || 0,
-        0
-      )}。`
-    );
+  if (!silent) {
+    if (status === "RUNNING") {
+      setDataFetchMessage(
+        `全市场扫描进行中：${fmtNum(scanned, 0)}/${fmtNum(total, 0)}（${fmtNum(pct, 2)}%），可买通过 ${fmtNum(
+          resp.buy_pass_symbols || 0,
+          0
+        )}，超时 ${fmtNum(resp.timeout_symbols || 0, 0)}。`
+      );
+    } else if (status === "CANCELLING") {
+      setDataFetchMessage(
+        `正在中止扫描：已扫描 ${fmtNum(scanned, 0)}/${fmtNum(total, 0)}，等待进程退出...`
+      );
+    } else if (status === "CANCELED") {
+      setDataFetchMessage(
+        `扫描已中止：已扫描 ${fmtNum(scanned, 0)}/${fmtNum(total, 0)}。`
+      );
+    } else if (status === "FAILED" || status === "TIMEOUT") {
+      setDataFetchMessage(`扫描失败：${String(resp.message || "请查看日志并重试")}`);
+    } else if (status === "COMPLETED") {
+      setDataFetchMessage(
+        `扫描完成：${fmtNum(scanned, 0)}/${fmtNum(total, 0)}，可买通过 ${fmtNum(resp.buy_pass_symbols || 0, 0)}，超时 ${fmtNum(
+          resp.timeout_symbols || 0,
+          0
+        )}。`
+      );
+    }
   }
   return resp;
 }
@@ -2042,12 +2069,12 @@ function startFullMarket2000ScanProgressPolling() {
   clearFullMarket2000ScanProgressPolling();
   const tick = async () => {
     try {
-      const progress = await loadFullMarket2000ScanProgress({ silent: true });
+      const progress = await loadFullMarket2000ScanProgress({ silent: false });
       if (isFullMarket2000ScanTerminalStatus(progress.status)) {
         clearFullMarket2000ScanProgressPolling();
       }
-    } catch {
-      // ignore polling failures to avoid interrupting the scan request
+    } catch (err) {
+      setDataFetchMessage(`全市场扫描执行中，进度拉取失败，2 秒后重试：${String(err.message || err)}`);
     }
   };
   void tick();
@@ -2068,6 +2095,7 @@ async function runFullMarket2000Scan({ silent = false } = {}) {
     total_symbols: 0,
     buy_pass_symbols: 0,
     error_symbols: 0,
+    timeout_symbols: 0,
     progress_pct: 0,
     started_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -2090,6 +2118,7 @@ async function runFullMarket2000Scan({ silent = false } = {}) {
       total_symbols: resp.total_symbols || 0,
       buy_pass_symbols: resp.buy_pass_symbols || 0,
       error_symbols: resp.error_symbols || 0,
+      timeout_symbols: resp.timeout_symbols || 0,
       progress_pct: 100,
       started_at: resp.started_at,
       updated_at: resp.finished_at,
@@ -2102,11 +2131,16 @@ async function runFullMarket2000Scan({ silent = false } = {}) {
       meta.textContent =
         `窗口=${resp.start_date || req.start_date}~${resp.end_date || req.end_date} | ` +
         `总标的=${fmtNum(resp.total_symbols || 0, 0)} | 可买=${fmtNum(resp.buy_pass_symbols || 0, 0)} | ` +
-        `错误=${fmtNum(resp.error_symbols || 0, 0)} | 开始=${fmtTs(resp.started_at)} | 结束=${fmtTs(resp.finished_at)}`;
+        `错误=${fmtNum(resp.error_symbols || 0, 0)} | 超时=${fmtNum(resp.timeout_symbols || 0, 0)} | ` +
+        `开始=${fmtTs(resp.started_at)} | 结束=${fmtTs(resp.finished_at)}`;
     }
     if (!silent) {
       const count = Array.isArray(resp.top_candidates) ? resp.top_candidates.length : 0;
-      setDataFetchMessage(`全市场扫描完成：Top 候选 ${fmtNum(count, 0)} 条（粒度：${resp.granularity || "daily"}）。`);
+      setDataFetchMessage(
+        `全市场扫描完成：Top 候选 ${fmtNum(count, 0)} 条，超时 ${fmtNum(resp.timeout_symbols || 0, 0)} 条（粒度：${
+          resp.granularity || "daily"
+        }）。`
+      );
     }
     return resp;
   } catch (err) {
@@ -2124,11 +2158,23 @@ async function runFullMarket2000Scan({ silent = false } = {}) {
 }
 
 async function cancelFullMarket2000Scan({ silent = false } = {}) {
+  const nowIso = new Date().toISOString();
+  const prev = state.latestFullMarket2000ScanProgress || {};
+  state.latestFullMarket2000ScanProgress = {
+    ...prev,
+    status: "CANCELLING",
+    updated_at: nowIso,
+    message: "cancel requested by user",
+  };
+  syncFullMarket2000ScanActionButtons();
+  renderDataFetchWorkbench();
+
   const runId = String(state.latestFullMarket2000ScanProgress?.run_id || "").trim();
   const req = runId ? { run_id: runId } : {};
   const resp = await postJSON("/research/full-market-2000-scan/cancel", req);
   if (!silent) setDataFetchMessage("已提交中止请求，等待扫描进程退出...");
-  await loadFullMarket2000ScanProgress({ silent: true }).catch(() => {});
+  startFullMarket2000ScanProgressPolling();
+  await loadFullMarket2000ScanProgress({ silent: false }).catch(() => {});
   syncFullMarket2000ScanActionButtons();
   renderDataFetchWorkbench();
   return resp;
@@ -2435,9 +2481,10 @@ function renderFullMarket2000Scan() {
   const totalKpi = el("fullMarket2000KpiTotal");
   const buyPassKpi = el("fullMarket2000KpiBuyPass");
   const errorKpi = el("fullMarket2000KpiErrors");
+  const timeoutKpi = el("fullMarket2000KpiTimeouts");
   const granularityKpi = el("fullMarket2000KpiGranularity");
   const host = el("fullMarket2000ScanRows");
-  if (!meta || !totalKpi || !buyPassKpi || !errorKpi || !granularityKpi || !host) return;
+  if (!meta || !totalKpi || !buyPassKpi || !errorKpi || !timeoutKpi || !granularityKpi || !host) return;
   syncFullMarket2000ScanActionButtons();
 
   const resp = state.latestFullMarket2000ScanResult;
@@ -2449,10 +2496,12 @@ function renderFullMarket2000Scan() {
         progress.total_symbols !== null && progress.total_symbols !== undefined ? fmtNum(progress.total_symbols || 0, 0) : "-";
       buyPassKpi.textContent = fmtNum(progress.buy_pass_symbols || 0, 0);
       errorKpi.textContent = fmtNum(progress.error_symbols || 0, 0);
+      timeoutKpi.textContent = fmtNum(progress.timeout_symbols || 0, 0);
       granularityKpi.textContent = "daily";
       meta.textContent =
         `扫描中 run_id=${progress.run_id || "-"} | 进度=${fmtNum(progress.progress_pct || 0, 2)}% | ` +
         `已扫描 ${fmtNum(progress.scanned_symbols || 0, 0)} / ${fmtNum(progress.total_symbols || 0, 0)} | ` +
+        `超时=${fmtNum(progress.timeout_symbols || 0, 0)} | ` +
         `开始=${fmtTs(progress.started_at)} | 更新时间=${fmtTs(progress.updated_at)}`;
       host.innerHTML = '<tr><td colspan="8" class="muted">正在扫描全市场，候选列表将在完成后展示。</td></tr>';
       return;
@@ -2461,6 +2510,7 @@ function renderFullMarket2000Scan() {
       totalKpi.textContent = progress.total_symbols ? fmtNum(progress.total_symbols, 0) : "-";
       buyPassKpi.textContent = fmtNum(progress.buy_pass_symbols || 0, 0);
       errorKpi.textContent = fmtNum(progress.error_symbols || 0, 0);
+      timeoutKpi.textContent = fmtNum(progress.timeout_symbols || 0, 0);
       granularityKpi.textContent = "daily";
       meta.textContent =
         `正在中止 run_id=${progress.run_id || "-"} | 已扫描 ${fmtNum(progress.scanned_symbols || 0, 0)} / ${fmtNum(
@@ -2474,6 +2524,7 @@ function renderFullMarket2000Scan() {
       totalKpi.textContent = progress.total_symbols ? fmtNum(progress.total_symbols, 0) : "-";
       buyPassKpi.textContent = fmtNum(progress.buy_pass_symbols || 0, 0);
       errorKpi.textContent = fmtNum(progress.error_symbols || 0, 0);
+      timeoutKpi.textContent = fmtNum(progress.timeout_symbols || 0, 0);
       granularityKpi.textContent = "daily";
       meta.textContent =
         `最近一次扫描状态=CANCELED | run_id=${progress.run_id || "-"} | 已扫描 ${fmtNum(progress.scanned_symbols || 0, 0)} / ${fmtNum(
@@ -2487,6 +2538,7 @@ function renderFullMarket2000Scan() {
       totalKpi.textContent = progress.total_symbols ? fmtNum(progress.total_symbols, 0) : "-";
       buyPassKpi.textContent = fmtNum(progress.buy_pass_symbols || 0, 0);
       errorKpi.textContent = fmtNum(progress.error_symbols || 0, 0);
+      timeoutKpi.textContent = fmtNum(progress.timeout_symbols || 0, 0);
       granularityKpi.textContent = "daily";
       meta.textContent =
         `最近一次扫描状态=${status} | run_id=${progress.run_id || "-"} | ` +
@@ -2499,6 +2551,7 @@ function renderFullMarket2000Scan() {
     totalKpi.textContent = "-";
     buyPassKpi.textContent = "-";
     errorKpi.textContent = "-";
+    timeoutKpi.textContent = "-";
     granularityKpi.textContent = "-";
     meta.textContent = "尚未执行全市场扫描。";
     host.innerHTML = '<tr><td colspan="8" class="muted">暂无全市场扫描结果。</td></tr>';
@@ -2508,6 +2561,7 @@ function renderFullMarket2000Scan() {
   totalKpi.textContent = fmtNum(resp.total_symbols || 0, 0);
   buyPassKpi.textContent = fmtNum(resp.buy_pass_symbols || 0, 0);
   errorKpi.textContent = fmtNum(resp.error_symbols || 0, 0);
+  timeoutKpi.textContent = fmtNum(resp.timeout_symbols || 0, 0);
   granularityKpi.textContent = String(resp.granularity || "daily");
   meta.textContent =
     `窗口=${resp.start_date || "-"}~${resp.end_date || "-"} | run_id=${resp.run_id || "-"} | ` +
