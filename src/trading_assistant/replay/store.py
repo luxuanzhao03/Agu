@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import json
 import sqlite3
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
-from trading_assistant.core.models import ExecutionRecordCreate, SignalDecisionRecord, SignalAction
+from trading_assistant.core.models import (
+    CostModelCalibrationRecord,
+    CostModelCalibrationResult,
+    ExecutionRecordCreate,
+    SignalAction,
+    SignalDecisionRecord,
+)
 
 
 class ReplayStore:
@@ -50,11 +57,33 @@ class ReplayStore:
                 )
                 """
             )
+            self._ensure_execution_column(conn, "reference_price", "REAL")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS cost_model_calibration_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    symbol TEXT,
+                    strategy_name TEXT,
+                    start_date TEXT,
+                    end_date TEXT,
+                    sample_size INTEGER NOT NULL,
+                    executed_samples INTEGER NOT NULL,
+                    payload_json TEXT NOT NULL
+                )
+                """
+            )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_exec_signal_id ON execution_records(signal_id)"
             )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_signal_symbol_date ON signal_records(symbol, trade_date DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cost_calibration_created ON cost_model_calibration_runs(created_at DESC)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_cost_calibration_symbol ON cost_model_calibration_runs(symbol, created_at DESC)"
             )
 
     def record_signal(self, record: SignalDecisionRecord) -> str:
@@ -84,9 +113,9 @@ class ReplayStore:
             cur = conn.execute(
                 """
                 INSERT INTO execution_records(
-                    signal_id, symbol, execution_date, side, quantity, price, fee, note
+                    signal_id, symbol, execution_date, side, quantity, price, reference_price, fee, note
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.signal_id,
@@ -95,33 +124,87 @@ class ReplayStore:
                     record.side.value,
                     record.quantity,
                     record.price,
+                    record.reference_price,
                     record.fee,
                     record.note,
                 ),
             )
             return int(cur.lastrowid)
 
-    def load_pairs(self, symbol: str | None = None, start_date: date | None = None, end_date: date | None = None, limit: int = 500) -> list[sqlite3.Row]:
+    def load_pairs(
+        self,
+        symbol: str | None = None,
+        strategy_name: str | None = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
+        limit: int = 500,
+    ) -> list[sqlite3.Row]:
         sql = """
             SELECT
                 s.signal_id,
                 s.symbol,
+                s.strategy_name,
                 s.trade_date,
                 s.action AS signal_action,
                 s.confidence,
-                e.side AS executed_action,
-                e.execution_date,
-                e.quantity,
-                e.price
+                (
+                    SELECT x.side
+                    FROM execution_records x
+                    WHERE x.signal_id = s.signal_id
+                    ORDER BY x.execution_date DESC, x.id DESC
+                    LIMIT 1
+                ) AS executed_action,
+                (
+                    SELECT MAX(x.execution_date)
+                    FROM execution_records x
+                    WHERE x.signal_id = s.signal_id
+                ) AS execution_date,
+                (
+                    SELECT COALESCE(SUM(x.quantity), 0)
+                    FROM execution_records x
+                    WHERE x.signal_id = s.signal_id
+                ) AS quantity,
+                (
+                    SELECT
+                        CASE
+                            WHEN SUM(x.quantity) > 0 THEN SUM(x.price * x.quantity) / SUM(x.quantity)
+                            ELSE 0.0
+                        END
+                    FROM execution_records x
+                    WHERE x.signal_id = s.signal_id
+                ) AS price,
+                (
+                    SELECT
+                        CASE
+                            WHEN SUM(CASE WHEN x.reference_price IS NOT NULL AND x.reference_price > 0 THEN x.quantity ELSE 0 END) > 0
+                                THEN
+                                    SUM(
+                                        CASE
+                                            WHEN x.reference_price IS NOT NULL AND x.reference_price > 0
+                                                THEN x.reference_price * x.quantity
+                                            ELSE 0.0
+                                        END
+                                    ) / SUM(CASE WHEN x.reference_price IS NOT NULL AND x.reference_price > 0 THEN x.quantity ELSE 0 END)
+                            ELSE NULL
+                        END
+                    FROM execution_records x
+                    WHERE x.signal_id = s.signal_id
+                ) AS reference_price,
+                (
+                    SELECT COALESCE(SUM(x.fee), 0.0)
+                    FROM execution_records x
+                    WHERE x.signal_id = s.signal_id
+                ) AS fee
             FROM signal_records s
-            LEFT JOIN execution_records e
-              ON s.signal_id = e.signal_id
         """
         conditions: list[str] = []
         params: list[str | int] = []
         if symbol:
             conditions.append("s.symbol = ?")
             params.append(symbol)
+        if strategy_name:
+            conditions.append("s.strategy_name = ?")
+            params.append(strategy_name)
         if start_date:
             conditions.append("s.trade_date >= ?")
             params.append(start_date.isoformat())
@@ -136,6 +219,56 @@ class ReplayStore:
         with self._conn() as conn:
             rows = conn.execute(sql, params).fetchall()
         return rows
+
+    def save_cost_calibration(self, result: CostModelCalibrationResult) -> int:
+        payload = dict(result.model_dump(mode="json"))
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self._conn() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO cost_model_calibration_runs(
+                    created_at, symbol, strategy_name, start_date, end_date, sample_size, executed_samples, payload_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    created_at,
+                    result.symbol,
+                    result.strategy_name,
+                    result.start_date.isoformat() if result.start_date else None,
+                    result.end_date.isoformat() if result.end_date else None,
+                    int(result.sample_size),
+                    int(result.executed_samples),
+                    json.dumps(payload, ensure_ascii=False),
+                ),
+            )
+            return int(cur.lastrowid)
+
+    def list_cost_calibrations(self, symbol: str | None = None, limit: int = 30) -> list[CostModelCalibrationRecord]:
+        sql = """
+            SELECT id, created_at, payload_json
+            FROM cost_model_calibration_runs
+        """
+        params: list[str | int] = []
+        if symbol:
+            sql += " WHERE symbol = ?"
+            params.append(symbol)
+        sql += " ORDER BY created_at DESC LIMIT ?"
+        params.append(max(1, min(limit, 200)))
+        with self._conn() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [
+            CostModelCalibrationRecord(
+                id=int(row["id"]),
+                created_at=datetime.fromisoformat(str(row["created_at"])),
+                result=CostModelCalibrationResult.model_validate(json.loads(str(row["payload_json"]))).model_copy(
+                    update={
+                        "calibration_id": int(row["id"])
+                    }
+                ),
+            )
+            for row in rows
+        ]
 
     def signal_exists(self, signal_id: str) -> bool:
         with self._conn() as conn:
@@ -175,3 +308,10 @@ class ReplayStore:
         if not value:
             return None
         return SignalAction(value)
+
+    @staticmethod
+    def _ensure_execution_column(conn: sqlite3.Connection, column: str, column_type: str) -> None:
+        rows = conn.execute("PRAGMA table_info(execution_records)").fetchall()
+        cols = {str(row[1]) for row in rows}
+        if column not in cols:
+            conn.execute(f"ALTER TABLE execution_records ADD COLUMN {column} {column_type}")

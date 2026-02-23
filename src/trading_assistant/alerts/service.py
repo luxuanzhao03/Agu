@@ -917,6 +917,21 @@ class AlertService:
         elif event.event_type == "compliance" and payload.get("passed") is False:
             severity = SignalLevel.WARNING
             message = "Compliance preflight failed."
+        elif event.event_type == "strategy_challenge":
+            run_status = str(payload.get("run_status", "SUCCESS")).strip().upper()
+            try:
+                qualified_count = int(payload.get("qualified_count", 0) or 0)
+            except Exception:  # noqa: BLE001
+                qualified_count = 0
+            if run_status == "FAILED":
+                severity = SignalLevel.CRITICAL
+                message = "Strategy challenge failed."
+            elif run_status == "PARTIAL_FAILED":
+                severity = SignalLevel.WARNING
+                message = "Strategy challenge partially failed."
+            elif qualified_count <= 0:
+                severity = SignalLevel.WARNING
+                message = "Strategy challenge finished with zero qualified strategies."
 
         if severity == SignalLevel.INFO:
             return None

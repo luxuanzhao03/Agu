@@ -46,6 +46,10 @@ def create_holding_trade(
             "lot_size": row.lot_size,
             "quantity": row.quantity,
             "price": row.price,
+            "reference_price": row.reference_price,
+            "executed_at": (row.executed_at.isoformat() if row.executed_at else None),
+            "is_partial_fill": row.is_partial_fill,
+            "unfilled_reason": row.unfilled_reason,
             "trade_date": row.trade_date.isoformat(),
         },
     )
@@ -119,6 +123,7 @@ def analyze_holding_portfolio(
         event_type="manual_holding",
         action="analyze",
         payload={
+            "analysis_run_id": result.analysis_run_id,
             "as_of_date": req.as_of_date.isoformat(),
             "strategy_name": req.strategy_name,
             "position_count": result.summary.position_count,

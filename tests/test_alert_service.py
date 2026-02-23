@@ -420,6 +420,39 @@ def test_oncall_reconcile_from_local_endpoint(tmp_path: Path) -> None:
     assert service.list_notifications(only_unacked=True, limit=20) == []
 
 
+def test_strategy_challenge_partial_failed_maps_to_warning_alert(tmp_path: Path) -> None:
+    audit = AuditService(AuditStore(str(tmp_path / "audit.db")))
+    service = AlertService(store=AlertStore(str(tmp_path / "alert.db")), audit=audit)
+    sub_id = service.create_subscription(
+        AlertSubscriptionCreateRequest(
+            name="challenge-watch",
+            owner="research",
+            event_types=["strategy_challenge"],
+            min_severity=SignalLevel.WARNING,
+            dedupe_window_sec=1,
+            enabled=True,
+        )
+    )
+    assert sub_id > 0
+
+    audit.log(
+        "strategy_challenge",
+        "run",
+        {
+            "run_id": "r1",
+            "run_status": "PARTIAL_FAILED",
+            "qualified_count": 1,
+            "failed_strategies": ["mean_reversion"],
+        },
+        status="OK",
+    )
+    inserted = service.sync_from_audit(limit=100)
+    assert inserted == 1
+    notes = service.list_notifications(subscription_id=sub_id, only_unacked=True, limit=10)
+    assert len(notes) == 1
+    assert notes[0].severity == SignalLevel.WARNING
+
+
 def test_alert_noise_reduction_rules(tmp_path: Path) -> None:
     audit = AuditService(AuditStore(str(tmp_path / "audit.db")))
     service = AlertService(store=AlertStore(str(tmp_path / "alert.db")), audit=audit)

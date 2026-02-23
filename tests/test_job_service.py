@@ -1,9 +1,12 @@
+from datetime import date
 from pathlib import Path
 from types import SimpleNamespace
 
-from trading_assistant.core.models import JobRegisterRequest, JobType
+from trading_assistant.core.models import ExecutionRecordCreate, JobRegisterRequest, JobType, SignalAction, SignalDecisionRecord
 from trading_assistant.ops.job_service import JobService
 from trading_assistant.ops.job_store import JobStore
+from trading_assistant.replay.service import ReplayService
+from trading_assistant.replay.store import ReplayStore
 
 
 class FakePipelineRunner:
@@ -107,52 +110,95 @@ class FakeAutoTuneService:
 
 
 def _service(tmp_path: Path) -> JobService:
+    replay = ReplayService(ReplayStore(str(tmp_path / "replay.db")))
     return JobService(
         store=JobStore(str(tmp_path / "job.db")),
         pipeline=FakePipelineRunner(),
         research=FakeResearchWorkflowService(),
         reporting=FakeReportingService(),
+        replay=replay,
     )
 
 
 def _service_with_connector(tmp_path: Path) -> JobService:
+    replay = ReplayService(ReplayStore(str(tmp_path / "replay.db")))
     return JobService(
         store=JobStore(str(tmp_path / "job.db")),
         pipeline=FakePipelineRunner(),
         research=FakeResearchWorkflowService(),
         reporting=FakeReportingService(),
         event_connector=FakeEventConnectorService(),
+        replay=replay,
     )
 
 
 def _service_with_compliance(tmp_path: Path) -> JobService:
+    replay = ReplayService(ReplayStore(str(tmp_path / "replay.db")))
     return JobService(
         store=JobStore(str(tmp_path / "job.db")),
         pipeline=FakePipelineRunner(),
         research=FakeResearchWorkflowService(),
         reporting=FakeReportingService(),
         compliance_evidence=FakeComplianceEvidenceService(),
+        replay=replay,
     )
 
 
 def _service_with_alerts(tmp_path: Path) -> JobService:
+    replay = ReplayService(ReplayStore(str(tmp_path / "replay.db")))
     return JobService(
         store=JobStore(str(tmp_path / "job.db")),
         pipeline=FakePipelineRunner(),
         research=FakeResearchWorkflowService(),
         reporting=FakeReportingService(),
         alerts=FakeAlertService(),
+        replay=replay,
     )
 
 
 def _service_with_autotune(tmp_path: Path) -> JobService:
+    replay = ReplayService(ReplayStore(str(tmp_path / "replay.db")))
     return JobService(
         store=JobStore(str(tmp_path / "job.db")),
         pipeline=FakePipelineRunner(),
         research=FakeResearchWorkflowService(),
         reporting=FakeReportingService(),
         autotune=FakeAutoTuneService(),
+        replay=replay,
     )
+
+
+def _prepare_replay_samples(tmp_path: Path) -> ReplayService:
+    replay = ReplayService(ReplayStore(str(tmp_path / "replay.db")))
+    for idx in range(6):
+        signal_id = f"sig-{idx}"
+        trade_date = date(2025, 1, idx + 1)
+        replay.record_signal(
+            SignalDecisionRecord(
+                signal_id=signal_id,
+                symbol="000001",
+                strategy_name="trend_following",
+                trade_date=trade_date,
+                action=SignalAction.BUY,
+                confidence=0.8,
+                reason="x",
+                suggested_position=0.05,
+            )
+        )
+        replay.record_execution(
+            ExecutionRecordCreate(
+                signal_id=signal_id,
+                symbol="000001",
+                execution_date=trade_date,
+                side=SignalAction.BUY,
+                quantity=100,
+                price=10.0 + idx * 0.1,
+                reference_price=10.0,
+                fee=1.0,
+                note="sample",
+            )
+        )
+    return replay
 
 
 def test_job_trigger_pipeline_success(tmp_path: Path) -> None:
@@ -307,3 +353,36 @@ def test_job_trigger_execution_review_success(tmp_path: Path) -> None:
     assert run.status.value == "SUCCESS"
     assert run.result_summary["title"] == "closure report"
     assert run.result_summary["content_size"] > 0
+
+
+def test_job_trigger_cost_model_recalibration_success(tmp_path: Path) -> None:
+    replay = _prepare_replay_samples(tmp_path)
+    service = JobService(
+        store=JobStore(str(tmp_path / "job.db")),
+        pipeline=FakePipelineRunner(),
+        research=FakeResearchWorkflowService(),
+        reporting=FakeReportingService(),
+        replay=replay,
+    )
+    job_id = service.register(
+        JobRegisterRequest(
+            name="cost recalibration",
+            job_type=JobType.COST_MODEL_RECALIBRATION,
+            owner="qa",
+            payload={
+                "symbol": "000001",
+                "strategy_name": "trend_following",
+                "start_date": "2025-01-01",
+                "end_date": "2025-01-31",
+                "limit": 200,
+                "min_samples": 5,
+                "save_record": True,
+                "save_to_file": False,
+            },
+        )
+    )
+    run = service.trigger(job_id=job_id, triggered_by="qa_user")
+    assert run.status.value == "SUCCESS"
+    assert run.result_summary["symbol"] == "000001"
+    assert run.result_summary["sample_size"] == 6
+    assert run.result_summary["recommended_slippage_rate"] > 0

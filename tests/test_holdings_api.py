@@ -133,11 +133,16 @@ def test_holding_service_positions_and_analysis(tmp_path: Path) -> None:
             max_new_buys=2,
             max_single_position_ratio=0.35,
             lot_size=100,
+            intraday_interval="15m",
+            intraday_lookback_days=5,
         )
     )
     assert result.summary.position_count == 1
     assert result.positions
     assert result.recommendations
+    assert result.positions[0].recommended_execution_window
+    assert result.recommendations[0].execution_window
+    assert result.positions[0].style_regime
 
 
 def test_holdings_api_flow(tmp_path: Path) -> None:
@@ -159,15 +164,24 @@ def test_holdings_api_flow(tmp_path: Path) -> None:
                 "lots": 2,
                 "lot_size": 100,
                 "fee": 1.2,
+                "reference_price": 10.05,
+                "executed_at": "2025-01-08T10:15:00",
+                "is_partial_fill": True,
+                "unfilled_reason": "liquidity_short",
                 "note": "manual trade",
             },
         )
         assert create_resp.status_code == 200
-        trade_id = int(create_resp.json()["id"])
+        created_payload = create_resp.json()
+        trade_id = int(created_payload["id"])
+        assert created_payload["reference_price"] == 10.05
+        assert created_payload["is_partial_fill"] is True
+        assert created_payload["unfilled_reason"] == "liquidity_short"
 
         list_resp = client.get("/holdings/trades?limit=200")
         assert list_resp.status_code == 200
         assert len(list_resp.json()) == 1
+        assert list_resp.json()[0]["is_partial_fill"] is True
 
         positions_resp = client.get("/holdings/positions?as_of_date=2025-01-10")
         assert positions_resp.status_code == 200
@@ -185,6 +199,8 @@ def test_holdings_api_flow(tmp_path: Path) -> None:
                 "max_new_buys": 1,
                 "max_single_position_ratio": 0.4,
                 "lot_size": 100,
+                "intraday_interval": "15m",
+                "intraday_lookback_days": 5,
             },
         )
         assert analyze_resp.status_code == 200
@@ -192,6 +208,11 @@ def test_holdings_api_flow(tmp_path: Path) -> None:
         assert payload["summary"]["position_count"] == 1
         assert len(payload["positions"]) >= 1
         assert len(payload["recommendations"]) >= 1
+        assert "recommended_execution_window" in payload["positions"][0]
+        assert "execution_window" in payload["recommendations"][0]
+        assert "style_regime" in payload["positions"][0]
+        assert "style_regime" in payload["recommendations"][0]
+        assert payload["analysis_run_id"]
 
         delete_resp = client.delete(f"/holdings/trades/{trade_id}")
         assert delete_resp.status_code == 200

@@ -4,7 +4,7 @@ from functools import lru_cache
 import os
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 try:
     from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -148,6 +148,19 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _strip_string_values(cls, data):
+        if not isinstance(data, dict):
+            return data
+        normalized: dict[str, object] = {}
+        for key, value in data.items():
+            if isinstance(value, str):
+                normalized[key] = value.strip()
+            else:
+                normalized[key] = value
+        return normalized
 
     @property
     def provider_priority_list(self) -> list[str]:

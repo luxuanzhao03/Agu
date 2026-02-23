@@ -36,10 +36,13 @@ def run_strategy_challenge(
             "strategy_names": result.strategy_names,
             "evaluated_count": result.evaluated_count,
             "qualified_count": result.qualified_count,
+            "run_status": result.run_status.value,
+            "error_count": result.error_count,
+            "failed_strategies": result.failed_strategies,
             "champion_strategy": result.champion_strategy,
             "runner_up_strategy": result.runner_up_strategy,
             "rollout_plan": (result.rollout_plan.model_dump(mode="json") if result.rollout_plan is not None else None),
         },
+        status=("ERROR" if result.run_status.value == "FAILED" else "OK"),
     )
     return result
-

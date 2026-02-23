@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 import math
 
 import pandas as pd
@@ -88,6 +89,9 @@ class BacktestEngine:
         for i in range(len(sorted_bars)):
             window = sorted_bars.iloc[: i + 1]
             features = self.factor_engine.compute(window)
+            latest_bar = window.iloc[-1]
+            parsed_trade_date = pd.to_datetime(latest_bar.get("trade_date"), errors="coerce")
+            trade_date = parsed_trade_date.date() if not pd.isna(parsed_trade_date) else req.start_date
             context = StrategyContext(
                 params=req.strategy_params,
                 market_state={
@@ -104,11 +108,25 @@ class BacktestEngine:
                 },
             )
             signals = strategy.generate(features, context=context)
-            if not signals:
+            signal = signals[-1] if signals else None
+            close = float(latest_bar["close"])
+            position_value = state.quantity * close
+            equity = state.cash + position_value
+            state.peak_equity = max(state.peak_equity, equity)
+            drawdown = 0.0 if state.peak_equity <= 0 else max(0.0, 1 - equity / state.peak_equity)
+
+            if signal is None:
+                equity_curve.append(
+                    EquityPoint(
+                        date=trade_date,
+                        cash=round(state.cash, 2),
+                        position_value=round(position_value, 2),
+                        equity=round(equity, 2),
+                        drawdown=round(drawdown, 6),
+                    )
+                )
                 continue
 
-            signal = signals[-1]
-            close = float(window.iloc[-1]["close"])
             _ = apply_small_capital_overrides(
                 signal=signal,
                 enable_small_capital_mode=req.enable_small_capital_mode,
@@ -165,10 +183,6 @@ class BacktestEngine:
                 fundamental_score=fundamental_score,
             )
 
-            position_value = state.quantity * close
-            equity = state.cash + position_value
-            state.peak_equity = max(state.peak_equity, equity)
-            drawdown = 0.0 if state.peak_equity <= 0 else max(0.0, 1 - equity / state.peak_equity)
             portfolio = PortfolioSnapshot(
                 total_value=equity,
                 cash=state.cash,
@@ -178,7 +192,7 @@ class BacktestEngine:
             )
 
             available_qty = state.quantity
-            if buy_date == signal.trade_date:
+            if buy_date == trade_date:
                 available_qty = 0
             position = Position(
                 symbol=req.symbol,
@@ -224,7 +238,7 @@ class BacktestEngine:
                 state.blocked_signal_count += 1
                 trades.append(
                     BacktestTrade(
-                        date=signal.trade_date,
+                        date=trade_date,
                         action=signal.action,
                         price=close,
                         quantity=0,
@@ -237,6 +251,7 @@ class BacktestEngine:
                 self._execute_signal(
                     req=req,
                     signal=signal,
+                    trade_date=trade_date,
                     close=close,
                     state=state,
                     trades=trades,
@@ -249,7 +264,7 @@ class BacktestEngine:
                     is_one_word_limit_down=bool(window.iloc[-1].get("is_one_word_limit_down", False)),
                 )
                 if signal.action == SignalAction.BUY and state.quantity > 0:
-                    buy_date = signal.trade_date
+                    buy_date = trade_date
                 elif signal.action == SignalAction.SELL and state.quantity == 0:
                     buy_date = None
 
@@ -261,7 +276,7 @@ class BacktestEngine:
             )
             equity_curve.append(
                 EquityPoint(
-                    date=signal.trade_date,
+                    date=trade_date,
                     cash=round(state.cash, 2),
                     position_value=round(updated_position_value, 2),
                     equity=round(updated_equity, 2),
@@ -275,6 +290,7 @@ class BacktestEngine:
         self,
         req: BacktestRequest,
         signal,
+        trade_date: date,
         close: float,
         state: BacktestState,
         trades: list[BacktestTrade],
@@ -332,7 +348,7 @@ class BacktestEngine:
             if qty <= 0:
                 trades.append(
                     BacktestTrade(
-                        date=signal.trade_date,
+                        date=trade_date,
                         action=SignalAction.BUY,
                         price=round(close, 4),
                         quantity=0,
@@ -379,7 +395,7 @@ class BacktestEngine:
                 state.avg_cost = ((prev_cost * prev_qty) + total_cost) / state.quantity
             trades.append(
                 BacktestTrade(
-                    date=signal.trade_date,
+                    date=trade_date,
                     action=SignalAction.BUY,
                     price=round(trade_price, 4),
                     quantity=qty,
@@ -427,7 +443,7 @@ class BacktestEngine:
             if qty <= 0:
                 trades.append(
                     BacktestTrade(
-                        date=signal.trade_date,
+                        date=trade_date,
                         action=SignalAction.SELL,
                         price=round(close, 4),
                         quantity=0,
@@ -462,7 +478,7 @@ class BacktestEngine:
                 state.avg_cost = 0.0
             trades.append(
                 BacktestTrade(
-                    date=signal.trade_date,
+                    date=trade_date,
                     action=SignalAction.SELL,
                     price=round(trade_price, 4),
                     quantity=qty,

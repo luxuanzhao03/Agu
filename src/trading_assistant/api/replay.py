@@ -7,6 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from trading_assistant.audit.service import AuditService
 from trading_assistant.core.container import get_audit_service, get_replay_service
 from trading_assistant.core.models import (
+    CostModelCalibrationRecord,
+    CostModelCalibrationRequest,
+    CostModelCalibrationResult,
     ExecutionAttributionReport,
     ExecutionRecordCreate,
     ExecutionReplayReport,
@@ -58,7 +61,14 @@ def record_execution(
     audit.log(
         event_type="replay_execution",
         action="record",
-        payload={"signal_id": req.signal_id, "symbol": req.symbol, "quantity": req.quantity},
+        payload={
+            "signal_id": req.signal_id,
+            "symbol": req.symbol,
+            "quantity": req.quantity,
+            "price": req.price,
+            "reference_price": req.reference_price,
+            "fee": req.fee,
+        },
     )
     return row_id
 
@@ -66,22 +76,74 @@ def record_execution(
 @router.get("/report", response_model=ExecutionReplayReport)
 def replay_report(
     symbol: str | None = Query(default=None),
+    strategy_name: str | None = Query(default=None),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     limit: int = Query(default=500, ge=1, le=2000),
     replay: ReplayService = Depends(get_replay_service),
     _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.RESEARCH, UserRole.RISK)),
 ) -> ExecutionReplayReport:
-    return replay.report(symbol=symbol, start_date=start_date, end_date=end_date, limit=limit)
+    return replay.report(
+        symbol=symbol,
+        strategy_name=strategy_name,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
 
 
 @router.get("/attribution", response_model=ExecutionAttributionReport)
 def replay_attribution(
     symbol: str | None = Query(default=None),
+    strategy_name: str | None = Query(default=None),
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
     limit: int = Query(default=500, ge=1, le=2000),
     replay: ReplayService = Depends(get_replay_service),
     _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.RESEARCH, UserRole.RISK)),
 ) -> ExecutionAttributionReport:
-    return replay.attribution(symbol=symbol, start_date=start_date, end_date=end_date, limit=limit)
+    return replay.attribution(
+        symbol=symbol,
+        strategy_name=strategy_name,
+        start_date=start_date,
+        end_date=end_date,
+        limit=limit,
+    )
+
+
+@router.post("/cost-model/calibrate", response_model=CostModelCalibrationResult)
+def calibrate_cost_model(
+    req: CostModelCalibrationRequest,
+    replay: ReplayService = Depends(get_replay_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.RESEARCH, UserRole.RISK, UserRole.ADMIN)),
+) -> CostModelCalibrationResult:
+    result = replay.calibrate_cost_model(req)
+    audit.log(
+        event_type="cost_model",
+        action="calibrate",
+        payload={
+            "symbol": req.symbol,
+            "strategy_name": req.strategy_name,
+            "sample_size": result.sample_size,
+            "executed_samples": result.executed_samples,
+            "slippage_coverage": result.slippage_coverage,
+            "recommended_slippage_rate": result.recommended_slippage_rate,
+            "recommended_impact_cost_coeff": result.recommended_impact_cost_coeff,
+            "recommended_fill_probability_floor": result.recommended_fill_probability_floor,
+            "confidence": result.confidence,
+            "calibration_id": result.calibration_id,
+        },
+        status="OK",
+    )
+    return result
+
+
+@router.get("/cost-model/calibrations", response_model=list[CostModelCalibrationRecord])
+def list_cost_model_calibrations(
+    symbol: str | None = Query(default=None),
+    limit: int = Query(default=30, ge=1, le=200),
+    replay: ReplayService = Depends(get_replay_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.AUDIT, UserRole.RESEARCH, UserRole.RISK, UserRole.ADMIN)),
+) -> list[CostModelCalibrationRecord]:
+    return replay.list_cost_calibrations(symbol=symbol, limit=limit)

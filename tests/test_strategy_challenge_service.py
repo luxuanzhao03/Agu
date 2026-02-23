@@ -8,7 +8,12 @@ import pandas as pd
 from trading_assistant.autotune.service import AutoTuneService
 from trading_assistant.autotune.store import AutoTuneStore
 from trading_assistant.challenge.service import StrategyChallengeService
-from trading_assistant.core.models import BacktestMetrics, BacktestResult, StrategyChallengeRequest
+from trading_assistant.core.models import (
+    BacktestMetrics,
+    BacktestResult,
+    StrategyChallengeRequest,
+    StrategyChallengeRunStatus,
+)
 from trading_assistant.strategy.governance_service import StrategyGovernanceService
 from trading_assistant.strategy.governance_store import StrategyGovernanceStore
 from trading_assistant.strategy.registry import StrategyRegistry
@@ -156,6 +161,9 @@ def test_strategy_challenge_run_returns_champion_and_rollout_plan(tmp_path: Path
     assert len(out.results) == 3
     assert out.results[0].qualified is True
     assert out.results[0].ranking_score is not None
+    assert out.run_status == StrategyChallengeRunStatus.SUCCESS
+    assert out.error_count == 0
+    assert out.failed_strategies == []
 
 
 def test_strategy_challenge_returns_no_champion_when_gate_is_too_strict(tmp_path: Path) -> None:
@@ -180,4 +188,25 @@ def test_strategy_challenge_returns_no_champion_when_gate_is_too_strict(tmp_path
     assert out.rollout_plan is not None
     assert out.rollout_plan.enabled is False
     assert out.rollout_plan.rollback_triggers
+    assert out.run_status == StrategyChallengeRunStatus.SUCCESS
+    assert out.error_count == 0
 
+
+def test_strategy_challenge_partial_failed_status(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    req = StrategyChallengeRequest(
+        symbol="000001",
+        start_date=date(2024, 1, 1),
+        end_date=date(2025, 12, 31),
+        strategy_names=["trend_following", "mean_reversion"],
+        search_space_map={
+            "mean_reversion": {
+                "z_enter": ["bad-float"],
+            }
+        },
+        per_strategy_max_combinations=20,
+    )
+    out = service.run(req)
+    assert out.run_status == StrategyChallengeRunStatus.PARTIAL_FAILED
+    assert out.error_count == 1
+    assert "mean_reversion" in out.failed_strategies

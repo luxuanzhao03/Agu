@@ -1140,6 +1140,21 @@
                 <input id="holdingTradeFeeInput" type="number" min="0" step="0.0001" value="0" />
               </label>
               <label>
+                reference_price（可选）
+                <input id="holdingTradeReferencePriceInput" type="number" min="0" step="0.0001" placeholder="默认留空" />
+              </label>
+              <label>
+                executed_at（可选）
+                <input id="holdingTradeExecutedAtInput" type="datetime-local" />
+              </label>
+              <label class="inline">
+                <input id="holdingTradePartialFillInput" type="checkbox" /> is_partial_fill
+              </label>
+              <label>
+                unfilled_reason（可选）
+                <input id="holdingTradeUnfilledReasonInput" type="text" placeholder="如：流动性不足/撤单" />
+              </label>
+              <label>
                 note
                 <textarea id="holdingTradeNoteInput" rows="3" placeholder="记录手工成交补充说明"></textarea>
               </label>
@@ -1181,6 +1196,20 @@
                 <input id="holdingAnalyzeLotSizeInput" type="number" min="1" step="1" value="100" />
               </label>
               <label>
+                intraday_interval
+                <select id="holdingIntradayIntervalInput">
+                  <option value="15m" selected>15m（推荐）</option>
+                  <option value="5m">5m</option>
+                  <option value="30m">30m</option>
+                  <option value="60m">60m</option>
+                  <option value="1m">1m</option>
+                </select>
+              </label>
+              <label>
+                intraday_lookback_days
+                <input id="holdingIntradayLookbackInput" type="number" min="1" max="15" step="1" value="5" />
+              </label>
+              <label>
                 candidate_symbols（逗号/空格/换行分隔）
                 <textarea id="holdingCandidateSymbolsInput" rows="4" placeholder="000001,600000,000333"></textarea>
               </label>
@@ -1192,6 +1221,195 @@
             <p class="muted">建议表会给出：买入/加仓/减仓/退出动作、目标手数、置信度、预期收益与风险标签。</p>
           </article>
         </div>
+
+        <article class="card">
+          <h3>策略准确性看板（/reports/strategy-accuracy）</h3>
+          <p class="muted">用样本外命中率、Brier 分数、收益偏差、成本后收益评估当前策略在真实手工执行环境下的可靠性。</p>
+          <div class="actions-row wrap">
+            <label>
+              lookback_days
+              <input id="holdingAccLookbackInput" type="number" min="1" max="3650" step="1" value="90" />
+            </label>
+            <label>
+              end_date
+              <input id="holdingAccEndDateInput" type="date" />
+            </label>
+            <label>
+              strategy_name（可选）
+              <input id="holdingAccStrategyInput" type="text" placeholder="留空=全部策略" />
+            </label>
+            <label>
+              symbol（可选）
+              <input id="holdingAccSymbolInput" type="text" placeholder="留空=全部标的" />
+            </label>
+            <label>
+              min_confidence
+              <input id="holdingAccMinConfidenceInput" type="number" min="0" max="1" step="0.01" value="0" />
+            </label>
+            <label>
+              limit
+              <input id="holdingAccLimitInput" type="number" min="1" max="20000" step="1" value="4000" />
+            </label>
+            <button id="loadHoldingAccuracyBtn" type="button">刷新准确性看板</button>
+          </div>
+          <p id="holdingAccuracyMeta" class="muted">尚未加载准确性报告。</p>
+
+          <div class="kpi-grid compact">
+            <article class="kpi-card"><p>样本数</p><h3 id="holdingAccSampleKpi">-</h3></article>
+            <article class="kpi-card"><p>命中率</p><h3 id="holdingAccHitRateKpi">-</h3></article>
+            <article class="kpi-card"><p>Brier</p><h3 id="holdingAccBrierKpi">-</h3></article>
+            <article class="kpi-card"><p>成本后收益</p><h3 id="holdingAccCostAdjKpi">-</h3></article>
+            <article class="kpi-card"><p>执行覆盖率</p><h3 id="holdingAccCoverageKpi">-</h3></article>
+          </div>
+
+          <div class="grid two">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>strategy</th>
+                    <th>sample</th>
+                    <th>hit_rate</th>
+                    <th>brier</th>
+                    <th>bias</th>
+                    <th>cost_adj</th>
+                    <th>coverage</th>
+                  </tr>
+                </thead>
+                <tbody id="holdingAccByStrategyRows"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>symbol</th>
+                    <th>sample</th>
+                    <th>hit_rate</th>
+                    <th>brier</th>
+                    <th>bias</th>
+                    <th>cost_adj</th>
+                    <th>coverage</th>
+                  </tr>
+                </thead>
+                <tbody id="holdingAccBySymbolRows"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>as_of</th>
+                  <th>next_trade</th>
+                  <th>strategy</th>
+                  <th>symbol</th>
+                  <th>action</th>
+                  <th>confidence</th>
+                  <th>exp_ret</th>
+                  <th>real_ret</th>
+                  <th>hit</th>
+                  <th>brier</th>
+                  <th>executed</th>
+                  <th>cost_bps</th>
+                  <th>cost_adj_ret</th>
+                </tr>
+              </thead>
+              <tbody id="holdingAccDetailRows"></tbody>
+            </table>
+          </div>
+          <h4>解读提示</h4>
+          <ul id="holdingAccuracyNoteList" class="list"></ul>
+        </article>
+
+        <article class="card">
+          <h3>上线准入门槛表（/reports/go-live-readiness）</h3>
+          <p class="muted">统一判断是否可继续灰度：硬门槛（准确性/成本/执行/挑战赛）+ 自动回滚触发器 + 每日验收清单。</p>
+          <div class="actions-row wrap">
+            <label>
+              lookback_days
+              <input id="goLiveLookbackInput" type="number" min="1" max="3650" step="1" value="90" />
+            </label>
+            <label>
+              end_date
+              <input id="goLiveEndDateInput" type="date" />
+            </label>
+            <label>
+              strategy_name（可选）
+              <input id="goLiveStrategyInput" type="text" placeholder="留空=全策略口径" />
+            </label>
+            <label>
+              symbol（可选）
+              <input id="goLiveSymbolInput" type="text" placeholder="留空=全标的口径" />
+            </label>
+            <label>
+              min_confidence
+              <input id="goLiveMinConfidenceInput" type="number" min="0" max="1" step="0.01" value="0" />
+            </label>
+            <label>
+              limit
+              <input id="goLiveLimitInput" type="number" min="1" max="20000" step="1" value="4000" />
+            </label>
+            <button id="loadGoLiveReadinessBtn" type="button">刷新上线准入报告</button>
+          </div>
+          <p id="goLiveMeta" class="muted">尚未加载上线准入报告。</p>
+          <div class="kpi-grid compact">
+            <article class="kpi-card"><p>是否可灰度</p><h3 id="goLivePassKpi">-</h3></article>
+            <article class="kpi-card"><p>Readiness</p><h3 id="goLiveLevelKpi">-</h3></article>
+            <article class="kpi-card"><p>硬失败门槛</p><h3 id="goLiveFailedGateKpi">-</h3></article>
+            <article class="kpi-card"><p>预警门槛</p><h3 id="goLiveWarnGateKpi">-</h3></article>
+          </div>
+
+          <div class="grid two">
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>gate</th>
+                    <th>passed</th>
+                    <th>actual</th>
+                    <th>threshold</th>
+                    <th>rule</th>
+                    <th>severity</th>
+                    <th>detail</th>
+                  </tr>
+                </thead>
+                <tbody id="goLiveGateRows"></tbody>
+              </table>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>rollback trigger</th>
+                    <th>condition</th>
+                    <th>action</th>
+                    <th>owner</th>
+                  </tr>
+                </thead>
+                <tbody id="goLiveRollbackRows"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <h4>每日验收清单</h4>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>item</th>
+                  <th>status</th>
+                  <th>detail</th>
+                  <th>evidence</th>
+                </tr>
+              </thead>
+              <tbody id="goLiveChecklistRows"></tbody>
+            </table>
+          </div>
+          <h4>建议说明</h4>
+          <ul id="goLiveNoteList" class="list"></ul>
+        </article>
 
         <article class="card">
           <h3>成交台账</h3>
@@ -1224,6 +1442,10 @@
                   <th>name</th>
                   <th>side</th>
                   <th>price</th>
+                  <th>reference_price</th>
+                  <th>executed_at</th>
+                  <th>partial_fill</th>
+                  <th>unfilled_reason</th>
                   <th>lots</th>
                   <th>qty</th>
                   <th>fee</th>
@@ -1289,6 +1511,11 @@
                   <th>up_prob</th>
                   <th>suggested_action</th>
                   <th>delta_lots</th>
+                  <th>exec_window</th>
+                  <th>avoid_windows</th>
+                  <th>intraday_risk</th>
+                  <th>event_net</th>
+                  <th>style_regime</th>
                   <th>analysis_note</th>
                 </tr>
               </thead>
@@ -1309,6 +1536,12 @@
                   <th>expected_ret</th>
                   <th>up_prob</th>
                   <th>next_trade_date</th>
+                  <th>style_regime</th>
+                  <th>exec_window</th>
+                  <th>avoid_windows</th>
+                  <th>intraday_risk</th>
+                  <th>stop_loss_hint</th>
+                  <th>take_profit_hint</th>
                   <th>risk_flags</th>
                   <th>rationale</th>
                 </tr>
@@ -1411,6 +1644,10 @@
                 <input id="execPrice" type="number" min="0" step="0.0001" value="0" />
               </label>
               <label>
+                reference_price
+                <input id="execReferencePrice" type="number" min="0" step="0.0001" value="" placeholder="用于计算执行滑点" />
+              </label>
+              <label>
                 fee
                 <input id="execFee" type="number" min="0" step="0.0001" value="0" />
               </label>
@@ -1432,6 +1669,10 @@
             <label>
               symbol
               <input id="reportSymbol" type="text" placeholder="留空=全部" />
+            </label>
+            <label>
+              strategy_name
+              <input id="reportStrategyName" type="text" placeholder="留空=全部" />
             </label>
             <label>
               start_date
@@ -1482,6 +1723,10 @@
               <input id="attrSymbolInput" type="text" placeholder="留空=全部" />
             </label>
             <label>
+              strategy_name
+              <input id="attrStrategyInput" type="text" placeholder="留空=全部" />
+            </label>
+            <label>
               start_date
               <input id="attrStartDateInput" type="date" />
             </label>
@@ -1511,6 +1756,8 @@
                     <tr>
                       <th>reason_code</th>
                       <th>count</th>
+                      <th>ratio</th>
+                      <th>drag_bps</th>
                     </tr>
                   </thead>
                   <tbody id="attributionReasonRows"></tbody>
@@ -1529,8 +1776,10 @@
                 <tr>
                   <th>signal_id</th>
                   <th>symbol</th>
+                  <th>strategy</th>
                   <th>reason</th>
                   <th>severity</th>
+                  <th>drag_bps</th>
                   <th>detail</th>
                   <th>suggestion</th>
                 </tr>
@@ -1541,6 +1790,87 @@
           <h4>Closure 报表输出</h4>
           <p id="closureReportMeta" class="muted">尚未生成 closure 报表。</p>
           <pre id="closureReportPreview" class="code-block">-</pre>
+
+          <h4>成本模型重估（/replay/cost-model/calibrate）</h4>
+          <div class="actions-row wrap">
+            <label>
+              symbol
+              <input id="costModelSymbol" type="text" placeholder="留空=全部" />
+            </label>
+            <label>
+              strategy_name
+              <input id="costModelStrategy" type="text" placeholder="留空=全部" />
+            </label>
+            <label>
+              start_date
+              <input id="costModelStartDate" type="date" />
+            </label>
+            <label>
+              end_date
+              <input id="costModelEndDate" type="date" />
+            </label>
+            <label>
+              limit
+              <input id="costModelLimit" type="number" min="1" max="5000" value="1000" />
+            </label>
+            <label>
+              min_samples
+              <input id="costModelMinSamples" type="number" min="1" max="2000" value="30" />
+            </label>
+            <label class="checkbox-inline">
+              <input id="costModelSaveRecord" type="checkbox" checked />
+              保存重估记录
+            </label>
+            <button id="runCostCalibrationBtn" type="button">运行成本重估</button>
+          </div>
+          <p id="costModelMeta" class="muted">尚未运行成本模型重估。</p>
+          <div class="grid two">
+            <div>
+              <h4>推荐参数</h4>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>parameter</th>
+                      <th>value</th>
+                    </tr>
+                  </thead>
+                  <tbody id="costModelRecommendationRows"></tbody>
+                </table>
+              </div>
+            </div>
+            <div>
+              <h4>说明</h4>
+              <ul id="costModelNoteList" class="list"></ul>
+            </div>
+          </div>
+          <h4>重估历史（/replay/cost-model/calibrations）</h4>
+          <div class="actions-row wrap">
+            <label>
+              history_limit
+              <input id="costModelHistoryLimit" type="number" min="1" max="200" value="30" />
+            </label>
+            <button id="loadCostCalibrationHistoryBtn" type="button" class="secondary">刷新重估历史</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>id</th>
+                  <th>created_at</th>
+                  <th>symbol</th>
+                  <th>strategy</th>
+                  <th>samples</th>
+                  <th>coverage</th>
+                  <th>slippage_rate</th>
+                  <th>impact_coeff</th>
+                  <th>fill_floor</th>
+                  <th>confidence</th>
+                </tr>
+              </thead>
+              <tbody id="costModelHistoryRows"></tbody>
+            </table>
+          </div>
         </article>
       </section>
     </main>

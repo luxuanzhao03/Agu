@@ -24,8 +24,18 @@ def test_trading_workbench_ui_route() -> None:
     assert "submitHoldingTradeBtn" in resp.text
     assert "runHoldingAnalyzeBtn" in resp.text
     assert "holdingRecommendationRows" in resp.text
+    assert "holdingIntradayIntervalInput" in resp.text
+    assert "holdingIntradayLookbackInput" in resp.text
+    assert "holdingTradeReferencePriceInput" in resp.text
+    assert "holdingTradeExecutedAtInput" in resp.text
+    assert "loadHoldingAccuracyBtn" in resp.text
+    assert "holdingAccDetailRows" in resp.text
+    assert "loadGoLiveReadinessBtn" in resp.text
+    assert "goLiveGateRows" in resp.text
     assert "loadReplayAttributionBtn" in resp.text
     assert "closureReportPreview" in resp.text
+    assert "runCostCalibrationBtn" in resp.text
+    assert "costModelHistoryRows" in resp.text
     assert "/market/bars" in resp.text
     assert "/portfolio/rebalance/plan" in resp.text
     assert 'data-small-cap-template="2000"' in resp.text
@@ -47,8 +57,16 @@ def test_trading_workbench_ui_route() -> None:
     assert "submitHoldingTrade" in js.text
     assert "loadHoldingPositions" in js.text
     assert "runHoldingAnalyze" in js.text
+    assert "buildHoldingAccuracyQuery" in js.text
+    assert "loadHoldingAccuracyReport" in js.text
+    assert "renderHoldingAccuracy" in js.text
+    assert "buildGoLiveReadinessQuery" in js.text
+    assert "loadGoLiveReadinessReport" in js.text
+    assert "renderGoLiveReadiness" in js.text
     assert "loadReplayAttribution" in js.text
     assert "generateClosureReport" in js.text
+    assert "runCostCalibration" in js.text
+    assert "loadCostCalibrationHistory" in js.text
     assert "SMALL_CAPITAL_TEMPLATE_LIBRARY" in js.text
     assert "applySmallCapitalTemplate" in js.text
 

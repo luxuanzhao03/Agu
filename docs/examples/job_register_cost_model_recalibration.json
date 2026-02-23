@@ -1,0 +1,22 @@
+{
+  "name": "weekly_cost_model_recalibration",
+  "job_type": "cost_model_recalibration",
+  "owner": "ops",
+  "schedule_cron": "30 18 * * 5",
+  "payload": {
+    "symbol": null,
+    "strategy_name": null,
+    "start_date": "2025-01-01",
+    "end_date": "2025-12-31",
+    "limit": 1500,
+    "min_samples": 60,
+    "save_record": true,
+    "save_to_file": true,
+    "_retry": {
+      "max_retries": 1,
+      "backoff_seconds": 5
+    }
+  },
+  "enabled": true,
+  "description": "Weekly calibration for slippage/impact/fill cost assumptions based on manual execution replay."
+}

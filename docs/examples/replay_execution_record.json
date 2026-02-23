@@ -5,6 +5,7 @@
   "side": "BUY",
   "quantity": 1000,
   "price": 10.25,
+  "reference_price": 10.18,
   "fee": 3.1,
   "note": "manual order from broker client"
 }

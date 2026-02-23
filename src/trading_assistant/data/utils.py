@@ -66,6 +66,138 @@ def normalize_akshare_daily(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     ].sort_values("trade_date")
 
 
+def normalize_akshare_intraday(df: pd.DataFrame, symbol: str, interval: str) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame(
+            columns=[
+                "bar_time",
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount",
+                "interval",
+                "is_suspended",
+                "is_st",
+            ]
+        )
+
+    column_aliases = {
+        "bar_time": ("bar_time", "datetime", "time", "时间", "日期", "date"),
+        "open": ("open", "开盘"),
+        "close": ("close", "收盘"),
+        "high": ("high", "最高"),
+        "low": ("low", "最低"),
+        "volume": ("volume", "成交量"),
+        "amount": ("amount", "成交额", "成交额(元)", "成交金额"),
+    }
+
+    out = df.copy()
+    rename_map: dict[str, str] = {}
+    lower_cols = {str(col).strip().lower(): str(col) for col in out.columns}
+    for target, candidates in column_aliases.items():
+        found = None
+        for cand in candidates:
+            key = str(cand).strip().lower()
+            if key in lower_cols:
+                found = lower_cols[key]
+                break
+        if found is not None:
+            rename_map[found] = target
+    out = out.rename(columns=rename_map)
+
+    required = ["bar_time", "open", "high", "low", "close", "volume"]
+    for col in required:
+        if col not in out.columns:
+            return pd.DataFrame(
+                columns=[
+                    "bar_time",
+                    "symbol",
+                    "open",
+                    "high",
+                    "low",
+                    "close",
+                    "volume",
+                    "amount",
+                    "interval",
+                    "is_suspended",
+                    "is_st",
+                ]
+            )
+
+    out["bar_time"] = pd.to_datetime(out["bar_time"], errors="coerce")
+    out = out[out["bar_time"].notna()].copy()
+    if out.empty:
+        return pd.DataFrame(
+            columns=[
+                "bar_time",
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount",
+                "interval",
+                "is_suspended",
+                "is_st",
+            ]
+        )
+
+    for col in ("open", "high", "low", "close", "volume"):
+        out[col] = pd.to_numeric(out[col], errors="coerce")
+    if "amount" not in out.columns:
+        out["amount"] = out["close"].fillna(0.0) * out["volume"].fillna(0.0)
+    else:
+        out["amount"] = pd.to_numeric(out["amount"], errors="coerce")
+        amount_missing = out["amount"].isna()
+        if amount_missing.any():
+            out.loc[amount_missing, "amount"] = out.loc[amount_missing, "close"].fillna(0.0) * out.loc[
+                amount_missing, "volume"
+            ].fillna(0.0)
+
+    out["symbol"] = symbol
+    out["interval"] = interval
+    out["is_suspended"] = False
+    out["is_st"] = False
+
+    out = out.dropna(subset=["open", "high", "low", "close"])
+    if out.empty:
+        return pd.DataFrame(
+            columns=[
+                "bar_time",
+                "symbol",
+                "open",
+                "high",
+                "low",
+                "close",
+                "volume",
+                "amount",
+                "interval",
+                "is_suspended",
+                "is_st",
+            ]
+        )
+
+    return out[
+        [
+            "bar_time",
+            "symbol",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "amount",
+            "interval",
+            "is_suspended",
+            "is_st",
+        ]
+    ].sort_values("bar_time")
+
+
 def normalize_tushare_daily(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(

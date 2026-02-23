@@ -15,6 +15,7 @@ from trading_assistant.core.models import (
     StrategyChallengeRequest,
     StrategyChallengeResult,
     StrategyChallengeRolloutPlan,
+    StrategyChallengeRunStatus,
     StrategyChallengeStrategyResult,
 )
 from trading_assistant.data.composite_provider import CompositeDataProvider
@@ -116,6 +117,14 @@ class StrategyChallengeService:
         qualified = [item for item in ordered if item.qualified]
         champion = qualified[0] if qualified else None
         runner_up = qualified[1] if len(qualified) > 1 else None
+        failed_strategies = [item.strategy_name for item in ordered if bool(item.error)]
+        error_count = len(failed_strategies)
+        if error_count <= 0:
+            run_status = StrategyChallengeRunStatus.SUCCESS
+        elif error_count >= len(ordered):
+            run_status = StrategyChallengeRunStatus.FAILED
+        else:
+            run_status = StrategyChallengeRunStatus.PARTIAL_FAILED
 
         return StrategyChallengeResult(
             run_id=run_id,
@@ -126,12 +135,17 @@ class StrategyChallengeService:
             strategy_names=strategy_names,
             evaluated_count=total_evaluated,
             qualified_count=len(qualified),
+            run_status=run_status,
+            error_count=error_count,
+            failed_strategies=failed_strategies,
             champion_strategy=(champion.strategy_name if champion is not None else None),
             runner_up_strategy=(runner_up.strategy_name if runner_up is not None else None),
             market_fit_summary=self._build_summary(
                 req=req,
                 ordered=ordered,
                 champion=champion,
+                run_status=run_status,
+                error_count=error_count,
             ),
             rollout_plan=self._build_rollout_plan(req=req, champion=champion),
             results=ordered,
@@ -366,22 +380,27 @@ class StrategyChallengeService:
         req: StrategyChallengeRequest,
         ordered: list[StrategyChallengeStrategyResult],
         champion: StrategyChallengeStrategyResult | None,
+        run_status: StrategyChallengeRunStatus,
+        error_count: int,
     ) -> str:
         if not ordered:
-            return "No strategy result generated."
+            return f"run_status={run_status.value}; no strategy result generated."
         qualified_count = len([item for item in ordered if item.qualified])
         if champion is None:
             return (
+                f"run_status={run_status.value}; errors={error_count}; "
                 f"0/{len(ordered)} strategies passed hard gates. "
                 "No strategy is safe to promote under current constraints."
             )
         metric = champion.validation_metrics or champion.full_backtest_metrics
         if metric is None:
             return (
+                f"run_status={run_status.value}; errors={error_count}; "
                 f"{qualified_count}/{len(ordered)} strategies qualified. "
                 f"Champion={champion.strategy_name}."
             )
         return (
+            f"run_status={run_status.value}; errors={error_count}; "
             f"{qualified_count}/{len(ordered)} strategies qualified. "
             f"Champion={champion.strategy_name}; "
             f"validation_return={float(metric.total_return):.4f}, "
@@ -426,4 +445,3 @@ class StrategyChallengeService:
                 "three_consecutive_loss_days",
             ],
         )
-

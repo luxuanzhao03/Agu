@@ -1,7 +1,8 @@
 ﻿from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 import logging
+import math
 from typing import Any
 
 import numpy as np
@@ -394,6 +395,186 @@ class TushareProvider(MarketDataProvider):
             df["_sort_date"] = pd.to_datetime(df[date_col], errors="coerce")
             df = df.sort_values("_sort_date", ascending=False)
         return dict(df.iloc[0].to_dict()) if not df.empty else {}
+
+    def get_corporate_event_snapshot(
+        self,
+        symbol: str,
+        as_of: date,
+        *,
+        lookback_days: int = 120,
+    ) -> dict[str, object]:
+        ts_code = normalize_symbol_to_tushare(symbol)
+        start_text = date_to_yyyymmdd(as_of - timedelta(days=max(30, int(lookback_days))))
+        end_text = date_to_yyyymmdd(as_of)
+
+        forecast = self._safe_fetch_dataset_by_name(
+            dataset_name="forecast",
+            ts_code=ts_code,
+            start_date=start_text,
+            end_date=end_text,
+        )
+        express = self._safe_fetch_dataset_by_name(
+            dataset_name="express",
+            ts_code=ts_code,
+            start_date=start_text,
+            end_date=end_text,
+        )
+
+        pos_score = 0.0
+        neg_score = 0.0
+        event_count = 0
+        latest_publish_date: date | None = None
+        latest_report_date: date | None = None
+        latest_forecast_mid: float | None = None
+        latest_express_growth: float | None = None
+
+        if forecast is not None and not forecast.empty:
+            frame = forecast.copy()
+            for _, row in frame.iterrows():
+                pub = self._parse_date(row.get("ann_date")) or self._parse_date(row.get("f_ann_date")) or self._parse_date(
+                    row.get("end_date")
+                )
+                rep = self._parse_date(row.get("end_date"))
+                if pub is not None and pub > as_of:
+                    continue
+                if rep is not None and rep > as_of:
+                    continue
+                event_count += 1
+                if pub is not None and (latest_publish_date is None or pub > latest_publish_date):
+                    latest_publish_date = pub
+                if rep is not None and (latest_report_date is None or rep > latest_report_date):
+                    latest_report_date = rep
+
+                p_min = self._parse_float(row.get("p_change_min"))
+                p_max = self._parse_float(row.get("p_change_max"))
+                if p_min is not None and p_max is not None:
+                    mid = (float(p_min) + float(p_max)) / 2.0
+                else:
+                    mid = p_min if p_min is not None else p_max
+                if mid is None:
+                    continue
+                latest_forecast_mid = float(mid)
+                age_days = (as_of - pub).days if pub is not None else int(lookback_days)
+                decay = math.exp(-math.log(2.0) * max(0, age_days) / 60.0)
+                if mid >= 8.0:
+                    pos_score += min(1.0, (mid - 6.0) / 40.0) * decay
+                elif mid <= -10.0:
+                    neg_score += min(1.0, abs(mid + 8.0) / 45.0) * decay
+
+        if express is not None and not express.empty:
+            frame = express.copy()
+            for _, row in frame.iterrows():
+                pub = self._parse_date(row.get("ann_date")) or self._parse_date(row.get("end_date"))
+                rep = self._parse_date(row.get("end_date"))
+                if pub is not None and pub > as_of:
+                    continue
+                if rep is not None and rep > as_of:
+                    continue
+                event_count += 1
+                if pub is not None and (latest_publish_date is None or pub > latest_publish_date):
+                    latest_publish_date = pub
+                if rep is not None and (latest_report_date is None or rep > latest_report_date):
+                    latest_report_date = rep
+
+                yoy = self._parse_float(row.get("yoy_net_profit"))
+                if yoy is None:
+                    yoy = self._parse_float(row.get("yoy_dedu_np"))
+                if yoy is None:
+                    yoy = self._parse_float(row.get("yoy_sales"))
+                if yoy is None:
+                    continue
+                latest_express_growth = float(yoy)
+                age_days = (as_of - pub).days if pub is not None else int(lookback_days)
+                decay = math.exp(-math.log(2.0) * max(0, age_days) / 75.0)
+                if yoy >= 8.0:
+                    pos_score += min(1.0, (yoy - 6.0) / 55.0) * decay
+                elif yoy <= -12.0:
+                    neg_score += min(1.0, abs(yoy + 10.0) / 65.0) * decay
+
+        event_score = self._clip01(pos_score)
+        negative_event_score = self._clip01(neg_score)
+        earnings_revision_score = self._clip01(0.5 + 0.7 * (event_score - negative_event_score))
+        if latest_publish_date is None:
+            disclosure_timing_score = 0.5
+            freshness_days = None
+        else:
+            freshness_days = max(0, (as_of - latest_publish_date).days)
+            disclosure_timing_score = self._clip01(1.0 - (freshness_days / 180.0))
+
+        return {
+            "event_score": float(event_score),
+            "negative_event_score": float(negative_event_score),
+            "earnings_revision_score": float(earnings_revision_score),
+            "disclosure_timing_score": float(disclosure_timing_score),
+            "event_count": int(event_count),
+            "latest_publish_date": latest_publish_date,
+            "latest_report_date": latest_report_date,
+            "freshness_days": freshness_days,
+            "forecast_pchg_mid": latest_forecast_mid,
+            "express_yoy_net_profit": latest_express_growth,
+        }
+
+    def get_market_style_snapshot(
+        self,
+        as_of: date,
+        *,
+        lookback_days: int = 30,
+    ) -> dict[str, object]:
+        window_days = max(45, int(lookback_days) * 3)
+        start_text = date_to_yyyymmdd(as_of - timedelta(days=window_days))
+        end_text = date_to_yyyymmdd(as_of)
+
+        flow = self._safe_api_call(lambda: self._pro.moneyflow_hsgt(start_date=start_text, end_date=end_text))
+        margin = self._safe_api_call(lambda: self._pro.margin(start_date=start_text, end_date=end_text))
+
+        north_series = self._extract_northbound_series(flow)
+        margin_series = self._extract_margin_series(margin)
+
+        flow_score = 0.5
+        leverage_score = 0.5
+        flow_z = 0.0
+        leverage_z = 0.0
+        north_5d: float | None = None
+        north_20d: float | None = None
+        margin_5d: float | None = None
+        margin_20d: float | None = None
+
+        if north_series is not None and len(north_series) >= 3:
+            north_5d = float(north_series.tail(min(5, len(north_series))).mean())
+            north_20d = float(north_series.tail(min(20, len(north_series))).mean())
+            std = float(north_series.tail(min(120, len(north_series))).std(ddof=0) or 0.0)
+            denom = max(1e-9, std if std > 0 else abs(north_series.tail(min(20, len(north_series))).mean()) or 1.0)
+            flow_z = (north_5d - north_20d) / denom
+            flow_score = self._clip01(0.5 + flow_z * 0.18)
+
+        if margin_series is not None and len(margin_series) >= 3:
+            margin_5d = float(margin_series.tail(min(5, len(margin_series))).mean())
+            margin_20d = float(margin_series.tail(min(20, len(margin_series))).mean())
+            std = float(margin_series.tail(min(120, len(margin_series))).std(ddof=0) or 0.0)
+            denom = max(1e-9, std if std > 0 else abs(margin_series.tail(min(20, len(margin_series))).mean()) or 1.0)
+            leverage_z = (margin_5d - margin_20d) / denom
+            leverage_score = self._clip01(0.5 + leverage_z * 0.16)
+
+        theme_heat_score = self._clip01(0.5 + min(2.5, abs(flow_z)) * 0.12 + min(2.5, abs(leverage_z)) * 0.08)
+        risk_on_score = self._clip01(0.56 * flow_score + 0.32 * leverage_score + 0.12 * theme_heat_score)
+        if risk_on_score >= 0.58:
+            regime = "RISK_ON"
+        elif risk_on_score <= 0.42:
+            regime = "RISK_OFF"
+        else:
+            regime = "NEUTRAL"
+
+        return {
+            "risk_on_score": float(risk_on_score),
+            "flow_score": float(flow_score),
+            "leverage_score": float(leverage_score),
+            "theme_heat_score": float(theme_heat_score),
+            "northbound_net_5d": north_5d,
+            "northbound_net_20d": north_20d,
+            "margin_balance_5d": margin_5d,
+            "margin_balance_20d": margin_20d,
+            "regime": regime,
+        }
 
     def list_advanced_capabilities(self, user_points: int = 0) -> list[dict[str, Any]]:
         points = max(0, int(user_points))
@@ -1009,6 +1190,99 @@ class TushareProvider(MarketDataProvider):
         if ("无保留" in text) or ("UNQUALIFIED" in text) or ("标准" in text):
             return 0.0
         return 0.4
+
+    @staticmethod
+    def _safe_api_call(fn) -> pd.DataFrame:
+        try:
+            frame = fn()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("tushare style/event extra api failed: %s", exc)
+            return pd.DataFrame()
+        if frame is None or not isinstance(frame, pd.DataFrame):
+            return pd.DataFrame()
+        return frame
+
+    @staticmethod
+    def _clip01(value: float) -> float:
+        return max(0.0, min(1.0, float(value)))
+
+    @staticmethod
+    def _find_date_column(frame: pd.DataFrame) -> str | None:
+        if frame is None or frame.empty:
+            return None
+        candidates = ("trade_date", "cal_date", "ann_date", "date", "end_date")
+        cols = {str(c).strip().lower(): str(c) for c in frame.columns}
+        for cand in candidates:
+            if cand in cols:
+                return cols[cand]
+        for col in frame.columns:
+            key = str(col).strip().lower()
+            if "date" in key or "time" in key:
+                return str(col)
+        return None
+
+    @staticmethod
+    def _extract_numeric_series(
+        frame: pd.DataFrame,
+        *,
+        preferred_keywords: tuple[str, ...],
+    ) -> pd.Series | None:
+        if frame is None or frame.empty:
+            return None
+        date_col = TushareProvider._find_date_column(frame)
+        if date_col is not None:
+            out = frame.copy()
+            out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
+            out = out[out[date_col].notna()].sort_values(date_col)
+        else:
+            out = frame.copy()
+
+        scored: list[tuple[int, str, pd.Series]] = []
+        for col in out.columns:
+            if str(col) == str(date_col):
+                continue
+            ser = pd.to_numeric(out[col], errors="coerce")
+            valid = int(ser.notna().sum())
+            if valid <= 0:
+                continue
+            key = str(col).strip().lower()
+            score = 0
+            for idx, kw in enumerate(preferred_keywords):
+                if kw in key:
+                    score += (len(preferred_keywords) - idx) * 5
+            score += min(valid, 200)
+            scored.append((score, str(col), ser))
+        if not scored:
+            return None
+        scored.sort(key=lambda x: x[0], reverse=True)
+        selected = scored[0][2].dropna().astype(float)
+        if selected.empty:
+            return None
+        return selected.reset_index(drop=True)
+
+    def _extract_northbound_series(self, frame: pd.DataFrame) -> pd.Series | None:
+        if frame is None or frame.empty:
+            return None
+        cols = {str(c).strip().lower(): str(c) for c in frame.columns}
+        hgt_col = next((cols[k] for k in cols if ("hgt" in k) and ("amt" in k or "money" in k)), None)
+        sgt_col = next((cols[k] for k in cols if ("sgt" in k) and ("amt" in k or "money" in k)), None)
+        if hgt_col is not None and sgt_col is not None:
+            hs = pd.to_numeric(frame[hgt_col], errors="coerce")
+            ss = pd.to_numeric(frame[sgt_col], errors="coerce")
+            merged = (hs.fillna(0.0) + ss.fillna(0.0)).dropna()
+            if not merged.empty:
+                return merged.reset_index(drop=True)
+
+        return self._extract_numeric_series(
+            frame,
+            preferred_keywords=("north", "net", "hgt", "sgt", "buy", "amt", "money"),
+        )
+
+    def _extract_margin_series(self, frame: pd.DataFrame) -> pd.Series | None:
+        return self._extract_numeric_series(
+            frame,
+            preferred_keywords=("rzye", "balance", "融资余额", "financing", "margin"),
+        )
 
     @staticmethod
     def _parse_date(value: Any) -> date | None:

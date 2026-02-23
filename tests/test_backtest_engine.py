@@ -40,6 +40,31 @@ class ToggleStrategy(BaseStrategy):
         ]
 
 
+class SparseStrategy(BaseStrategy):
+    info = StrategyInfo(
+        name="sparse",
+        title="Sparse",
+        description="Signal only on first bar, then no signal.",
+        frequency="D",
+    )
+
+    def generate(self, features: pd.DataFrame, context: StrategyContext | None = None) -> list[SignalCandidate]:
+        latest = features.sort_values("trade_date").iloc[-1]
+        if len(features) == 1:
+            return [
+                SignalCandidate(
+                    symbol=str(latest["symbol"]),
+                    trade_date=latest["trade_date"],
+                    action=SignalAction.BUY,
+                    confidence=0.7,
+                    reason="first bar buy",
+                    strategy_name="sparse",
+                    suggested_position=0.1,
+                )
+            ]
+        return []
+
+
 def build_bars() -> pd.DataFrame:
     start = date(2025, 1, 2)
     rows = []
@@ -83,3 +108,23 @@ def test_backtest_runs_and_outputs_metrics() -> None:
     assert result.metrics.trade_count >= 1
     assert len(result.equity_curve) >= 1
 
+
+def test_backtest_keeps_equity_points_even_without_daily_signals() -> None:
+    risk_engine = RiskEngine(
+        max_single_position=0.2,
+        max_drawdown=0.5,
+        max_industry_exposure=0.5,
+        min_turnover_20d=1000,
+    )
+    bars = build_bars()
+    engine = BacktestEngine(factor_engine=FactorEngine(), risk_engine=risk_engine)
+    req = BacktestRequest(
+        symbol="000001",
+        start_date=date(2025, 1, 2),
+        end_date=date(2025, 1, 9),
+        strategy_name="sparse",
+        initial_cash=100000,
+        max_single_position=0.2,
+    )
+    result = engine.run(bars, req=req, strategy=SparseStrategy())
+    assert len(result.equity_curve) == len(bars)

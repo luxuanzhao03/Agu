@@ -11,6 +11,7 @@ from trading_assistant.core.models import (
     AutoTuneApplyScope,
     StrategyChallengeRequest,
     StrategyChallengeResult,
+    StrategyChallengeRunStatus,
     StrategyChallengeRolloutPlan,
     StrategyChallengeStrategyResult,
 )
@@ -28,6 +29,9 @@ class FakeChallengeService:
             strategy_names=req.strategy_names or ["trend_following", "mean_reversion"],
             evaluated_count=66,
             qualified_count=2,
+            run_status=StrategyChallengeRunStatus.SUCCESS,
+            error_count=0,
+            failed_strategies=[],
             champion_strategy="trend_following",
             runner_up_strategy="mean_reversion",
             market_fit_summary="2/2 strategies qualified.",
@@ -76,6 +80,7 @@ def test_strategy_challenge_api_run_success(tmp_path) -> None:
         assert payload["run_id"] == "fake-run-id"
         assert payload["champion_strategy"] == "trend_following"
         assert payload["qualified_count"] == 2
+        assert payload["run_status"] == "SUCCESS"
         assert payload["rollout_plan"]["enabled"] is True
     finally:
         app.dependency_overrides.clear()

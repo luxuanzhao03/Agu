@@ -786,14 +786,14 @@ class AutoTuneService:
     def _coerce_value(*, raw: float | int | str | bool, kind: str) -> float | int | str | bool:
         if kind == "int":
             try:
-                return int(round(float(raw)))
-            except Exception:  # noqa: BLE001
-                return int(0)
+                return int(round(float(str(raw).strip())))
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(f"invalid int candidate value: {raw!r}") from exc
         if kind == "float":
             try:
-                return float(raw)
-            except Exception:  # noqa: BLE001
-                return float(0.0)
+                return float(str(raw).strip())
+            except Exception as exc:  # noqa: BLE001
+                raise ValueError(f"invalid float candidate value: {raw!r}") from exc
         if kind == "bool":
             if isinstance(raw, bool):
                 return raw

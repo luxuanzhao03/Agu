@@ -344,6 +344,8 @@ def get_holding_service() -> HoldingService:
         factor_engine=get_factor_engine(),
         registry=get_strategy_registry(),
         autotune=get_autotune_service(),
+        fundamental_service=get_fundamental_service(),
+        event_service=get_event_service(),
     )
 
 
@@ -392,6 +394,8 @@ def get_reporting_service() -> ReportingService:
         replay=get_replay_service(),
         audit=get_audit_service(),
         output_dir="reports",
+        provider=get_data_provider(),
+        holding_store=get_holding_store(),
     )
 
 
@@ -445,6 +449,7 @@ def get_job_service() -> JobService:
         compliance_evidence=get_compliance_evidence_service(),
         alerts=get_alert_service(),
         autotune=get_autotune_service(),
+        replay=get_replay_service(),
         scheduler_timezone=settings.ops_scheduler_timezone,
         running_timeout_minutes=settings.ops_job_running_timeout_minutes,
     )

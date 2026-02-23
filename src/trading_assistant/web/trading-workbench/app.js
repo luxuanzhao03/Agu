@@ -143,11 +143,15 @@ const state = {
   latestHoldingTrades: [],
   latestHoldingPositions: null,
   latestHoldingAnalysis: null,
+  latestHoldingAccuracyReport: null,
+  latestGoLiveReadiness: null,
   selectedPrepIndex: 0,
   replaySignals: [],
   replayReport: null,
   replayAttribution: null,
   closureReport: null,
+  latestCostCalibration: null,
+  latestCostCalibrationHistory: [],
   savedFormSnapshot: null,
 };
 
@@ -1057,6 +1061,11 @@ function buildHoldingTradeRequest() {
   if (!symbol) throw new Error("holding symbol 不能为空");
   const side = String(el("holdingTradeSideInput")?.value || "BUY").trim().toUpperCase();
   if (!["BUY", "SELL"].includes(side)) throw new Error("holding side 必须是 BUY 或 SELL");
+  const referenceRaw = String(el("holdingTradeReferencePriceInput")?.value || "").trim();
+  const executedAtRaw = String(el("holdingTradeExecutedAtInput")?.value || "").trim();
+  const partialFill = Boolean(el("holdingTradePartialFillInput")?.checked);
+  const unfilledReason = String(el("holdingTradeUnfilledReasonInput")?.value || "").trim();
+  if (partialFill && !unfilledReason) throw new Error("is_partial_fill=true 时请填写 unfilled_reason");
   return {
     trade_date: tradeDate,
     symbol,
@@ -1070,6 +1079,10 @@ function buildHoldingTradeRequest() {
       max: 10_000,
     }),
     fee: toNumber(el("holdingTradeFeeInput")?.value, "holding fee", { min: 0, max: 1_000_000 }),
+    reference_price: referenceRaw ? toNumber(referenceRaw, "holding reference_price", { min: 0.0001 }) : null,
+    executed_at: executedAtRaw || null,
+    is_partial_fill: partialFill,
+    unfilled_reason: unfilledReason,
     note: String(el("holdingTradeNoteInput")?.value || "").trim(),
   };
 }
@@ -1088,6 +1101,62 @@ function buildHoldingTradeQuery() {
   if (symbol) params.set("symbol", symbol);
   if (startDate) params.set("start_date", startDate);
   if (endDate) params.set("end_date", endDate);
+  params.set("limit", String(limit));
+  return params;
+}
+
+function buildHoldingAccuracyQuery() {
+  const params = new URLSearchParams();
+  const lookbackDays = toNumber(el("holdingAccLookbackInput")?.value, "accuracy lookback_days", {
+    integer: true,
+    min: 1,
+    max: 3650,
+  });
+  const endDate = String(el("holdingAccEndDateInput")?.value || "").trim();
+  const strategyName = String(el("holdingAccStrategyInput")?.value || "").trim();
+  const symbol = String(el("holdingAccSymbolInput")?.value || "").trim().toUpperCase();
+  const minConfidence = toNumber(el("holdingAccMinConfidenceInput")?.value, "accuracy min_confidence", {
+    min: 0,
+    max: 1,
+  });
+  const limit = toNumber(el("holdingAccLimitInput")?.value, "accuracy limit", {
+    integer: true,
+    min: 1,
+    max: 20000,
+  });
+  params.set("lookback_days", String(lookbackDays));
+  if (endDate) params.set("end_date", endDate);
+  if (strategyName) params.set("strategy_name", strategyName);
+  if (symbol) params.set("symbol", symbol);
+  params.set("min_confidence", String(minConfidence));
+  params.set("limit", String(limit));
+  return params;
+}
+
+function buildGoLiveReadinessQuery() {
+  const params = new URLSearchParams();
+  const lookbackDays = toNumber(el("goLiveLookbackInput")?.value, "go-live lookback_days", {
+    integer: true,
+    min: 1,
+    max: 3650,
+  });
+  const endDate = String(el("goLiveEndDateInput")?.value || "").trim();
+  const strategyName = String(el("goLiveStrategyInput")?.value || "").trim();
+  const symbol = String(el("goLiveSymbolInput")?.value || "").trim().toUpperCase();
+  const minConfidence = toNumber(el("goLiveMinConfidenceInput")?.value, "go-live min_confidence", {
+    min: 0,
+    max: 1,
+  });
+  const limit = toNumber(el("goLiveLimitInput")?.value, "go-live limit", {
+    integer: true,
+    min: 1,
+    max: 20000,
+  });
+  params.set("lookback_days", String(lookbackDays));
+  if (endDate) params.set("end_date", endDate);
+  if (strategyName) params.set("strategy_name", strategyName);
+  if (symbol) params.set("symbol", symbol);
+  params.set("min_confidence", String(minConfidence));
   params.set("limit", String(limit));
   return params;
 }
@@ -1114,6 +1183,12 @@ function buildHoldingAnalysisRequest() {
       { min: 0.01, max: 1 }
     ),
     lot_size: toNumber(el("holdingAnalyzeLotSizeInput")?.value, "holding lot_size", { integer: true, min: 1 }),
+    intraday_interval: String(el("holdingIntradayIntervalInput")?.value || "15m").trim() || "15m",
+    intraday_lookback_days: toNumber(
+      el("holdingIntradayLookbackInput")?.value,
+      "holding intraday_lookback_days",
+      { integer: true, min: 1, max: 15 }
+    ),
   };
 }
 
@@ -1163,8 +1238,36 @@ async function runHoldingAnalyze() {
   const result = await postJSON("/holdings/analyze", req);
   state.latestHoldingAnalysis = result;
   renderHoldingAnalysis();
+  await loadHoldingAccuracyReport({ silent: true }).catch(() => {});
+  await loadGoLiveReadinessReport({ silent: true }).catch(() => {});
   const recCount = Array.isArray(result.recommendations) ? result.recommendations.length : 0;
-  setHoldingMessage(`持仓分析完成：建议 ${fmtNum(recCount, 0)} 条，下一交易日=${result.next_trade_date || "-"}`);
+  setHoldingMessage(
+    `持仓分析完成：run_id=${result.analysis_run_id || "-"}，建议 ${fmtNum(recCount, 0)} 条，下一交易日=${result.next_trade_date || "-"}`
+  );
+}
+
+async function loadHoldingAccuracyReport({ silent = false } = {}) {
+  const params = buildHoldingAccuracyQuery();
+  const report = await fetchJSON(`/reports/strategy-accuracy?${params.toString()}`);
+  state.latestHoldingAccuracyReport = report;
+  renderHoldingAccuracy();
+  if (!silent) {
+    setHoldingMessage(
+      `准确性看板已刷新：sample=${fmtNum(report.sample_size || 0, 0)} hit=${fmtPct(report.hit_rate || 0, 2)}`
+    );
+  }
+}
+
+async function loadGoLiveReadinessReport({ silent = false } = {}) {
+  const params = buildGoLiveReadinessQuery();
+  const report = await fetchJSON(`/reports/go-live-readiness?${params.toString()}`);
+  state.latestGoLiveReadiness = report;
+  renderGoLiveReadiness();
+  if (!silent) {
+    setHoldingMessage(
+      `上线准入已刷新：${report.readiness_level || "-"}（硬失败=${fmtNum(report.failed_gate_count || 0, 0)}）`
+    );
+  }
 }
 
 function renderHoldingTrades() {
@@ -1172,7 +1275,7 @@ function renderHoldingTrades() {
   if (!host) return;
   const rows = Array.isArray(state.latestHoldingTrades) ? state.latestHoldingTrades : [];
   if (!rows.length) {
-    host.innerHTML = '<tr><td colspan="11" class="muted">暂无手工成交记录，请先录入成交。</td></tr>';
+    host.innerHTML = '<tr><td colspan="15" class="muted">暂无手工成交记录，请先录入成交。</td></tr>';
     return;
   }
   host.innerHTML = rows
@@ -1184,6 +1287,10 @@ function renderHoldingTrades() {
       <td>${esc(row.symbol_name || "-")}</td>
       <td>${statusChip(row.side || "-")}</td>
       <td>${fmtNum(row.price, 4)}</td>
+      <td>${row.reference_price === null || row.reference_price === undefined ? "-" : fmtNum(row.reference_price, 4)}</td>
+      <td>${fmtTs(row.executed_at)}</td>
+      <td>${row.is_partial_fill ? statusChip("YES", "warn") : statusChip("NO")}</td>
+      <td>${esc(row.unfilled_reason || "-")}</td>
       <td>${fmtNum(row.lots, 0)}</td>
       <td>${fmtNum(row.quantity, 0)}</td>
       <td>${fmtNum(row.fee, 2)}</td>
@@ -1270,8 +1377,8 @@ function renderHoldingAnalysis() {
   const result = state.latestHoldingAnalysis;
   if (!result) {
     meta.textContent = "尚未运行持仓分析。";
-    posHost.innerHTML = '<tr><td colspan="8" class="muted">暂无持仓分析结果。</td></tr>';
-    recHost.innerHTML = '<tr><td colspan="11" class="muted">暂无建议清单。</td></tr>';
+    posHost.innerHTML = '<tr><td colspan="13" class="muted">暂无持仓分析结果。</td></tr>';
+    recHost.innerHTML = '<tr><td colspan="17" class="muted">暂无建议清单。</td></tr>';
     return;
   }
 
@@ -1291,11 +1398,16 @@ function renderHoldingAnalysis() {
       <td>${fmtPct(row.up_probability, 2)}</td>
       <td>${statusChip(row.suggested_action || "HOLD")}</td>
       <td>${fmtNum(row.suggested_delta_lots, 0)}</td>
+      <td>${esc(row.recommended_execution_window || "-")}</td>
+      <td>${esc(Array.isArray(row.avoid_execution_windows) && row.avoid_execution_windows.length ? row.avoid_execution_windows.join(",") : "-")}</td>
+      <td>${esc(row.intraday_risk_level || "-")}</td>
+      <td>${fmtPct((Number(row.event_score || 0) - Number(row.negative_event_score || 0)), 2)}</td>
+      <td>${esc(row.style_regime || "-")}</td>
       <td>${esc(row.analysis_note || "-")}</td>
     </tr>`
         )
         .join("")
-    : '<tr><td colspan="8" class="muted">暂无持仓分析结果。</td></tr>';
+    : '<tr><td colspan="13" class="muted">暂无持仓分析结果。</td></tr>';
 
   const recommendations = Array.isArray(result.recommendations) ? result.recommendations : [];
   recHost.innerHTML = recommendations.length
@@ -1311,12 +1423,224 @@ function renderHoldingAnalysis() {
       <td>${fmtPct(row.expected_next_day_return, 2)}</td>
       <td>${fmtPct(row.up_probability, 2)}</td>
       <td>${esc(row.next_trade_date || "-")}</td>
-      <td>${esc(Array.isArray(row.risk_flags) && row.risk_flags.length ? row.risk_flags.join(\",\") : \"-\")}</td>
+      <td>${esc(row.style_regime || "-")}</td>
+      <td>${esc(row.execution_window || "-")}</td>
+      <td>${esc(Array.isArray(row.avoid_execution_windows) && row.avoid_execution_windows.length ? row.avoid_execution_windows.join(",") : "-")}</td>
+      <td>${esc(row.intraday_risk_level || "-")}</td>
+      <td>${row.stop_loss_hint_pct === null || row.stop_loss_hint_pct === undefined ? "-" : fmtPct(row.stop_loss_hint_pct, 2)}</td>
+      <td>${row.take_profit_hint_pct === null || row.take_profit_hint_pct === undefined ? "-" : fmtPct(row.take_profit_hint_pct, 2)}</td>
+      <td>${esc(Array.isArray(row.risk_flags) && row.risk_flags.length ? row.risk_flags.join(",") : "-")}</td>
       <td>${esc(row.rationale || "-")}</td>
     </tr>`
         )
         .join("")
-    : '<tr><td colspan="11" class="muted">暂无建议清单。</td></tr>';
+    : '<tr><td colspan="17" class="muted">暂无建议清单。</td></tr>';
+}
+
+function renderHoldingAccuracy() {
+  const report = state.latestHoldingAccuracyReport;
+  const meta = el("holdingAccuracyMeta");
+  const sampleKpi = el("holdingAccSampleKpi");
+  const hitKpi = el("holdingAccHitRateKpi");
+  const brierKpi = el("holdingAccBrierKpi");
+  const costAdjKpi = el("holdingAccCostAdjKpi");
+  const coverageKpi = el("holdingAccCoverageKpi");
+  const strategyHost = el("holdingAccByStrategyRows");
+  const symbolHost = el("holdingAccBySymbolRows");
+  const detailHost = el("holdingAccDetailRows");
+  const noteHost = el("holdingAccuracyNoteList");
+  if (
+    !meta ||
+    !sampleKpi ||
+    !hitKpi ||
+    !brierKpi ||
+    !costAdjKpi ||
+    !coverageKpi ||
+    !strategyHost ||
+    !symbolHost ||
+    !detailHost ||
+    !noteHost
+  ) {
+    return;
+  }
+
+  if (!report) {
+    meta.textContent = "尚未加载准确性报告。";
+    sampleKpi.textContent = "-";
+    hitKpi.textContent = "-";
+    brierKpi.textContent = "-";
+    costAdjKpi.textContent = "-";
+    coverageKpi.textContent = "-";
+    strategyHost.innerHTML = '<tr><td colspan="7" class="muted">暂无按策略统计。</td></tr>';
+    symbolHost.innerHTML = '<tr><td colspan="7" class="muted">暂无按标的统计。</td></tr>';
+    detailHost.innerHTML = '<tr><td colspan="13" class="muted">暂无样本明细。</td></tr>';
+    noteHost.innerHTML = "<li>无</li>";
+    return;
+  }
+
+  meta.textContent =
+    `窗口=${report.start_date || "-"}~${report.end_date || "-"} | sample=${fmtNum(report.sample_size || 0, 0)} | ` +
+    `strategy=${report.strategy_name || "ALL"} | symbol=${report.symbol || "ALL"} | min_confidence=${fmtPct(report.min_confidence || 0, 2)}`;
+  sampleKpi.textContent = fmtNum(report.sample_size || 0, 0);
+  hitKpi.textContent = fmtPct(report.hit_rate || 0, 2);
+  brierKpi.textContent = report.brier_score === null || report.brier_score === undefined ? "-" : fmtNum(report.brier_score, 4);
+  costAdjKpi.textContent = fmtPct(report.cost_adjusted_return_mean || 0, 2);
+  coverageKpi.textContent = fmtPct(report.execution_coverage || 0, 2);
+
+  const byStrategy = Array.isArray(report.by_strategy) ? report.by_strategy : [];
+  strategyHost.innerHTML = byStrategy.length
+    ? byStrategy
+        .map(
+          (row) => `<tr>
+      <td>${esc(row.bucket_key || "-")}</td>
+      <td>${fmtNum(row.sample_size, 0)}</td>
+      <td>${fmtPct(row.hit_rate, 2)}</td>
+      <td>${row.brier_score === null || row.brier_score === undefined ? "-" : fmtNum(row.brier_score, 4)}</td>
+      <td>${fmtPct(row.return_bias, 2)}</td>
+      <td>${fmtPct(row.cost_adjusted_return_mean, 2)}</td>
+      <td>${fmtPct(row.execution_coverage, 2)}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="7" class="muted">暂无按策略统计。</td></tr>';
+
+  const bySymbol = Array.isArray(report.by_symbol) ? report.by_symbol : [];
+  symbolHost.innerHTML = bySymbol.length
+    ? bySymbol
+        .map(
+          (row) => `<tr>
+      <td>${esc(row.bucket_key || "-")}</td>
+      <td>${fmtNum(row.sample_size, 0)}</td>
+      <td>${fmtPct(row.hit_rate, 2)}</td>
+      <td>${row.brier_score === null || row.brier_score === undefined ? "-" : fmtNum(row.brier_score, 4)}</td>
+      <td>${fmtPct(row.return_bias, 2)}</td>
+      <td>${fmtPct(row.cost_adjusted_return_mean, 2)}</td>
+      <td>${fmtPct(row.execution_coverage, 2)}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="7" class="muted">暂无按标的统计。</td></tr>';
+
+  const details = Array.isArray(report.details) ? report.details : [];
+  detailHost.innerHTML = details.length
+    ? details
+        .slice(0, 300)
+        .map(
+          (row) => `<tr>
+      <td>${esc(row.as_of_date || "-")}</td>
+      <td>${esc(row.next_trade_date || "-")}</td>
+      <td>${esc(row.strategy_name || "-")}</td>
+      <td>${esc(row.symbol || "-")}</td>
+      <td>${statusChip(row.action || "WATCH")}</td>
+      <td>${fmtPct(row.confidence, 2)}</td>
+      <td>${fmtPct(row.expected_next_day_return, 2)}</td>
+      <td>${row.realized_next_day_return === null || row.realized_next_day_return === undefined ? "-" : fmtPct(row.realized_next_day_return, 2)}</td>
+      <td>${row.direction_hit === null || row.direction_hit === undefined ? "-" : row.direction_hit ? statusChip("YES") : statusChip("NO", "warn")}</td>
+      <td>${row.brier_score === null || row.brier_score === undefined ? "-" : fmtNum(row.brier_score, 4)}</td>
+      <td>${row.executed ? statusChip("YES") : statusChip("NO", "warn")}</td>
+      <td>${row.execution_cost_bps === null || row.execution_cost_bps === undefined ? "-" : fmtNum(row.execution_cost_bps, 2)}</td>
+      <td>${row.cost_adjusted_action_return === null || row.cost_adjusted_action_return === undefined ? "-" : fmtPct(row.cost_adjusted_action_return, 2)}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="13" class="muted">暂无样本明细。</td></tr>';
+
+  const notes = Array.isArray(report.notes) ? report.notes : [];
+  noteHost.innerHTML = notes.length ? notes.map((x) => `<li>${esc(x)}</li>`).join("") : "<li>无</li>";
+}
+
+function renderGoLiveReadiness() {
+  const report = state.latestGoLiveReadiness;
+  const meta = el("goLiveMeta");
+  const passKpi = el("goLivePassKpi");
+  const levelKpi = el("goLiveLevelKpi");
+  const failedKpi = el("goLiveFailedGateKpi");
+  const warnKpi = el("goLiveWarnGateKpi");
+  const gateHost = el("goLiveGateRows");
+  const rollbackHost = el("goLiveRollbackRows");
+  const checklistHost = el("goLiveChecklistRows");
+  const noteHost = el("goLiveNoteList");
+  if (
+    !meta ||
+    !passKpi ||
+    !levelKpi ||
+    !failedKpi ||
+    !warnKpi ||
+    !gateHost ||
+    !rollbackHost ||
+    !checklistHost ||
+    !noteHost
+  ) {
+    return;
+  }
+
+  if (!report) {
+    meta.textContent = "尚未加载上线准入报告。";
+    passKpi.textContent = "-";
+    levelKpi.textContent = "-";
+    failedKpi.textContent = "-";
+    warnKpi.textContent = "-";
+    gateHost.innerHTML = '<tr><td colspan="7" class="muted">暂无门槛检查结果。</td></tr>';
+    rollbackHost.innerHTML = '<tr><td colspan="4" class="muted">暂无回滚规则。</td></tr>';
+    checklistHost.innerHTML = '<tr><td colspan="4" class="muted">暂无每日验收清单。</td></tr>';
+    noteHost.innerHTML = "<li>无</li>";
+    return;
+  }
+
+  meta.textContent =
+    `窗口=${report.start_date || "-"}~${report.end_date || "-"} | strategy=${report.strategy_name || "ALL"} | symbol=${report.symbol || "ALL"} | lookback=${fmtNum(report.lookback_days, 0)}d`;
+  passKpi.textContent = report.overall_passed ? "YES" : "NO";
+  levelKpi.textContent = String(report.readiness_level || "-");
+  failedKpi.textContent = fmtNum(report.failed_gate_count || 0, 0);
+  warnKpi.textContent = fmtNum(report.warning_gate_count || 0, 0);
+
+  const gates = Array.isArray(report.gate_checks) ? report.gate_checks : [];
+  gateHost.innerHTML = gates.length
+    ? gates
+        .map(
+          (row) => `<tr>
+      <td>${esc(row.gate_name || row.gate_key || "-")}</td>
+      <td>${row.passed ? statusChip("PASS") : statusChip("FAIL", "danger")}</td>
+      <td>${esc(row.actual_value === null || row.actual_value === undefined ? "-" : String(row.actual_value))}</td>
+      <td>${esc(row.threshold_value === null || row.threshold_value === undefined ? "-" : String(row.threshold_value))}</td>
+      <td>${esc(`${row.comparator || ""}`)}</td>
+      <td>${statusChip(row.severity || "WARNING")}</td>
+      <td>${esc(row.detail || "-")}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="7" class="muted">暂无门槛检查结果。</td></tr>';
+
+  const rollback = Array.isArray(report.rollback_rules) ? report.rollback_rules : [];
+  rollbackHost.innerHTML = rollback.length
+    ? rollback
+        .map(
+          (row) => `<tr>
+      <td>${esc(row.trigger_name || row.trigger_key || "-")}</td>
+      <td>${esc(row.condition || "-")}</td>
+      <td>${esc(row.action || "-")}</td>
+      <td>${esc(row.owner || "-")}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="4" class="muted">暂无回滚规则。</td></tr>';
+
+  const checklist = Array.isArray(report.daily_checklist) ? report.daily_checklist : [];
+  checklistHost.innerHTML = checklist.length
+    ? checklist
+        .map(
+          (row) => `<tr>
+      <td>${esc(row.item_name || row.item_key || "-")}</td>
+      <td>${statusChip(row.status || "PENDING", row.status === "FAIL" ? "danger" : row.status === "WARN" ? "warn" : "info")}</td>
+      <td>${esc(row.detail || "-")}</td>
+      <td><code class="code-inline">${esc(row.evidence || "-")}</code></td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="4" class="muted">暂无每日验收清单。</td></tr>';
+
+  const notes = Array.isArray(report.notes) ? report.notes : [];
+  noteHost.innerHTML = notes.length ? notes.map((x) => `<li>${esc(x)}</li>`).join("") : "<li>无</li>";
 }
 
 function renderHoldings() {
@@ -1324,6 +1648,8 @@ function renderHoldings() {
   renderHoldingPositionSummary();
   renderHoldingPositionRows();
   renderHoldingAnalysis();
+  renderHoldingAccuracy();
+  renderGoLiveReadiness();
 }
 
 function syncBarsInputsFromStrategy() {
@@ -2847,6 +3173,10 @@ function fillExecutionFormBySignal(signalLike) {
     const tradeDate = String(signalLike.trade_date || "").trim();
     el("execDate").value = tradeDate || todayISO();
   }
+  if (el("execReferencePrice")) {
+    const ref = signalLike.reference_price ?? signalLike.latest_close ?? signalLike.close ?? "";
+    el("execReferencePrice").value = ref === null || ref === undefined || ref === "" ? "" : String(ref);
+  }
 }
 
 async function loadReplaySignals() {
@@ -2893,6 +3223,7 @@ async function submitExecutionRecord() {
   const symbol = String(el("execSymbol")?.value || "").trim();
   const executionDate = String(el("execDate")?.value || "").trim();
   const side = String(el("execSide")?.value || "BUY").trim();
+  const referencePriceRaw = String(el("execReferencePrice")?.value || "").trim();
 
   if (!signalId) throw new Error("signal_id 不能为空");
   if (!symbol) throw new Error("symbol 不能为空");
@@ -2905,6 +3236,7 @@ async function submitExecutionRecord() {
     side,
     quantity: toNumber(el("execQty")?.value, "quantity", { integer: true, min: 0 }),
     price: toNumber(el("execPrice")?.value, "price", { min: 0 }),
+    reference_price: referencePriceRaw ? toNumber(referencePriceRaw, "reference_price", { min: 0.0001 }) : null,
     fee: toNumber(el("execFee")?.value, "fee", { min: 0 }),
     note: String(el("execNote")?.value || "").trim(),
   };
@@ -2918,11 +3250,13 @@ async function loadReplayReport() {
   const params = new URLSearchParams();
 
   const symbol = String(el("reportSymbol")?.value || "").trim();
+  const strategyName = String(el("reportStrategyName")?.value || "").trim();
   const startDate = String(el("reportStartDate")?.value || "").trim();
   const endDate = String(el("reportEndDate")?.value || "").trim();
   const limit = toNumber(el("reportLimit")?.value, "replay report limit", { integer: true, min: 1, max: 2000 });
 
   if (symbol) params.set("symbol", symbol);
+  if (strategyName) params.set("strategy_name", strategyName);
   if (startDate) params.set("start_date", startDate);
   if (endDate) params.set("end_date", endDate);
   params.set("limit", String(limit));
@@ -2972,14 +3306,16 @@ function renderReplayReport() {
 function buildAttributionFilters() {
   const params = new URLSearchParams();
   const symbol = String(el("attrSymbolInput")?.value || "").trim();
+  const strategyName = String(el("attrStrategyInput")?.value || "").trim();
   const startDate = String(el("attrStartDateInput")?.value || "").trim();
   const endDate = String(el("attrEndDateInput")?.value || "").trim();
   const limit = toNumber(el("attrLimitInput")?.value, "attribution limit", { integer: true, min: 1, max: 2000 });
   if (symbol) params.set("symbol", symbol);
+  if (strategyName) params.set("strategy_name", strategyName);
   if (startDate) params.set("start_date", startDate);
   if (endDate) params.set("end_date", endDate);
   params.set("limit", String(limit));
-  return { params, symbol, startDate, endDate, limit };
+  return { params, symbol, strategyName, startDate, endDate, limit };
 }
 
 async function loadReplayAttribution() {
@@ -3005,8 +3341,8 @@ function renderReplayAttribution() {
     followEl.textContent = "-";
     delayEl.textContent = "-";
     slipEl.textContent = "-";
-    reasonHost.innerHTML = '<tr><td colspan="2" class="muted">暂无归因统计。</td></tr>';
-    itemHost.innerHTML = '<tr><td colspan="6" class="muted">暂无归因明细。</td></tr>';
+    reasonHost.innerHTML = '<tr><td colspan="4" class="muted">暂无归因统计。</td></tr>';
+    itemHost.innerHTML = '<tr><td colspan="8" class="muted">暂无归因明细。</td></tr>';
     suggestionHost.innerHTML = "<li>无</li>";
     return;
   }
@@ -3018,8 +3354,19 @@ function renderReplayAttribution() {
 
   const reasons = Object.entries(report.reason_counts || {}).sort((a, b) => Number(b[1]) - Number(a[1]));
   reasonHost.innerHTML = reasons.length
-    ? reasons.map(([reason, count]) => `<tr><td>${esc(reason)}</td><td>${fmtNum(count, 0)}</td></tr>`).join("")
-    : '<tr><td colspan="2" class="muted">暂无归因统计。</td></tr>';
+    ? reasons
+        .map(([reason, count]) => {
+          const ratio = Number((report.reason_rates || {})[reason] || 0);
+          const drag = Number((report.reason_cost_bps || {})[reason] || 0);
+          return `<tr>
+      <td>${esc(reason)}</td>
+      <td>${fmtNum(count, 0)}</td>
+      <td>${fmtPct(ratio, 2)}</td>
+      <td>${fmtNum(drag, 2)}</td>
+    </tr>`;
+        })
+        .join("")
+    : '<tr><td colspan="4" class="muted">暂无归因统计。</td></tr>';
 
   const suggestions = Array.isArray(report.suggestions) ? report.suggestions : [];
   suggestionHost.innerHTML = suggestions.length ? suggestions.map((x) => `<li>${esc(x)}</li>`).join("") : "<li>无</li>";
@@ -3032,21 +3379,24 @@ function renderReplayAttribution() {
           (item) => `<tr>
       <td><code>${esc(item.signal_id || "-")}</code></td>
       <td>${esc(item.symbol || "-")}</td>
+      <td>${esc(item.strategy_name || "-")}</td>
       <td>${esc(item.reason_code || "-")}</td>
       <td>${statusChip(item.severity || "INFO")}</td>
+      <td>${fmtNum(item.estimated_drag_bps || 0, 2)}</td>
       <td>${esc(item.detail || "-")}</td>
       <td>${esc(item.suggestion || "-")}</td>
     </tr>`
         )
         .join("")
-    : '<tr><td colspan="6" class="muted">暂无归因明细。</td></tr>';
+    : '<tr><td colspan="8" class="muted">暂无归因明细。</td></tr>';
 }
 
 async function generateClosureReport() {
-  const { symbol, startDate, endDate, limit } = buildAttributionFilters();
+  const { symbol, strategyName, startDate, endDate, limit } = buildAttributionFilters();
   const body = {
     report_type: "closure",
     symbol: symbol || null,
+    strategy_name: strategyName || null,
     start_date: startDate || null,
     end_date: endDate || null,
     limit,
@@ -3071,12 +3421,111 @@ function renderClosureReport() {
   preview.textContent = String(result.content || "-");
 }
 
+function buildCostCalibrationPayload() {
+  const symbol = String(el("costModelSymbol")?.value || "").trim();
+  const strategyName = String(el("costModelStrategy")?.value || "").trim();
+  const startDate = String(el("costModelStartDate")?.value || "").trim();
+  const endDate = String(el("costModelEndDate")?.value || "").trim();
+  const limit = toNumber(el("costModelLimit")?.value, "cost model limit", { integer: true, min: 1, max: 5000 });
+  const minSamples = toNumber(el("costModelMinSamples")?.value, "cost model min_samples", {
+    integer: true,
+    min: 1,
+    max: 2000,
+  });
+  const saveRecord = Boolean(el("costModelSaveRecord")?.checked);
+  return {
+    symbol: symbol || null,
+    strategy_name: strategyName || null,
+    start_date: startDate || null,
+    end_date: endDate || null,
+    limit,
+    min_samples: minSamples,
+    save_record: saveRecord,
+  };
+}
+
+async function runCostCalibration() {
+  const payload = buildCostCalibrationPayload();
+  const result = await postJSON("/replay/cost-model/calibrate", payload);
+  state.latestCostCalibration = result;
+  renderCostCalibration();
+}
+
+async function loadCostCalibrationHistory() {
+  const params = new URLSearchParams();
+  const symbol = String(el("costModelSymbol")?.value || "").trim();
+  const limit = toNumber(el("costModelHistoryLimit")?.value, "cost model history limit", {
+    integer: true,
+    min: 1,
+    max: 200,
+  });
+  if (symbol) params.set("symbol", symbol);
+  params.set("limit", String(limit));
+  const rows = await fetchJSON(`/replay/cost-model/calibrations?${params.toString()}`);
+  state.latestCostCalibrationHistory = Array.isArray(rows) ? rows : [];
+  renderCostCalibrationHistory();
+}
+
+function renderCostCalibration() {
+  const meta = el("costModelMeta");
+  const host = el("costModelRecommendationRows");
+  const noteHost = el("costModelNoteList");
+  if (!meta || !host || !noteHost) return;
+  const result = state.latestCostCalibration;
+  if (!result) {
+    meta.textContent = "尚未运行成本模型重估。";
+    host.innerHTML = '<tr><td colspan="2" class="muted">暂无推荐参数。</td></tr>';
+    noteHost.innerHTML = "<li>无</li>";
+    return;
+  }
+  meta.textContent = `samples=${fmtNum(result.sample_size, 0)} | coverage=${fmtPct(
+    result.slippage_coverage,
+    2
+  )} | confidence=${fmtPct(result.confidence, 2)} | calibration_id=${result.calibration_id || "-"}`;
+  host.innerHTML = `
+    <tr><td>slippage_rate</td><td>${fmtNum(result.recommended_slippage_rate, 6)}</td></tr>
+    <tr><td>impact_cost_coeff</td><td>${fmtNum(result.recommended_impact_cost_coeff, 6)}</td></tr>
+    <tr><td>fill_probability_floor</td><td>${fmtNum(result.recommended_fill_probability_floor, 6)}</td></tr>
+    <tr><td>p90_abs_slippage_bps</td><td>${fmtNum(result.p90_abs_slippage_bps, 2)}</td></tr>
+    <tr><td>avg_delay_days</td><td>${fmtNum(result.avg_delay_days, 2)}</td></tr>
+  `;
+  const notes = Array.isArray(result.notes) ? result.notes : [];
+  noteHost.innerHTML = notes.length ? notes.map((x) => `<li>${esc(x)}</li>`).join("") : "<li>无</li>";
+}
+
+function renderCostCalibrationHistory() {
+  const host = el("costModelHistoryRows");
+  if (!host) return;
+  const rows = Array.isArray(state.latestCostCalibrationHistory) ? state.latestCostCalibrationHistory : [];
+  host.innerHTML = rows.length
+    ? rows
+        .map((row) => {
+          const r = row.result || {};
+          return `<tr>
+      <td>${fmtNum(row.id, 0)}</td>
+      <td>${fmtTs(row.created_at)}</td>
+      <td>${esc(r.symbol || "ALL")}</td>
+      <td>${esc(r.strategy_name || "ALL")}</td>
+      <td>${fmtNum(r.sample_size || 0, 0)}</td>
+      <td>${fmtPct(r.slippage_coverage || 0, 2)}</td>
+      <td>${fmtNum(r.recommended_slippage_rate || 0, 6)}</td>
+      <td>${fmtNum(r.recommended_impact_cost_coeff || 0, 6)}</td>
+      <td>${fmtNum(r.recommended_fill_probability_floor || 0, 6)}</td>
+      <td>${fmtPct(r.confidence || 0, 2)}</td>
+    </tr>`;
+        })
+        .join("")
+    : '<tr><td colspan="10" class="muted">暂无成本重估历史。</td></tr>';
+}
+
 function renderExecution() {
   renderPrepRows();
   renderReplaySignalsTable();
   renderReplayReport();
   renderReplayAttribution();
   renderClosureReport();
+  renderCostCalibration();
+  renderCostCalibrationHistory();
 }
 
 function bindResultSelectionEvents() {
@@ -3251,6 +3700,8 @@ function setDefaultDatesIfEmpty() {
   if (el("reportEndDate") && !el("reportEndDate").value) el("reportEndDate").value = todayISO();
   if (el("attrStartDateInput") && !el("attrStartDateInput").value) el("attrStartDateInput").value = minusDaysISO(90);
   if (el("attrEndDateInput") && !el("attrEndDateInput").value) el("attrEndDateInput").value = todayISO();
+  if (el("costModelStartDate") && !el("costModelStartDate").value) el("costModelStartDate").value = minusDaysISO(120);
+  if (el("costModelEndDate") && !el("costModelEndDate").value) el("costModelEndDate").value = todayISO();
   if (el("holdingTradeDateInput") && !el("holdingTradeDateInput").value) el("holdingTradeDateInput").value = todayISO();
   if (el("holdingAsOfDateInput") && !el("holdingAsOfDateInput").value) el("holdingAsOfDateInput").value = todayISO();
   if (el("holdingTradeFilterStartDateInput") && !el("holdingTradeFilterStartDateInput").value) {
@@ -3258,6 +3709,12 @@ function setDefaultDatesIfEmpty() {
   }
   if (el("holdingTradeFilterEndDateInput") && !el("holdingTradeFilterEndDateInput").value) {
     el("holdingTradeFilterEndDateInput").value = todayISO();
+  }
+  if (el("holdingAccEndDateInput") && !el("holdingAccEndDateInput").value) {
+    el("holdingAccEndDateInput").value = todayISO();
+  }
+  if (el("goLiveEndDateInput") && !el("goLiveEndDateInput").value) {
+    el("goLiveEndDateInput").value = todayISO();
   }
 }
 
@@ -3279,6 +3736,8 @@ async function initHandlers() {
       await loadReplayAttribution().catch(() => {});
       await loadHoldingTrades({ silent: true }).catch(() => {});
       await loadHoldingPositions({ silent: true }).catch(() => {});
+      await loadHoldingAccuracyReport({ silent: true }).catch(() => {});
+      await loadGoLiveReadinessReport({ silent: true }).catch(() => {});
       syncBarsInputsFromStrategy();
       syncRebalanceDefaults();
       await loadMarketBars({ silent: true }).catch(() => {});
@@ -3511,6 +3970,22 @@ async function initHandlers() {
     }
   });
 
+  el("loadHoldingAccuracyBtn")?.addEventListener("click", async () => {
+    try {
+      await loadHoldingAccuracyReport();
+    } catch (err) {
+      showGlobalError(`刷新准确性看板失败：${err.message}`);
+    }
+  });
+
+  el("loadGoLiveReadinessBtn")?.addEventListener("click", async () => {
+    try {
+      await loadGoLiveReadinessReport();
+    } catch (err) {
+      showGlobalError(`刷新上线准入报告失败：${err.message}`);
+    }
+  });
+
   el("runHoldingAnalyzeBtn")?.addEventListener("click", async () => {
     try {
       await runHoldingAnalyze();
@@ -3590,6 +4065,25 @@ async function initHandlers() {
       showGlobalError(`生成 closure 报表失败：${err.message}`);
     }
   });
+
+  el("runCostCalibrationBtn")?.addEventListener("click", async () => {
+    try {
+      await runCostCalibration();
+      setExecutionMessage("成本模型重估完成");
+      await loadCostCalibrationHistory().catch(() => {});
+    } catch (err) {
+      showGlobalError(`运行成本模型重估失败：${err.message}`);
+    }
+  });
+
+  el("loadCostCalibrationHistoryBtn")?.addEventListener("click", async () => {
+    try {
+      await loadCostCalibrationHistory();
+      setExecutionMessage("成本模型重估历史已刷新");
+    } catch (err) {
+      showGlobalError(`加载成本模型重估历史失败：${err.message}`);
+    }
+  });
 }
 
 async function bootstrap() {
@@ -3605,6 +4099,9 @@ async function bootstrap() {
     await loadRolloutRules({ silent: true }).catch(() => {});
     await loadHoldingTrades({ silent: true }).catch(() => {});
     await loadHoldingPositions({ silent: true }).catch(() => {});
+    await loadHoldingAccuracyReport({ silent: true }).catch(() => {});
+    await loadGoLiveReadinessReport({ silent: true }).catch(() => {});
+    await loadCostCalibrationHistory().catch(() => {});
     syncBarsInputsFromStrategy();
     syncRebalanceDefaults();
     updateSmallCapitalHint();

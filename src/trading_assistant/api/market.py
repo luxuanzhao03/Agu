@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -57,6 +57,30 @@ class MarketCalendarResponse(BaseModel):
     start_date: date
     end_date: date
     days: list[CalendarItem]
+
+
+class IntradayBarItem(BaseModel):
+    bar_time: datetime
+    symbol: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+    amount: float
+    interval: str
+    is_suspended: bool
+    is_st: bool
+
+
+class MarketIntradayResponse(BaseModel):
+    provider: str
+    row_count: int
+    symbol: str
+    interval: str
+    start_datetime: datetime
+    end_datetime: datetime
+    bars: list[IntradayBarItem]
 
 
 class TushareCapabilityItem(BaseModel):
@@ -287,6 +311,100 @@ def get_trade_calendar(
         end_date=end_date,
         days=days,
     )
+
+
+@router.get("/intraday", response_model=MarketIntradayResponse)
+def get_market_intraday_bars(
+    symbol: str = Query(..., description="Stock symbol, e.g. 000001"),
+    start_datetime: datetime = Query(..., description="Start datetime, e.g. 2026-02-20T09:30:00"),
+    end_datetime: datetime = Query(..., description="End datetime, e.g. 2026-02-20T15:00:00"),
+    interval: str = Query(default="15m", pattern="^(1m|5m|15m|30m|60m|1h)$"),
+    limit: int = Query(300, ge=1, le=2400, description="Max rows returned in response"),
+    provider: CompositeDataProvider = Depends(get_data_provider),
+    license_service: DataLicenseService = Depends(get_data_license_service),
+    settings: Settings = Depends(get_settings),
+    snapshots: DataSnapshotService = Depends(get_snapshot_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.READONLY, UserRole.RESEARCH, UserRole.RISK, UserRole.AUDIT)),
+) -> MarketIntradayResponse:
+    if start_datetime > end_datetime:
+        raise HTTPException(status_code=400, detail="start_datetime must be <= end_datetime")
+
+    try:
+        used_provider, bars = provider.get_intraday_bars_with_source(
+            symbol=symbol,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            interval=interval,
+        )
+    except DataProviderError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    license_check = license_service.check(
+        DataLicenseCheckRequest(
+            dataset_name="intraday_bars",
+            provider=used_provider,
+            requested_usage="internal_research",
+            export_requested=False,
+            expected_rows=len(bars),
+            as_of=end_datetime.date(),
+        )
+    )
+    if settings.enforce_data_license and not license_check.allowed:
+        audit.log(
+            event_type="data_license",
+            action="enforce_market_intraday",
+            payload={
+                "symbol": symbol,
+                "provider": used_provider,
+                "interval": interval,
+                "allowed": False,
+                "reason": license_check.reason,
+            },
+            status="ERROR",
+        )
+        raise HTTPException(status_code=403, detail=f"data license check failed: {license_check.reason}")
+
+    if bars.empty:
+        raise HTTPException(status_code=404, detail="No intraday data available for requested range.")
+
+    snapshot_id = snapshots.register(
+        DataSnapshotRegisterRequest(
+            dataset_name="intraday_bars",
+            symbol=symbol,
+            start_date=start_datetime.date(),
+            end_date=end_datetime.date(),
+            provider=used_provider,
+            row_count=len(bars),
+            content_hash=dataframe_content_hash(bars),
+        )
+    )
+    records = bars.sort_values("bar_time").tail(limit).to_dict(orient="records")
+    resp = MarketIntradayResponse(
+        provider=used_provider,
+        row_count=len(bars),
+        symbol=symbol,
+        interval=interval,
+        start_datetime=start_datetime,
+        end_datetime=end_datetime,
+        bars=[IntradayBarItem(**item) for item in records],
+    )
+    audit.log(
+        event_type="market_data",
+        action="intraday",
+        payload={
+            "symbol": symbol,
+            "provider": used_provider,
+            "interval": interval,
+            "row_count": resp.row_count,
+            "snapshot_id": snapshot_id,
+            "license_ok": license_check.allowed,
+            "license_reason": license_check.reason,
+            "license_enforced": settings.enforce_data_license,
+        },
+        status="OK" if (license_check.allowed or not settings.enforce_data_license) else "ERROR",
+    )
+    return resp
 
 
 @router.get("/tushare/capabilities", response_model=TushareCapabilityResponse)

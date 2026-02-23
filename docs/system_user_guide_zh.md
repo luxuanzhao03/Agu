@@ -1,538 +1,450 @@
 # A股半自动交易辅助系统使用手册（Windows）
 
-## 1. 这套系统要完成什么
+更新时间：2026-02-23
+适用版本：当前仓库主干（含自动调参、挑战赛、持仓分析、准确性与上线准入看板）
 
-这套系统的核心目标不是“自动下单”，而是把投研到交易准备的全流程做成可复用、可审计、可回放的闭环。
+## 1. 系统定位与边界
 
-它主要完成 3 件事：
+本系统是“投研与交易决策支持平台”，不是自动下单系统。
 
-1. 生成可解释的交易建议  
-   从行情、因子、策略、事件数据中生成 `BUY/SELL/WATCH` 信号，并给出理由、置信度、风险命中说明。
+- 支持：数据拉取、因子计算、策略信号、风控、回测、组合优化、执行回写、复盘、审计、运维监控。
+- 不支持：券商 API 自动下单、收益保证、零回撤保证。
+- 结论：系统目标是“提升胜率与执行质量、控制风险”，不是“保证不亏钱”。
 
-2. 在下单前做风险与收益验证  
-   通过风控规则、回测结果、组合优化和调仓建议，先验证“能不能做、怎么做更稳”。
+## 2. 页面与导航总览
 
-3. 在下单后形成复盘与治理闭环  
-   人工下单后回写执行，生成复盘统计；同时用运维看板监控公告连接器、SLA、告警、失败重放。
+系统前端入口共 3 个：
 
-## 2. 最重要的原则（先看这个）
+1. 主界面：`/ui/`
+2. 投研交易工作台：`/trading/workbench`
+3. 运维看板：`/ops/dashboard`
 
-1. **系统是半自动，最终下单由人执行**  
-   不接券商交易执行，不会自动报单。
+工作台内有 6 个主标签页：
 
-2. **风控优先于收益**  
-   出现 `CRITICAL` 风险、连接器严重告警、数据新鲜度不足时，应先处理风险再考虑收益。
+1. 策略与参数页
+2. 自动调参页
+3. 跨策略挑战赛页
+4. 结果可视化页
+5. 持仓分析页
+6. 交易准备单与执行回写页
 
-3. **参数和数据要可追溯**  
-   每次运行都应保留参数、信号、回写、回放结果，保证后续复盘和合规审计。
+## 3. 功能覆盖矩阵（已实现）
 
-4. **不要只看单次回测收益**  
-   必须结合回撤、夏普、交易次数、阻断数量、执行跟随率一起看。
+| 功能域 | 已实现能力 | 主要页面/API |
+|---|---|---|
+| 自动调参防过拟合 | walk-forward 多窗口、稳定性惩罚、参数漂移惩罚、收益方差惩罚 | `POST /autotune/run`、自动调参页 |
+| 自动调参前端化 | 任务运行、候选榜、基线对比、画像激活/回滚、灰度规则 | 自动调参页、`/autotune/*` |
+| 画像回滚与灰度 | 一键回滚上个画像、按策略/按标的灰度启用 | `POST /autotune/profiles/rollback`、`/autotune/rollout/rules/*` |
+| 跨策略挑战赛 | 六策略同窗评测、硬门槛筛选、冠军亚军、灰度计划 | 挑战赛页、`POST /challenge/run` |
+| 组合级回测 | 多标的净值、调仓周期、仓位上限、行业/主题约束、资金利用率 | `POST /backtest/portfolio-run` |
+| 拟真成本与成交 | 最低佣金、印花税、过户费、冲击成本、分档滑点、成交概率 | 回测引擎、`/replay/cost-model/*` |
+| 风控增强 | 连续亏损、单日亏损、VaR/ES、集中度阈值、T+1/ST/停牌等 | `POST /risk/check`、`POST /portfolio/risk/check` |
+| 研究-执行闭环 | 建议单 -> 手工执行回写 -> 偏差归因 -> 参数建议 | 执行回写页、`/replay/*`、`/reports/generate` |
+| 数据层增强 | 多源回退、时序缓存与增量补拉、字段质量评分 | `data/*`、`POST /data/quality/report` |
+| 数据许可证治理 | 数据集授权登记、用途校验、导出权限检查 | `POST /data/licenses/register`、`POST /data/licenses/check` |
+| 因子快照与落库留痕 | 因子实时快照、数据快照哈希登记、可追溯 | `GET /factors/snapshot`、`POST /data/snapshots/register` |
+| 策略治理与审批 | 版本注册、送审、多角色审批、运行时强制只用已审批版本 | `/strategy-governance/*` |
+| 研究流水线编排 | 每日研究管线一键运行（信号+事件增强+小资金过滤） | `POST /pipeline/daily-run` |
+| 模型风险监控 | 策略漂移检测、风险告警、审计留痕 | `POST /model-risk/drift-check` |
+| 系统配置与权限 | 环境配置查看、鉴权角色识别、权限矩阵查询 | `/system/config`、`/system/auth/*` |
+| 生产运维与审计 | 作业调度、SLA、告警降噪、证据包、审计哈希链 | `/ops/*`、`/alerts/*`、`/compliance/evidence/*` |
+| 持仓分析闭环 | 手工成交、持仓快照、次日预测、动作建议（ADD/REDUCE/EXIT/HOLD/BUY_NEW） | 持仓分析页、`/holdings/*` |
+| 策略准确性看板 | OOS 命中率、Brier、收益偏差、成本后收益、执行覆盖率 | `GET /reports/strategy-accuracy` |
+| 上线准入与回滚建议 | 门槛判定、自动回滚触发器、每日验收清单 | `GET /reports/go-live-readiness` |
 
-## 3. 使用前准备（Windows）
+## 4. 启动方式与端口
 
-## 3.1 环境要求
+### 4.1 一键启动（推荐）
 
-- Windows 10/11
-- Python 3.11+（已加入 PATH）
-- 建议可访问 `akshare` 数据源
+双击：`start_system_windows.bat`
 
-## 3.2 一键启动（推荐）
+默认后端端口：`127.0.0.1:8000`
 
-项目根目录已有一键脚本：`start_system_windows.bat`
+脚本会自动：
 
-双击它会自动完成：
+1. 创建/复用 `.venv`
+2. 创建/复用 `.env`
+3. 安装依赖
+4. 启动 API
+5. 打开三个页面：`/ui/`、`/trading/workbench`、`/ops/dashboard`
 
-1. 切换到项目目录
-2. 检查并创建 `.venv`
-3. 检查并创建 `.env`
-4. 必要时安装依赖 `pip install -e .[dev]`
-5. 启动后端服务（新开终端窗口）
-6. 自动打开 3 个页面  
-   - `http://127.0.0.1:8000/ui/`  
-   - `http://127.0.0.1:8000/trading/workbench`  
-   - `http://127.0.0.1:8000/ops/dashboard`
-
-可选参数：
-
-- `start_system_windows.bat --dry-run`：只打印步骤，不执行
-- `start_system_windows.bat --no-browser`：只拉起后端，不自动开网页
-
-## 3.3 手动启动（备用）
-
-在项目目录执行：
+### 4.2 手动启动（PowerShell）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 ```
 
-## 3.4 关闭系统
+### 4.3 常见启动日志说明
 
-关闭名为 `Trading Assistant API` 的终端窗口，或在该窗口按 `Ctrl + C`。
+- `GET /favicon.ico 404`：正常，不影响业务功能。
+- `ops_scheduler_enabled bool parsing error`：`.env` 值后面有空格（例如 `true `），改成严格 `true`/`false`。
 
----
+## 5. 工作台使用说明（按标签页）
 
-## 4. 前端总览与页面关系
+### 5.1 策略与参数页
 
-系统前端有 3 个页面：
+主要用于生成信号、回测、研究与组合调仓。
 
-1. 主界面（总入口）：`/ui/`
-2. 投研交易工作台（策略、结果、执行）：`/trading/workbench`
-3. 运维 + 事件治理看板：`/ops/dashboard`
+关键能力：
 
-页面跳转关系：
+1. 选择策略与参数（6 策略）。
+2. 配置事件增强、财报增强、小资金模式。
+3. 运行：
+   - `运行信号生成` -> `POST /signals/generate`
+   - `运行回测` -> `POST /backtest/run`
+   - `运行组合净值回测` -> `POST /backtest/portfolio-run`
+   - `运行研究工作流` -> `POST /research/run`
+4. 小资金模板：`2000/5000/8000` 一键套参。
 
-- 主界面可以进入另外两个页面
-- 投研页面头部可跳主界面、运维页面
-- 运维页面头部可跳主界面、投研页面
-- 投研页面内部结果页可一键跳转到策略页或执行页
+### 5.2 自动调参页
 
----
+主要用于参数搜索、过拟合抑制和画像管理。
 
-## 5. 主界面（`/ui/`）怎么用
+关键能力：
 
-主界面作用是“导航 + 快速状态”：
+1. 搜索空间 + 基线参数设置。
+2. walk-forward 多窗口验证。
+3. 候选排行榜（objective、overfit、stability、param drift、return variance）。
+4. 参数画像管理：
+   - 激活画像
+   - 一键回滚上一个画像
+   - 查看当前生效画像
+5. 灰度规则：按策略/按标的启停。
 
-1. 显示系统状态（来自 `/health`）
-2. 显示策略数量（来自 `/strategies`）
-3. 提供流程化入口：
-   - 进入投研工作台
-   - 进入运维看板
-   - 直达投研子页与运维回放工作台
+### 5.3 跨策略挑战赛页
 
-建议把主界面作为每天开盘前的起点页。
+用于“同窗口、同约束”下比较六策略市场适配性。
 
----
+关键能力：
 
-## 6. 投研交易工作台（`/trading/workbench`）详解
+1. 同时跑六策略（每个策略先调参再评测）。
+2. 硬门槛筛选（回撤、夏普、交易数、walk-forward 稳定性）。
+3. 综合评分排序（收益 + 稳定性 - 回撤 - 方差惩罚）。
+4. 输出冠军/亚军与灰度上线计划。
+5. 冠军参数可一键回填到策略页。
 
-该页是你日常最常用页面，分 3 个子页签：
+### 5.4 结果可视化页
 
-1. 策略与参数页
-2. 结果可视化页
-3. 交易准备单与执行回写页
+用于看图看表并联动调仓。
 
-## 6.1 策略与参数页（怎么配、怎么跑）
+关键能力：
 
-### 6.1.1 基础配置区域
+1. KPI：信号数、阻断数、回测收益/回撤/夏普等。
+2. 信号表 + 风控明细联动。
+3. K 线叠加信号点位。
+4. 组合权重图、行业暴露图。
+5. 调仓计划联动：`POST /portfolio/rebalance/plan`。
+6. 组合级回测结果展示。
 
-- `symbol`：单标的运行对象（信号、回测）
-- `symbols`：多标的列表（研究工作流）
-- `start_date/end_date`：统一时间窗口
-- `strategy_name`：策略选择
-- `industry`：行业字段（可给风控、行业暴露参考）
-- `enable_event_enrichment`：启用事件增强
-- `event_lookback_days`：事件回看窗口
-- `event_decay_half_life_days`：事件衰减速度
-- `enable_small_capital_mode`：启用小资金模式（可交易过滤 + 成本覆盖检查）
-- `small_capital_principal`：小资金本金（如 2000 元）
-- `small_capital_min_expected_edge_bps`：最低安全边际（预期边际需覆盖交易成本+安全边）
-- 小资金模板按钮：`套用 2000 档 / 5000 档 / 8000 档`，可一键填充策略与关键参数
-- `enable_fundamental_enrichment`：启用财报基本面增强（建议保持开启）
-- `fundamental_max_staleness_days`：财报最大陈旧天数，超出后评分会衰减
+### 5.5 持仓分析页
 
-### 6.1.2 策略参数（动态）
+用于手工交易台账、持仓画像、次日建议和准确性复盘。
 
-系统会根据 `strategy_name` 自动展示参数输入项，字段名保持英文，便于与后端 API 对齐。
+#### 5.5.1 手工成交录入（`POST /holdings/trades`）
 
-### 6.1.3 信号风控上下文（可选）
+字段说明：
 
-可选启用：
+1. `trade_date`：成交日期
+2. `symbol` / `symbol_name`
+3. `side`：BUY/SELL
+4. `price`：成交价
+5. `lots` / `lot_size`
+6. `fee`：总费用
+7. `reference_price`：建议/参考价（用于滑点评估）
+8. `executed_at`：成交时间
+9. `is_partial_fill`：是否部分成交
+10. `unfilled_reason`：未成交或部分成交原因
+11. `note`
 
-- `current_position`：当前持仓（数量、可卖数量、成本、市值、最近买入日）
-- `portfolio_snapshot`：组合总资产、现金、峰值、当前回撤
+#### 5.5.2 持仓快照与次日建议
 
-作用：让风险引擎在“真实持仓上下文”下判断，而不是只看裸信号。
+- 持仓快照：`GET /holdings/positions`
+- 次日分析：`POST /holdings/analyze`
 
-### 6.1.4 回测与研究参数
+建议动作包括：
 
-- `initial_cash`
-- `commission_rate`
-- `slippage_rate`
-- `min_commission_cny`
-- `stamp_duty_sell_rate`
-- `transfer_fee_rate`
-- `lot_size`
-- `optimize_portfolio`
-- `max_single_position`
-- `max_industry_exposure`
-- `target_gross_exposure`
-- `industry_map`（每行 `代码=行业`）
+1. `ADD`
+2. `REDUCE`
+3. `EXIT`
+4. `HOLD`
+5. `BUY_NEW`
 
-### 6.1.5 运行按钮
+每条建议含：`target_lots`、`delta_lots`、`confidence`、`risk_flags`、执行时段建议等。
 
-- `运行信号生成` -> `POST /signals/generate`
-- `运行回测` -> `POST /backtest/run`
-- `运行研究工作流` -> `POST /research/run`
-- `一键全跑`：按顺序执行信号、回测、研究
+#### 5.5.3 策略准确性看板
 
-补充：
-
-- 页面会实时显示“请求体预览”，用于核对参数
-- 页面输入会被本地缓存（浏览器 localStorage），刷新后可恢复
-
-## 6.2 如何选策略（非常重要）
-
-系统内置 6 种策略：
-
-1. `trend_following`（趋势跟随）  
-   适合：趋势明确、波段行情。  
-   核心：`MA20/MA60` 趋势 + `ATR` 退出带。
-
-2. `mean_reversion`（均值回归）  
-   适合：震荡市、偏短线回归。  
-   核心：`zscore20` 偏离回归 + 流动性门槛。
-
-3. `multi_factor`（多因子）  
-   适合：多标的筛选、组合研究。  
-   核心：动量、质量、低波动、流动性 + 财报评分加权打分。
-
-4. `sector_rotation`（行业轮动）  
-   适合：板块切换明显阶段。  
-   核心：行业强弱 + 风险偏好状态 + 动量确认。
-
-5. `event_driven`（事件驱动）  
-   适合：公告/事件信息密集时段。  
-   核心：`event_score` 与 `negative_event_score` 触发。
-
-6. `small_capital_adaptive`（小资金自适应）  
-   适合：长期本金低于 1 万元、希望控制换手和费用拖累的账户。  
-   核心：在信号阶段就做“一手可买性 + 集中度 + 动态仓位”联动，避免生成不可执行 BUY。
-
-实操建议：
-
-1. 初次上手先用 `trend_following` 跑单标的，便于理解信号与回测关系。
-2. 想做组合时优先 `multi_factor + optimize_portfolio`。
-3. 事件流质量稳定后，再提高 `event_driven` 权重。
-4. 参数调优要逐步改，避免一次改太多无法解释收益变化。
-5. 财报增强建议默认开启；若关闭，仅剩技术/事件维度，建议降低仓位并加强人工复核。
-6. 若本金长期低于 1 万元：优先 `small_capital_adaptive`，并开启 `enable_small_capital_mode`，先保证“可执行”再追求收益弹性。
-
----
-
-## 7. 结果可视化页（`#results`）详解
-
-这个页面用于“看懂结果、做出准备动作”。
-
-## 7.1 顶部 KPI
+接口：`GET /reports/strategy-accuracy`
 
 核心指标：
 
-- 信号数量
-- 买入建议数
-- 阻断数量
-- 回测收益/最大回撤/夏普
-- 研究候选数量
+1. 样本外命中率（hit rate）
+2. Brier 分数（概率校准误差）
+3. 收益偏差（预测-实际）
+4. 成本后动作收益
+5. 执行覆盖率（建议是否被回写执行）
 
-用途：先判断本轮结果是否值得深入看。
+#### 5.5.4 上线准入门槛表
 
-## 7.2 信号与风控联动
+接口：`GET /reports/go-live-readiness`
 
-左侧表：信号与交易准备单  
-右侧表：风控命中明细
+输出内容：
 
-当前信号表新增“财报评分”列（0~1），用于快速识别买入建议是否有基本面支撑。
+1. 门槛检查（pass/fail）
+2. Readiness 等级（`BLOCKED` / `GRAY_READY_WITH_WARNINGS` / `GRAY_READY`）
+3. 自动回滚触发规则
+4. 每日验收清单
 
-联动规则：
+### 5.6 交易准备单与执行回写页
 
-1. 点击左表某行
-2. 右侧自动显示该信号的风控命中、建议动作、免责声明
+关键能力：
 
-## 7.3 研究工作流与组合优化
+1. 查看建议单并一键填入执行单。
+2. 执行回写：`POST /replay/executions/record`。
+3. 执行复盘：`GET /replay/report`。
+4. 偏差归因：`GET /replay/attribution`。
+5. closure 报告：`POST /reports/generate` (`report_type=closure`)。
+6. 成本模型重估：`POST /replay/cost-model/calibrate`。
 
-研究候选表展示多标的结果。  
-组合优化表展示 `optimized_portfolio.weights`。
+## 6. 从研究到执行的闭环（标准流程）
 
-说明：
+1. 在策略页生成信号。
+2. 在结果页检查风控、回测、组合建议。
+3. 手工下单后录入持仓交易台账。
+4. 在执行页回写成交。
+5. 查看复盘与归因，识别偏差来源。
+6. 刷新准确性看板与上线准入报告。
+7. 若不达标，回滚画像并调整参数，再进入下一轮。
 
-- 这里只展示“目标权重建议”，不是执行指令
-- 后续调仓指令由 `rebalance plan` 生成
-- 研究候选会携带 `fundamental_score`，组合优化会把技术动量与财报评分联合用于候选预期收益估计
+## 7. 数据与算法说明
 
-## 7.4 K线/价格走势叠加信号点位（`/market/bars`）
+### 7.1 数据源
 
-用途：把“策略信号”放回价格路径里验证直觉。
+1. `tushare` 优先
+2. `akshare` 回退
+3. 本地缓存：时序增量补拉（减少重复请求）
 
-操作步骤：
+### 7.2 频率支持
 
-1. 点 `同步策略参数`（自动带入 `symbol/start_date/end_date`）
-2. 点 `加载K线并叠加信号`
-3. 观察 K 线图上的标记点：
-   - 绿色：`BUY`
-   - 红色：`SELL`
-   - 橙色：`WATCH`
-4. 结合下方 bar 表核对具体日期和 OHLC
+1. 日线：主策略与回测主频
+2. 分钟线（1m/5m/15m/30m/60m）：用于持仓页执行时段建议与盘中风险辅助
 
-注意：
+### 7.3 算法原则
 
-- `limit` 最大 200（接口限制）
-- 叠加信号来自“最近一次信号生成结果”
+1. 不选“单段利润最高”，选“样本外更稳”。
+2. 多指标综合评分而非单一收益。
+3. 先过硬门槛，再做排名。
 
-## 7.5 组合权重可视化 + 调仓建议联动（`/portfolio/rebalance/plan`）
+### 7.4 因子快照与模型漂移
 
-左侧图：
+1. 可用 `GET /factors/snapshot` 查看指定标的在指定区间的最新因子值（含基本面增强因子）。
+2. 每次因子快照会登记数据快照哈希，便于回测与实盘对账追溯。
+3. 可用 `POST /model-risk/drift-check` 做策略漂移检测，防止模型在市场切换后失效。
 
-- 目标权重图（按 symbol）
-- 行业暴露图（按 industry）
+## 8. 风控、成本与可交易性
 
-右侧调仓区：
+系统已覆盖：
 
-1. 填 `total_equity`、`lot_size`
-2. 填当前持仓 `current_positions`，每行：
-   `symbol,quantity,last_price`
-3. 点 `生成调仓建议`
-4. 查看输出表：
-   - `side`
-   - `target_weight`
-   - `delta_weight`
-   - `quantity`
-   - `estimated_notional`
+1. T+1、ST、停牌、涨跌停等基础约束
+2. 单票仓位上限、行业/主题集中度约束
+3. 连续亏损、单日亏损、VaR/ES 等组合风险控制
+4. 最低佣金、印花税、过户费
+5. 拟真滑点与冲击成本建模
+6. 小资金可交易过滤（能否买一手、边际是否覆盖成本）
 
-辅助按钮：
+## 9. 运维、告警与审计
 
-- `同步默认资金/手数`：从回测参数同步
-- `用买入信号构造持仓样例`：快速生成示例持仓文本
+### 9.1 运维作业
 
-## 7.6 回测曲线与明细
+- 作业注册、触发、调度、SLA 检查：`/ops/jobs/*`
 
-包含：
+### 9.2 告警系统
 
-- `equity_curve` 图
-- 指标明细表（收益、回撤、夏普、交易次数、胜率、阻断）
-- 成交记录表（每笔动作、价格、数量、费用、阻断原因）
+- 订阅、去重、ACK、值班回调、对账：`/alerts/*`
 
-你应重点看：
+### 9.3 合规证据包
 
-1. 回撤是否可承受
-2. 夏普是否稳定
-3. 阻断是否过多（可能参数过激或风控条件过严）
-4. 小资金提示是否频繁触发（说明当前标的价格/成本结构不适合账户规模）
+- 导出、签名、复签、校验：`/compliance/evidence/*`
 
----
+### 9.4 审计链
 
-## 8. 交易准备单与执行回写页（`#execution`）详解
+- 审计查询：`/audit/events`
+- 链校验：`/audit/verify-chain`
 
-本页解决“从建议到执行到复盘”的闭环。
+## 10. 关键 API 分组索引
 
-## 8.1 交易准备单
+### 10.1 系统与鉴权
 
-来自最近一次信号结果。  
-每行可点 `填入执行单`，自动把 `signal_id/symbol/side/date` 带入执行表单。
+- `GET /system/config`
+- `GET /system/auth/me`
+- `GET /system/auth/permissions`
 
-## 8.2 信号记录库（`/replay/signals`）
-
-用于查询历史信号决策记录，可按 `symbol` 和 `limit` 过滤。
-
-## 8.3 执行回写（`/replay/executions/record`）
-
-填写人工成交结果：
-
-- `signal_id`
-- `symbol`
-- `execution_date`
-- `side`
-- `quantity`
-- `price`
-- `fee`
-- `note`
-
-提交后会写入执行记录库。
-
-## 8.4 执行复盘报表（`/replay/report`）
-
-可按时间区间与标的查看：
-
-- 样本数
-- 跟随率（执行动作是否跟随信号）
-- 平均延迟天数
-- 平均滑点（当前实现里基线为 0）
-
----
-
-## 9. 运维 + 事件治理看板（`/ops/dashboard`）详解
-
-这个页面不直接给买卖建议，它保障“数据链路和治理质量可用”。
-
-## 9.1 顶部 KPI
-
-包括：
-
-- 作业运行次数
-- 调度器 SLA 违约数
-- 连接器 SLA 严重告警
-- 连接器未恢复数
-- 连接器升级中未恢复数
-- 未确认严重告警
-- 事件覆盖标的数
-
-## 9.2 主要板块
-
-1. 事件覆盖总览  
-   看事件量、正负事件、来源覆盖与日度分布。
-
-2. 连接器健康与积压  
-   看最近运行状态、新鲜度、待重试、死信、checkpoint。
-
-3. 多源矩阵健康  
-   看 active/standby 源、健康分、有效分、连续失败、最后成功时间。
-
-4. SLA 违约与升级状态机  
-   一块看“违约列表”，一块看“未恢复状态（含升级级别）”。
-
-5. NLP 规则集与漂移监控  
-   看活跃规则版本、漂移趋势、快照告警等级。
-
-6. SLO 消耗率历史  
-   看连接器与 NLP 的 burn rate 曲线和时间表。
-
-7. 作业与调度器 SLA  
-   看近期作业运行和调度器违约明细。
-
-8. 未确认告警 + 值班回调时间线  
-   看当前告警积压和 oncall 回调闭环。
-
-9. 回放处理工作台（重点）  
-   失败记录筛选、编辑 payload、保存修复、手动重放、修复后重放。
-
-## 9.3 回放处理工作台操作步骤（建议照做）
-
-1. 选择 `连接器`
-2. 选择状态过滤（`PENDING/DEAD/REPLAYED/ALL`）
-3. 可加错误关键词过滤
-4. 点 `加载失败列表`
-5. 勾选需要处理的失败记录
-6. 点某条 `编辑`，查看 `raw_record` 和 `event`
-7. 修改 JSON（必须是 JSON 对象）
-8. 先点 `保存修复`（只修复不重放）或直接点 `保存并重放选中项`
-9. 看“重放结果”表，确认成功/失败/死信数量
-10. 再回看顶部 KPI 是否恢复
-
----
-
-## 10. 页面与后端是如何联动的
-
-## 10.1 交易主链路
-
-1. 策略参数页  
-   `POST /signals/generate` -> 信号与准备单（含财报评分与财报风控门槛）
-
-2. 结果页  
-   `POST /backtest/run` -> 回测图与指标  
-   `POST /research/run` -> 多标的研究与优化权重  
-   `GET /market/bars` -> K线叠加信号  
-   `POST /portfolio/rebalance/plan` -> 调仓建议
-
-3. 执行页  
-   `POST /replay/executions/record` -> 回写执行  
-   `GET /replay/report` -> 复盘统计
-
-## 10.2 运维治理链路
-
-1. 看板汇总：`GET /metrics/ops-dashboard`
-2. 连接器健康：`/events/connectors/overview`、`/events/connectors/source-health`
-3. SLA：`/events/connectors/sla`、`/events/connectors/sla/states`、`/events/connectors/sla/states/summary`
-4. 重放修复：`/events/connectors/failures`、`/events/connectors/failures/repair`、`/events/connectors/replay/manual`、`/events/connectors/replay/repair`
-
----
-
-## 11. 推荐的一次完整使用流程（从 0 到 1）
-
-以下是一套可直接复用的日常流程：
-
-1. 双击 `start_system_windows.bat`
-2. 打开主界面，确认系统状态正常
-3. 进入投研工作台，先做单标的试跑：
-   - 策略选 `trend_following`
-   - 填 `symbol=000001`
-   - 设好日期
-   - 点 `运行信号生成`
-4. 在结果页检查：
-   - 信号动作和风控命中
-   - K线叠加信号是否合理
-5. 点 `运行回测`，检查收益/回撤/夏普
-6. 切回策略页，填多标的，点 `运行研究工作流`
-7. 在结果页查看：
-   - 候选标的
-   - 优化权重
-   - 行业暴露
-8. 填当前持仓，生成调仓建议
-9. 跳转执行页，按建议人工下单后回写执行
-10. 查看复盘报表的跟随率与延迟
-11. 打开运维看板，确认连接器与 SLA 正常；若失败积压，进入回放工作台处理
-
----
-
-## 12. 你最需要长期盯住的指标
-
-1. 风险维度  
-   最大回撤、CRITICAL 命中数、阻断信号数
-
-2. 收益质量维度  
-   年化收益、夏普、收益稳定性（不要只看单次区间）
-
-3. 执行偏差维度  
-   跟随率、平均延迟、手工执行偏差
-
-4. 治理健康维度  
-   连接器新鲜度、待重试/死信、SLA 升级状态、NLP 漂移告警
-
-5. 财报质量维度  
-   财报覆盖率（有无快照）、`fundamental_score`分布、低分阻断/预警数量
-
-6. 小资金适配维度  
-   小资金阻断次数、最小手数可交易覆盖率、成本占预期边际比例
-
----
-
-## 13. 常见问题与排查
-
-## 13.1 页面打不开
-
-1. 先访问 `http://127.0.0.1:8000/health`
-2. 若不通，检查 API 窗口是否仍在运行
-3. 若 8000 端口被占用，先关占用进程再重启
-
-## 13.2 没有数据或信号一直是 WATCH
-
-1. 检查日期区间是否过短
-2. 检查标的代码是否有效
-3. 检查策略参数是否过严
-4. 检查事件增强是否开启但事件源无数据
-5. 检查财报增强是否开启；若开启但数据源无财报快照，系统会回退为技术/事件驱动
-
-## 13.3 回测结果差异很大
-
-1. 检查手续费、滑点、手数设置是否一致
-2. 检查是否启用了事件增强（会改变信号）
-3. 检查是否使用了不同策略参数
-
-## 13.4 调仓建议无法生成
-
-1. 先确保研究结果里有 `optimized_portfolio.weights`
-2. `current_positions` 格式必须是 `symbol,quantity,last_price`
-3. 确保 `total_equity > 0`、`lot_size >= 1`
-
-## 13.5 401/403 权限错误
-
-如果启用了 `AUTH_ENABLED=true`：
-
-1. 在投研页面头部配置 `X-API-Key`
-2. 确认该 key 对应角色具备目标接口权限
-
----
-
-## 14. 最后建议（实盘前）
-
-1. 先用 1-2 个标的做完整闭环，打通流程再扩容
-2. 每次只改一组参数，保留前后对比记录
-3. 把“收益判断”与“治理判断”分开做，任何一方异常都不要急于加仓
-4. 每周固定做一次复盘：信号质量 + 执行偏差 + SLA 健康
-
----
-
-如需把本手册升级为“团队 SOP 版本”，下一步建议补充：
-
-1. 你的账户规模分层（小/中/大资金）的参数模板
-2. 不同行情状态（趋势/震荡/高波动）下的策略切换规则
-3. 你的人工下单纪律（撤单规则、滑点容忍、仓位上限）
+### 10.2 市场与数据接入
+
+- `GET /market/bars`
+- `GET /market/intraday`
+- `GET /market/calendar`
+- `GET /market/tushare/capabilities`
+- `POST /market/tushare/prefetch`
+
+### 10.3 数据治理与许可证
+
+- `POST /data/quality/report`
+- `POST /data/snapshots/register`
+- `GET /data/snapshots`
+- `POST /data/pit/validate`
+- `POST /data/pit/validate-events`
+- `POST /data/licenses/register`
+- `GET /data/licenses`
+- `POST /data/licenses/check`
+
+### 10.4 事件与 NLP
+
+- `POST /events/sources/register`
+- `POST /events/ingest`
+- `GET /events`
+- `GET /events/connectors/overview`
+- `POST /events/connectors/run`
+- `GET /events/connectors/sla`
+- `POST /events/nlp/normalize/ingest`
+- `POST /events/nlp/drift-check`
+- `GET /events/nlp/drift/slo/history`
+
+### 10.5 因子、策略与治理
+
+- `GET /factors/snapshot`
+- `GET /strategies`
+- `GET /strategies/{strategy_name}`
+- `POST /strategy-governance/register`
+- `POST /strategy-governance/submit-review`
+- `POST /strategy-governance/decide`
+- `GET /strategy-governance/policy`
+- `POST /model-risk/drift-check`
+
+### 10.6 信号、风控与组合
+
+- `POST /signals/generate`
+- `POST /risk/check`
+- `POST /portfolio/risk/check`
+- `POST /portfolio/optimize`
+- `POST /portfolio/rebalance/plan`
+- `POST /portfolio/stress-test`
+
+### 10.7 回测、研究、调参与挑战赛
+
+- `POST /backtest/run`
+- `POST /backtest/portfolio-run`
+- `POST /research/run`
+- `POST /pipeline/daily-run`
+- `POST /autotune/run`
+- `GET /autotune/profiles`
+- `POST /autotune/profiles/rollback`
+- `POST /challenge/run`
+
+### 10.8 持仓与上线闭环
+
+- `POST /holdings/trades`
+- `GET /holdings/trades`
+- `GET /holdings/positions`
+- `POST /holdings/analyze`
+- `GET /reports/strategy-accuracy`
+- `GET /reports/go-live-readiness`
+
+### 10.9 执行回写与复盘
+
+- `POST /replay/signals/record`
+- `POST /replay/executions/record`
+- `GET /replay/report`
+- `GET /replay/attribution`
+- `POST /replay/cost-model/calibrate`
+- `GET /replay/cost-model/calibrations`
+
+### 10.10 报告、合规与证据包
+
+- `POST /reports/generate`
+- `POST /compliance/preflight`
+- `POST /compliance/evidence/export`
+- `POST /compliance/evidence/verify`
+- `POST /compliance/evidence/countersign`
+
+### 10.11 运维调度与告警
+
+- `GET /metrics/summary`
+- `GET /metrics/ops-dashboard`
+- `POST /ops/jobs/register`
+- `POST /ops/jobs/{job_id}/run`
+- `POST /ops/jobs/scheduler/tick`
+- `GET /ops/jobs/scheduler/sla`
+- `GET /ops/dashboard`
+- `GET /alerts/recent`
+- `POST /alerts/oncall/reconcile`
+
+### 10.12 审计
+
+- `GET /audit/events`
+- `GET /audit/export`
+- `GET /audit/verify-chain`
+
+## 11. 每日操作 SOP（建议）
+
+### 11.1 盘前
+
+1. 看 `/ops/dashboard`，确认无 critical。
+2. 跑挑战赛或确认当前冠军画像仍生效。
+3. 刷新持仓分析，生成次日建议。
+4. 刷新上线准入报告，确认是否允许继续灰度。
+
+### 11.2 盘中
+
+1. 参考持仓页推荐执行时段。
+2. 手工下单后立即回填成交记录。
+3. 若触发回滚条件，停止增仓并回滚画像。
+
+### 11.3 盘后
+
+1. 回写执行并刷新复盘归因。
+2. 刷新准确性看板与上线准入看板。
+3. 记录异常与第二天修正动作。
+
+## 12. 上线准入建议（实盘灰度）
+
+建议门槛（可按你的风险偏好微调）：
+
+1. OOS 样本数 `>= 40`
+2. OOS 命中率 `>= 55%`
+3. Brier `<= 0.23`
+4. 执行覆盖率 `>= 70%`
+5. 成本后动作收益 `>= 0`
+6. 执行跟随率 `>= 65%`
+7. 平均滑点 `<= 35 bps`
+8. 平均延迟 `<= 1.2 天`
+9. 最近 30 天存在挑战赛验证结果
+
+自动回滚触发器（示例）：
+
+1. 连续 3 日亏损
+2. 单日组合收益 `<= -2.5%`
+3. 灰度窗口最大回撤 `> 6%`
+4. 5 日执行覆盖率 `< 60%` 或 5 日平均滑点 `> 45 bps`
+
+## 13. 常见问题
+
+1. 标签页点不动
+- 先看浏览器控制台是否有 JS 报错。
+- 强刷缓存后重试。
+- 确认 `/ui/trading-workbench/app.js` 能正常加载（HTTP 200）。
+
+2. 文档或页面出现乱码
+- 确认文件保存为 UTF-8。
+- Windows 终端建议使用 `chcp 65001`。
+
+3. 启动失败提示布尔解析错误
+- `.env` 不要写 `true `（末尾空格），必须是 `true` 或 `false`。
+
+4. 为什么收益和回测不同
+- 实盘有执行偏差、滑点、延迟与漏单。
+- 请以“成本后收益 + 准确性看板 + 上线准入报告”综合判断。
+
+## 14. 结语
+
+这份手册已经覆盖当前系统主功能面。若后续新增模块，请同步更新本文件和 `README.md` 的“能力范围”与“API 总览”。

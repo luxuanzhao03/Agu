@@ -14,31 +14,44 @@ class FactorEngine:
         df = bars.sort_values("trade_date").copy()
 
         # Trend features.
-        df["ma5"] = df["close"].rolling(window=5, min_periods=1).mean()
-        df["ma20"] = df["close"].rolling(window=20, min_periods=1).mean()
-        df["ma60"] = df["close"].rolling(window=60, min_periods=1).mean()
+        ma5 = df["close"].rolling(window=5, min_periods=1).mean()
+        ma20 = df["close"].rolling(window=20, min_periods=1).mean()
+        ma60 = df["close"].rolling(window=60, min_periods=1).mean()
 
         # ATR and volatility features.
         prev_close = df["close"].shift(1)
         tr_1 = df["high"] - df["low"]
         tr_2 = (df["high"] - prev_close).abs()
         tr_3 = (df["low"] - prev_close).abs()
-        df["tr"] = pd.concat([tr_1, tr_2, tr_3], axis=1).max(axis=1)
-        df["atr14"] = df["tr"].rolling(window=14, min_periods=1).mean()
+        tr = pd.concat([tr_1, tr_2, tr_3], axis=1).max(axis=1)
+        atr14 = tr.rolling(window=14, min_periods=1).mean()
 
         ret = df["close"].pct_change().fillna(0.0)
-        df["ret_1d"] = ret
-        df["momentum5"] = df["close"].pct_change(5).fillna(0.0)
-        df["momentum20"] = df["close"].pct_change(20).fillna(0.0)
-        df["momentum60"] = df["close"].pct_change(60).fillna(0.0)
-        df["volatility20"] = ret.rolling(window=20, min_periods=2).std().fillna(0.0)
+        momentum5 = df["close"].pct_change(5).fillna(0.0)
+        momentum20 = df["close"].pct_change(20).fillna(0.0)
+        momentum60 = df["close"].pct_change(60).fillna(0.0)
+        volatility20 = ret.rolling(window=20, min_periods=2).std().fillna(0.0)
 
         # Mean-reversion features.
         close_std20 = df["close"].rolling(window=20, min_periods=2).std().replace(0.0, np.nan)
-        df["zscore20"] = ((df["close"] - df["ma20"]) / close_std20).replace([np.inf, -np.inf], 0.0).fillna(0.0)
+        zscore20 = ((df["close"] - ma20) / close_std20).replace([np.inf, -np.inf], 0.0).fillna(0.0)
 
         # Liquidity features.
-        df["turnover20"] = df["amount"].rolling(window=20, min_periods=1).mean().fillna(0.0)
+        turnover20 = df["amount"].rolling(window=20, min_periods=1).mean().fillna(0.0)
+        df = df.assign(
+            ma5=ma5,
+            ma20=ma20,
+            ma60=ma60,
+            tr=tr,
+            atr14=atr14,
+            ret_1d=ret,
+            momentum5=momentum5,
+            momentum20=momentum20,
+            momentum60=momentum60,
+            volatility20=volatility20,
+            zscore20=zscore20,
+            turnover20=turnover20,
+        )
 
         # Event placeholders for event-driven strategy.
         if "event_score" not in df.columns:
@@ -103,12 +116,14 @@ class FactorEngine:
         score = np.where(df["fundamental_pit_ok"], score, score - 0.25)
         score = np.clip(score, 0.0, 1.0)
 
-        df["fundamental_profitability_score"] = np.clip(profitability.fillna(0.5), 0.0, 1.0)
-        df["fundamental_growth_score"] = np.clip(growth.fillna(0.5), 0.0, 1.0)
-        df["fundamental_quality_score"] = np.clip(quality.fillna(0.5), 0.0, 1.0)
-        df["fundamental_leverage_score"] = np.clip(leverage.fillna(0.5), 0.0, 1.0)
-        df["fundamental_completeness"] = np.clip(completeness.fillna(0.0), 0.0, 1.0)
-        df["fundamental_score"] = score
+        df = df.assign(
+            fundamental_profitability_score=np.clip(profitability.fillna(0.5), 0.0, 1.0),
+            fundamental_growth_score=np.clip(growth.fillna(0.5), 0.0, 1.0),
+            fundamental_quality_score=np.clip(quality.fillna(0.5), 0.0, 1.0),
+            fundamental_leverage_score=np.clip(leverage.fillna(0.5), 0.0, 1.0),
+            fundamental_completeness=np.clip(completeness.fillna(0.0), 0.0, 1.0),
+            fundamental_score=score,
+        )
 
         # Tushare advanced-data features:
         # 1) market microstructure (daily_basic/moneyflow/stk_limit/adj_factor)
@@ -271,9 +286,11 @@ class FactorEngine:
             + 0.30 * statement_quality_score.fillna(0.5)
         )
         score = np.clip(score, 0.0, 1.0)
-        df["fundamental_statement_quality_score"] = np.clip(statement_quality_score.fillna(0.5), 0.0, 1.0)
-        df["fundamental_statement_completeness"] = np.clip(statement_completeness.fillna(0.0), 0.0, 1.0)
-        df["fundamental_score"] = score
+        df = df.assign(
+            fundamental_statement_quality_score=np.clip(statement_quality_score.fillna(0.5), 0.0, 1.0),
+            fundamental_statement_completeness=np.clip(statement_completeness.fillna(0.0), 0.0, 1.0),
+            fundamental_score=score,
+        )
 
         # Disclosure/event risk from forecast + express + audit.
         forecast_mid = pd.to_numeric(df["ts_forecast_pchg_mid"], errors="coerce").fillna(

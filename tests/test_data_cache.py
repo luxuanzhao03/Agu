@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -15,6 +15,7 @@ class CountingProvider(MarketDataProvider):
 
     def __init__(self) -> None:
         self.calls: list[tuple[date, date]] = []
+        self.intraday_calls: list[tuple[datetime, datetime, str]] = []
 
     def get_daily_bars(self, symbol: str, start_date: date, end_date: date) -> pd.DataFrame:
         _ = symbol
@@ -50,6 +51,40 @@ class CountingProvider(MarketDataProvider):
     def get_security_status(self, symbol: str) -> dict[str, bool]:
         _ = symbol
         return {"is_st": False, "is_suspended": False}
+
+    def get_intraday_bars(
+        self,
+        symbol: str,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        *,
+        interval: str = "15m",
+    ) -> pd.DataFrame:
+        _ = symbol
+        self.intraday_calls.append((start_datetime, end_datetime, interval))
+        step = 15 if interval in {"15m", "15"} else 5
+        rows = []
+        cursor = start_datetime
+        price = 10.0
+        while cursor <= end_datetime:
+            rows.append(
+                {
+                    "bar_time": cursor,
+                    "symbol": "000001",
+                    "open": price,
+                    "high": price + 0.03,
+                    "low": price - 0.02,
+                    "close": price + 0.01,
+                    "volume": 1000.0,
+                    "amount": (price + 0.01) * 1000.0,
+                    "interval": interval,
+                    "is_suspended": False,
+                    "is_st": False,
+                }
+            )
+            cursor += timedelta(minutes=step)
+            price += 0.01
+        return pd.DataFrame(rows)
 
 
 def test_composite_provider_uses_incremental_cache(tmp_path: Path) -> None:
@@ -103,3 +138,17 @@ def test_composite_provider_backfills_internal_missing_dates(tmp_path: Path) -> 
     assert gap_day in fetched_dates
     assert len(provider.calls) == 1
     assert provider.calls[0] == (gap_day, gap_day)
+
+
+def test_composite_provider_intraday_cache_reuse(tmp_path: Path) -> None:
+    provider = CountingProvider()
+    cache = LocalTimeseriesCache(str(tmp_path / "market_cache_intraday.db"))
+    composite = CompositeDataProvider([provider], cache_store=cache, enable_cache=True)
+    start = datetime(2025, 1, 6, 9, 30)
+    end = datetime(2025, 1, 6, 10, 30)
+
+    _, bars1 = composite.get_intraday_bars_with_source("000001", start, end, interval="15m")
+    _, bars2 = composite.get_intraday_bars_with_source("000001", start, end, interval="15m")
+    assert not bars1.empty
+    assert not bars2.empty
+    assert len(provider.intraday_calls) == 1

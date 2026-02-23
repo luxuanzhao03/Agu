@@ -3,7 +3,7 @@ from pathlib import Path
 
 from trading_assistant.audit.service import AuditService
 from trading_assistant.audit.store import AuditStore
-from trading_assistant.core.models import ReportGenerateRequest, SignalAction, SignalDecisionRecord
+from trading_assistant.core.models import ExecutionRecordCreate, ReportGenerateRequest, SignalAction, SignalDecisionRecord
 from trading_assistant.reporting.service import ReportingService
 from trading_assistant.replay.service import ReplayService
 from trading_assistant.replay.store import ReplayStore
@@ -57,3 +57,36 @@ def test_reporting_service_generates_closure_report(tmp_path: Path) -> None:
     service = ReportingService(replay=replay, audit=audit, output_dir=str(tmp_path / "reports"))
     result = service.generate(ReportGenerateRequest(report_type="closure", save_to_file=False))
     assert "Execution Closure Report" in result.content
+
+
+def test_reporting_service_generates_cost_model_report(tmp_path: Path) -> None:
+    audit = AuditService(AuditStore(str(tmp_path / "audit.db")))
+    replay = ReplayService(ReplayStore(str(tmp_path / "replay.db")))
+    replay.record_signal(
+        SignalDecisionRecord(
+            signal_id="sig-cost",
+            symbol="000001",
+            strategy_name="trend_following",
+            trade_date=date(2025, 1, 2),
+            action=SignalAction.BUY,
+            confidence=0.8,
+            reason="x",
+            suggested_position=0.05,
+        )
+    )
+    _ = replay.record_execution(
+        ExecutionRecordCreate(
+            signal_id="sig-cost",
+            symbol="000001",
+            execution_date=date(2025, 1, 2),
+            side=SignalAction.BUY,
+            quantity=100,
+            price=10.3,
+            reference_price=10.0,
+            fee=1.0,
+            note="manual",
+        )
+    )
+    service = ReportingService(replay=replay, audit=audit, output_dir=str(tmp_path / "reports"))
+    result = service.generate(ReportGenerateRequest(report_type="cost_model", save_to_file=False))
+    assert "Cost Model Calibration Report" in result.content

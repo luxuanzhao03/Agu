@@ -10,6 +10,8 @@ from trading_assistant.autotune.service import AutoTuneService
 from trading_assistant.core.models import (
     AutoTuneJobPayload,
     ComplianceEvidenceExportJobPayload,
+    CostModelCalibrationRequest,
+    CostModelRecalibrationJobPayload,
     ExecutionReviewJobPayload,
     EventConnectorReplayJobPayload,
     EventConnectorReplayRequest,
@@ -37,6 +39,7 @@ from trading_assistant.governance.event_connector_service import EventConnectorS
 from trading_assistant.ops.cron import CronSchedule
 from trading_assistant.ops.job_store import JobStore
 from trading_assistant.pipeline.runner import DailyPipelineRunner
+from trading_assistant.replay.service import ReplayService
 from trading_assistant.reporting.service import ReportingService
 from trading_assistant.workflow.research import ResearchWorkflowService
 
@@ -52,6 +55,7 @@ class JobService:
         compliance_evidence: ComplianceEvidenceService | None = None,
         alerts: AlertService | None = None,
         autotune: AutoTuneService | None = None,
+        replay: ReplayService | None = None,
         scheduler_timezone: str = "Asia/Shanghai",
         running_timeout_minutes: int = 120,
     ) -> None:
@@ -63,6 +67,7 @@ class JobService:
         self.compliance_evidence = compliance_evidence
         self.alerts = alerts
         self.autotune = autotune
+        self.replay = replay
         self.scheduler_timezone = scheduler_timezone
         self.running_timeout_minutes = max(1, running_timeout_minutes)
 
@@ -404,6 +409,7 @@ class JobService:
                 ReportGenerateRequest(
                     report_type="closure",
                     symbol=payload.symbol,
+                    strategy_name=payload.strategy_name,
                     start_date=payload.start_date,
                     end_date=payload.end_date,
                     limit=payload.limit,
@@ -414,6 +420,49 @@ class JobService:
                 "title": result.title,
                 "saved_path": result.saved_path,
                 "content_size": len(result.content),
+            }
+
+        if job.job_type == JobType.COST_MODEL_RECALIBRATION:
+            if self.replay is None:
+                raise ValueError("replay service is not configured")
+            payload = CostModelRecalibrationJobPayload.model_validate(job.payload)
+            result = self.replay.calibrate_cost_model(
+                CostModelCalibrationRequest(
+                    symbol=payload.symbol,
+                    strategy_name=payload.strategy_name,
+                    start_date=payload.start_date,
+                    end_date=payload.end_date,
+                    limit=payload.limit,
+                    min_samples=payload.min_samples,
+                    save_record=payload.save_record,
+                )
+            )
+            report_path = None
+            if payload.save_to_file:
+                report = self.reporting.generate(
+                    ReportGenerateRequest(
+                        report_type="cost_model",
+                        symbol=payload.symbol,
+                        strategy_name=payload.strategy_name,
+                        start_date=payload.start_date,
+                        end_date=payload.end_date,
+                        limit=payload.limit,
+                        save_to_file=True,
+                    )
+                )
+                report_path = report.saved_path
+            return {
+                "symbol": result.symbol,
+                "strategy_name": result.strategy_name,
+                "sample_size": result.sample_size,
+                "executed_samples": result.executed_samples,
+                "slippage_coverage": result.slippage_coverage,
+                "recommended_slippage_rate": result.recommended_slippage_rate,
+                "recommended_impact_cost_coeff": result.recommended_impact_cost_coeff,
+                "recommended_fill_probability_floor": result.recommended_fill_probability_floor,
+                "confidence": result.confidence,
+                "calibration_id": result.calibration_id,
+                "report_path": report_path,
             }
 
         raise ValueError(f"unsupported job_type: {job.job_type.value}")

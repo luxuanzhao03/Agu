@@ -619,6 +619,12 @@ class StrategyChallengeStrategyResult(BaseModel):
     error: str | None = None
 
 
+class StrategyChallengeRunStatus(str, Enum):
+    SUCCESS = "SUCCESS"
+    PARTIAL_FAILED = "PARTIAL_FAILED"
+    FAILED = "FAILED"
+
+
 class StrategyChallengeRolloutPlan(BaseModel):
     enabled: bool = False
     strategy_name: str | None = None
@@ -637,6 +643,9 @@ class StrategyChallengeResult(BaseModel):
     strategy_names: list[str] = Field(default_factory=list)
     evaluated_count: int = 0
     qualified_count: int = 0
+    run_status: StrategyChallengeRunStatus = StrategyChallengeRunStatus.SUCCESS
+    error_count: int = 0
+    failed_strategies: list[str] = Field(default_factory=list)
     champion_strategy: str | None = None
     runner_up_strategy: str | None = None
     market_fit_summary: str = ""
@@ -694,7 +703,7 @@ class PortfolioRiskResult(BaseModel):
 class AuditEventCreate(BaseModel):
     event_type: str
     action: str
-    payload: dict[str, str | int | float | bool | None]
+    payload: dict[str, Any]
     status: str = "OK"
 
 
@@ -704,7 +713,7 @@ class AuditEventRecord(BaseModel):
     event_type: str
     action: str
     status: str
-    payload: dict[str, str | int | float | bool | None]
+    payload: dict[str, Any]
     prev_hash: str | None = None
     event_hash: str | None = None
 
@@ -935,6 +944,7 @@ class ExecutionRecordCreate(BaseModel):
     side: SignalAction
     quantity: int = Field(ge=0)
     price: float = Field(ge=0)
+    reference_price: float | None = Field(default=None, gt=0.0)
     fee: float = Field(default=0.0, ge=0.0)
     note: str = ""
 
@@ -942,12 +952,16 @@ class ExecutionRecordCreate(BaseModel):
 class ExecutionReplayItem(BaseModel):
     signal_id: str
     symbol: str
+    strategy_name: str
+    signal_date: date
+    execution_date: date
     signal_action: SignalAction
     executed_action: SignalAction | None
     signal_confidence: float
     executed_quantity: int
     executed_price: float
     slippage_bps: float
+    slippage_available: bool = False
     followed: bool
     delay_days: int
 
@@ -962,10 +976,21 @@ class ExecutionReplayReport(BaseModel):
 class ExecutionAttributionItem(BaseModel):
     signal_id: str
     symbol: str
+    strategy_name: str
     reason_code: str
     severity: SignalLevel
     detail: str
+    estimated_drag_bps: float = 0.0
     suggestion: str = ""
+
+
+class ExecutionAttributionBucket(BaseModel):
+    key: str
+    sample_size: int
+    follow_rate: float
+    avg_delay_days: float
+    avg_slippage_bps: float
+    deviation_score: float
 
 
 class ExecutionAttributionReport(BaseModel):
@@ -974,8 +999,51 @@ class ExecutionAttributionReport(BaseModel):
     avg_delay_days: float = 0.0
     avg_slippage_bps: float = 0.0
     reason_counts: dict[str, int] = Field(default_factory=dict)
+    reason_rates: dict[str, float] = Field(default_factory=dict)
+    reason_cost_bps: dict[str, float] = Field(default_factory=dict)
+    estimated_total_drag_bps: float = 0.0
+    estimated_avg_drag_bps: float = 0.0
     suggestions: list[str] = Field(default_factory=list)
+    top_symbols: list[ExecutionAttributionBucket] = Field(default_factory=list)
+    top_strategies: list[ExecutionAttributionBucket] = Field(default_factory=list)
     items: list[ExecutionAttributionItem] = Field(default_factory=list)
+
+
+class CostModelCalibrationRequest(BaseModel):
+    symbol: str | None = None
+    strategy_name: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    limit: int = Field(default=1000, ge=1, le=5000)
+    min_samples: int = Field(default=30, ge=1, le=2000)
+    save_record: bool = True
+
+
+class CostModelCalibrationResult(BaseModel):
+    generated_at: datetime
+    calibration_id: int | None = None
+    symbol: str | None = None
+    strategy_name: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    sample_size: int = 0
+    executed_samples: int = 0
+    slippage_coverage: float = 0.0
+    follow_rate: float = 0.0
+    avg_delay_days: float = 0.0
+    avg_slippage_bps: float = 0.0
+    p90_abs_slippage_bps: float = 0.0
+    recommended_slippage_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
+    recommended_impact_cost_coeff: float = Field(default=0.18, ge=0.0, le=5.0)
+    recommended_fill_probability_floor: float = Field(default=0.02, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    notes: list[str] = Field(default_factory=list)
+
+
+class CostModelCalibrationRecord(BaseModel):
+    id: int
+    created_at: datetime
+    result: CostModelCalibrationResult
 
 
 class ManualHoldingSide(str, Enum):
@@ -992,6 +1060,10 @@ class ManualHoldingTradeCreate(BaseModel):
     lots: int = Field(ge=1, le=1_000_000)
     lot_size: int = Field(default=100, ge=1, le=10_000)
     fee: float = Field(default=0.0, ge=0.0, le=1_000_000.0)
+    reference_price: float | None = Field(default=None, gt=0.0)
+    executed_at: datetime | None = None
+    is_partial_fill: bool = False
+    unfilled_reason: str = ""
     note: str = ""
 
 
@@ -1007,6 +1079,10 @@ class ManualHoldingTradeRecord(BaseModel):
     lot_size: int
     quantity: int
     fee: float = 0.0
+    reference_price: float | None = None
+    executed_at: datetime | None = None
+    is_partial_fill: bool = False
+    unfilled_reason: str = ""
     note: str = ""
 
 
@@ -1028,6 +1104,10 @@ class ManualHoldingPositionItem(BaseModel):
     volatility20: float | None = None
     fundamental_score: float | None = None
     tushare_advanced_score: float | None = None
+    event_score: float | None = None
+    negative_event_score: float | None = None
+    style_risk_on_score: float | None = None
+    style_regime: str = ""
     market_comment: str = ""
 
 
@@ -1067,6 +1147,8 @@ class ManualHoldingAnalysisRequest(BaseModel):
     max_new_buys: int = Field(default=3, ge=0, le=50)
     max_single_position_ratio: float = Field(default=0.35, gt=0.0, le=1.0)
     lot_size: int = Field(default=100, ge=1, le=10_000)
+    intraday_interval: str = Field(default="15m", pattern="^(1m|5m|15m|30m|60m|1h)$")
+    intraday_lookback_days: int = Field(default=5, ge=1, le=15)
 
 
 class ManualHoldingAnalysisPosition(BaseModel):
@@ -1081,11 +1163,19 @@ class ManualHoldingAnalysisPosition(BaseModel):
     momentum20: float | None = None
     volatility20: float | None = None
     fundamental_score: float | None = None
+    event_score: float | None = None
+    negative_event_score: float | None = None
+    style_risk_on_score: float | None = None
+    style_regime: str = ""
     expected_next_day_return: float = 0.0
     up_probability: float = 0.5
     strategy_signal: SignalAction = SignalAction.WATCH
     suggested_action: HoldingRecommendationAction = HoldingRecommendationAction.HOLD
     suggested_delta_lots: int = 0
+    recommended_execution_window: str = ""
+    avoid_execution_windows: list[str] = Field(default_factory=list)
+    intraday_risk_level: str = ""
+    intraday_volatility: float | None = None
     analysis_note: str = ""
 
 
@@ -1099,12 +1189,19 @@ class ManualHoldingRecommendationItem(BaseModel):
     expected_next_day_return: float = 0.0
     up_probability: float = 0.5
     next_trade_date: date | None = None
+    style_regime: str = ""
+    execution_window: str = ""
+    avoid_execution_windows: list[str] = Field(default_factory=list)
+    intraday_risk_level: str = ""
+    stop_loss_hint_pct: float | None = None
+    take_profit_hint_pct: float | None = None
     rationale: str = ""
     risk_flags: list[str] = Field(default_factory=list)
 
 
 class ManualHoldingAnalysisResult(BaseModel):
     generated_at: datetime
+    analysis_run_id: str | None = None
     as_of_date: date
     next_trade_date: date | None = None
     strategy_name: str
@@ -1113,6 +1210,27 @@ class ManualHoldingAnalysisResult(BaseModel):
     summary: ManualHoldingPortfolioSummary
     positions: list[ManualHoldingAnalysisPosition] = Field(default_factory=list)
     recommendations: list[ManualHoldingRecommendationItem] = Field(default_factory=list)
+
+
+class ManualHoldingRecommendationSnapshot(BaseModel):
+    run_id: str
+    generated_at: datetime
+    as_of_date: date
+    next_trade_date: date | None = None
+    strategy_name: str
+    symbol: str
+    symbol_name: str = ""
+    action: HoldingRecommendationAction
+    target_lots: int = 0
+    delta_lots: int = 0
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    expected_next_day_return: float = 0.0
+    up_probability: float = 0.5
+    style_regime: str = ""
+    execution_window: str = ""
+    intraday_risk_level: str = ""
+    risk_flags: list[str] = Field(default_factory=list)
+    rationale: str = ""
 
 
 class WorkflowSignalItem(BaseModel):
@@ -1177,7 +1295,7 @@ class AlertItem(BaseModel):
     severity: SignalLevel
     source: str
     message: str
-    payload: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class ServiceMetricsSummary(BaseModel):
@@ -1220,8 +1338,9 @@ class AuditChainVerifyResult(BaseModel):
 
 
 class ReportGenerateRequest(BaseModel):
-    report_type: str = Field(pattern="^(signal|replay|risk|closure)$")
+    report_type: str = Field(pattern="^(signal|replay|risk|closure|cost_model)$")
     symbol: str | None = None
+    strategy_name: str | None = None
     start_date: date | None = None
     end_date: date | None = None
     limit: int = Field(default=200, ge=1, le=2000)
@@ -1233,6 +1352,117 @@ class ReportGenerateResult(BaseModel):
     title: str
     content: str
     saved_path: str | None = None
+
+
+class StrategyAccuracyPoint(BaseModel):
+    run_id: str
+    generated_at: datetime
+    as_of_date: date
+    next_trade_date: date | None = None
+    strategy_name: str
+    symbol: str
+    action: HoldingRecommendationAction
+    confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    expected_next_day_return: float = 0.0
+    up_probability: float = 0.5
+    realized_next_day_return: float | None = None
+    realized_up: bool | None = None
+    direction_hit: bool | None = None
+    brier_score: float | None = None
+    return_error: float | None = None
+    executed: bool = False
+    execution_side: ManualHoldingSide | None = None
+    execution_price: float | None = None
+    execution_reference_price: float | None = None
+    execution_cost_bps: float | None = None
+    cost_adjusted_action_return: float | None = None
+
+
+class StrategyAccuracyBucket(BaseModel):
+    bucket_key: str
+    sample_size: int = 0
+    actionable_samples: int = 0
+    executed_samples: int = 0
+    execution_coverage: float = 0.0
+    hit_rate: float = 0.0
+    brier_score: float | None = None
+    expected_return_mean: float = 0.0
+    realized_return_mean: float = 0.0
+    return_bias: float = 0.0
+    return_mae: float = 0.0
+    cost_bps_mean: float = 0.0
+    cost_adjusted_return_mean: float = 0.0
+
+
+class StrategyAccuracyReport(BaseModel):
+    generated_at: datetime
+    start_date: date
+    end_date: date
+    lookback_days: int
+    strategy_name: str | None = None
+    symbol: str | None = None
+    min_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    sample_size: int = 0
+    actionable_samples: int = 0
+    executed_samples: int = 0
+    execution_coverage: float = 0.0
+    hit_rate: float = 0.0
+    brier_score: float | None = None
+    expected_return_mean: float = 0.0
+    realized_return_mean: float = 0.0
+    return_bias: float = 0.0
+    return_mae: float = 0.0
+    cost_bps_mean: float = 0.0
+    cost_adjusted_return_mean: float = 0.0
+    by_strategy: list[StrategyAccuracyBucket] = Field(default_factory=list)
+    by_symbol: list[StrategyAccuracyBucket] = Field(default_factory=list)
+    details: list[StrategyAccuracyPoint] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class GoLiveGateCheck(BaseModel):
+    gate_key: str
+    gate_name: str
+    passed: bool
+    severity: SignalLevel = SignalLevel.WARNING
+    actual_value: float | str | None = None
+    threshold_value: float | str | None = None
+    comparator: str = ""
+    detail: str = ""
+
+
+class GoLiveRollbackRule(BaseModel):
+    trigger_key: str
+    trigger_name: str
+    condition: str
+    action: str = "ROLLBACK_PREVIOUS_PROFILE"
+    owner: str = "research_risk"
+
+
+class GoLiveChecklistItem(BaseModel):
+    item_key: str
+    item_name: str
+    status: str = "PENDING"
+    detail: str = ""
+    evidence: str = ""
+
+
+class GoLiveReadinessReport(BaseModel):
+    generated_at: datetime
+    lookback_days: int
+    start_date: date
+    end_date: date
+    strategy_name: str | None = None
+    symbol: str | None = None
+    overall_passed: bool = False
+    readiness_level: str = "BLOCKED"
+    failed_gate_count: int = 0
+    warning_gate_count: int = 0
+    gate_checks: list[GoLiveGateCheck] = Field(default_factory=list)
+    rollback_rules: list[GoLiveRollbackRule] = Field(default_factory=list)
+    daily_checklist: list[GoLiveChecklistItem] = Field(default_factory=list)
+    latest_accuracy: StrategyAccuracyReport | None = None
+    notes: list[str] = Field(default_factory=list)
 
 
 class CompliancePreflightRequest(BaseModel):
@@ -2574,6 +2804,7 @@ class JobType(str, Enum):
     ALERT_ONCALL_RECONCILE = "alert_oncall_reconcile"
     AUTO_TUNE = "auto_tune"
     EXECUTION_REVIEW = "execution_review"
+    COST_MODEL_RECALIBRATION = "cost_model_recalibration"
 
 
 class EventConnectorSyncJobPayload(BaseModel):
@@ -2606,9 +2837,21 @@ class AutoTuneJobPayload(BaseModel):
 
 class ExecutionReviewJobPayload(BaseModel):
     symbol: str | None = None
+    strategy_name: str | None = None
     start_date: date | None = None
     end_date: date | None = None
     limit: int = Field(default=500, ge=1, le=2000)
+    save_to_file: bool = True
+
+
+class CostModelRecalibrationJobPayload(BaseModel):
+    symbol: str | None = None
+    strategy_name: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    limit: int = Field(default=1000, ge=1, le=5000)
+    min_samples: int = Field(default=30, ge=1, le=2000)
+    save_record: bool = True
     save_to_file: bool = True
 
 
@@ -2793,7 +3036,7 @@ class AlertNotificationRecord(BaseModel):
     severity: SignalLevel
     source: str
     message: str
-    payload: dict[str, str | int | float | bool | None] = Field(default_factory=dict)
+    payload: dict[str, Any] = Field(default_factory=dict)
     acked: bool = False
     acked_at: datetime | None = None
 

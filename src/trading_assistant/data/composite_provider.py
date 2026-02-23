@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Callable, Iterable
 
 import pandas as pd
@@ -76,6 +76,22 @@ class CompositeDataProvider(MarketDataProvider):
     def get_security_status(self, symbol: str) -> dict[str, bool]:
         return self._call_with_fallback("get_security_status", symbol)
 
+    def get_intraday_bars(
+        self,
+        symbol: str,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        *,
+        interval: str = "15m",
+    ) -> pd.DataFrame:
+        _, bars = self.get_intraday_bars_with_source(
+            symbol=symbol,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+            interval=interval,
+        )
+        return bars
+
     def get_daily_bars_with_source(self, symbol: str, start_date: date, end_date: date) -> tuple[str, pd.DataFrame]:
         errors: list[str] = []
         for provider in self.providers:
@@ -107,6 +123,42 @@ class CompositeDataProvider(MarketDataProvider):
             return_source=True,
         )
 
+    def get_intraday_bars_with_source(
+        self,
+        symbol: str,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        *,
+        interval: str = "15m",
+    ) -> tuple[str, pd.DataFrame]:
+        errors: list[str] = []
+        interval_key = str(interval).strip().lower()
+        for provider in self.providers:
+            try:
+                if self.enable_cache and self.cache_store is not None:
+                    bars = self._get_intraday_bars_with_cache(
+                        provider=provider,
+                        symbol=symbol,
+                        start_datetime=start_datetime,
+                        end_datetime=end_datetime,
+                        interval=interval_key,
+                    )
+                else:
+                    bars = provider.get_intraday_bars(
+                        symbol,
+                        start_datetime,
+                        end_datetime,
+                        interval=interval_key,
+                    )
+                if bars.empty:
+                    raise RuntimeError("empty result")
+                return provider.name, bars
+            except Exception as exc:  # noqa: BLE001
+                msg = f"{provider.name}: {exc}"
+                logger.warning("Provider %s failed for get_intraday_bars: %s", provider.name, exc)
+                errors.append(msg)
+        raise DataProviderError(f"All providers failed for get_intraday_bars: {'; '.join(errors)}")
+
     def get_fundamental_snapshot(self, symbol: str, as_of: date) -> dict[str, object]:
         return self._call_with_fallback("get_fundamental_snapshot", symbol, as_of)
 
@@ -115,6 +167,55 @@ class CompositeDataProvider(MarketDataProvider):
             "get_fundamental_snapshot",
             symbol,
             as_of,
+            return_source=True,
+        )
+
+    def get_corporate_event_snapshot(
+        self,
+        symbol: str,
+        as_of: date,
+        *,
+        lookback_days: int = 120,
+    ) -> dict[str, object]:
+        _, snapshot = self.get_corporate_event_snapshot_with_source(symbol=symbol, as_of=as_of, lookback_days=lookback_days)
+        return snapshot
+
+    def get_corporate_event_snapshot_with_source(
+        self,
+        *,
+        symbol: str,
+        as_of: date,
+        lookback_days: int = 120,
+    ) -> tuple[str, dict[str, object]]:
+        return self._call_with_fallback(
+            "get_corporate_event_snapshot",
+            symbol,
+            as_of,
+            lookback_days=lookback_days,
+            allow_empty_dict=True,
+            return_source=True,
+        )
+
+    def get_market_style_snapshot(
+        self,
+        as_of: date,
+        *,
+        lookback_days: int = 30,
+    ) -> dict[str, object]:
+        _, snapshot = self.get_market_style_snapshot_with_source(as_of=as_of, lookback_days=lookback_days)
+        return snapshot
+
+    def get_market_style_snapshot_with_source(
+        self,
+        *,
+        as_of: date,
+        lookback_days: int = 30,
+    ) -> tuple[str, dict[str, object]]:
+        return self._call_with_fallback(
+            "get_market_style_snapshot",
+            as_of,
+            lookback_days=lookback_days,
+            allow_empty_dict=True,
             return_source=True,
         )
 
@@ -187,6 +288,63 @@ class CompositeDataProvider(MarketDataProvider):
                 self.cache_store.upsert_daily_bars(provider=provider.name, symbol=symbol, bars=direct)
                 return direct.sort_values("trade_date").reset_index(drop=True)
         return cached.sort_values("trade_date").reset_index(drop=True)
+
+    def _get_intraday_bars_with_cache(
+        self,
+        *,
+        provider: MarketDataProvider,
+        symbol: str,
+        start_datetime: datetime,
+        end_datetime: datetime,
+        interval: str,
+    ) -> pd.DataFrame:
+        assert self.cache_store is not None
+        min_time, max_time, count = self.cache_store.intraday_coverage(
+            provider=provider.name,
+            symbol=symbol,
+            interval=interval,
+        )
+        need_fetch = (
+            count <= 0
+            or min_time is None
+            or max_time is None
+            or start_datetime < min_time
+            or end_datetime > max_time
+        )
+
+        cached = self.cache_store.load_intraday_bars(
+            provider=provider.name,
+            symbol=symbol,
+            interval=interval,
+            start_datetime=start_datetime,
+            end_datetime=end_datetime,
+        )
+        if cached.empty:
+            need_fetch = True
+
+        if need_fetch:
+            fetched = provider.get_intraday_bars(
+                symbol,
+                start_datetime,
+                end_datetime,
+                interval=interval,
+            )
+            if fetched is not None and not fetched.empty:
+                self.cache_store.upsert_intraday_bars(
+                    provider=provider.name,
+                    symbol=symbol,
+                    interval=interval,
+                    bars=fetched,
+                )
+            cached = self.cache_store.load_intraday_bars(
+                provider=provider.name,
+                symbol=symbol,
+                interval=interval,
+                start_datetime=start_datetime,
+                end_datetime=end_datetime,
+            )
+
+        return cached.sort_values("bar_time").reset_index(drop=True)
 
     @staticmethod
     def _merge_ranges(ranges: list[tuple[date, date]]) -> list[tuple[date, date]]:

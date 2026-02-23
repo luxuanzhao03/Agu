@@ -290,6 +290,29 @@ def test_autotune_return_variance_penalty_fields_are_populated(tmp_path: Path) -
     assert any(item.return_variance_penalty > 0 for item in out.candidates)
 
 
+def test_autotune_invalid_search_space_value_raises_value_error(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    req = AutoTuneRunRequest(
+        symbol="000001",
+        start_date=date(2024, 1, 1),
+        end_date=date(2024, 10, 31),
+        strategy_name="trend_following",
+        base_strategy_params={"entry_ma_fast": 15, "entry_ma_slow": 55, "atr_multiplier": 1.8},
+        search_space={"entry_ma_fast": ["bad-int"], "entry_ma_slow": [55, 60], "atr_multiplier": [1.8, 2.0]},
+        max_combinations=20,
+        validation_ratio=0.2,
+        min_train_bars=60,
+        min_validation_bars=20,
+        auto_apply=False,
+        create_governance_draft=False,
+    )
+    try:
+        _ = service.run(req)
+        assert False, "expected ValueError for invalid int candidate value"
+    except ValueError as exc:
+        assert "invalid int candidate value" in str(exc)
+
+
 def test_autotune_profile_rollback_and_rollout_rule(tmp_path: Path) -> None:
     service = _service(tmp_path)
     req = AutoTuneRunRequest(

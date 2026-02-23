@@ -63,9 +63,9 @@ if "%API_READY%"=="1" (
 ) else (
   echo [INFO] Starting API in a new terminal window ...
   if "%DRY_RUN%"=="1" (
-    echo start "Trading Assistant API" cmd /k "cd /d ""%SCRIPT_DIR%"" ^&^& call .venv\Scripts\activate.bat ^&^& set OPS_SCHEDULER_ENABLED=true ^&^& uvicorn trading_assistant.main:app --host 127.0.0.1 --port 8000 --reload"
+    echo start "Trading Assistant API" cmd /k "cd /d ""%SCRIPT_DIR%"" ^&^& call .venv\Scripts\activate.bat ^&^& set ""OPS_SCHEDULER_ENABLED=true"" ^&^& uvicorn trading_assistant.main:app --host 127.0.0.1 --port 8000 --reload"
   ) else (
-    start "Trading Assistant API" cmd /k "cd /d ""%SCRIPT_DIR%"" && call .venv\Scripts\activate.bat && set OPS_SCHEDULER_ENABLED=true && uvicorn trading_assistant.main:app --host 127.0.0.1 --port 8000 --reload"
+    start "Trading Assistant API" cmd /k "cd /d ""%SCRIPT_DIR%"" && call .venv\Scripts\activate.bat && set ""OPS_SCHEDULER_ENABLED=true"" && uvicorn trading_assistant.main:app --host 127.0.0.1 --port 8000 --reload"
     call :WAIT_API 90
     if not "%API_READY%"=="1" (
       echo [WARN] API did not become ready within 90 seconds.
