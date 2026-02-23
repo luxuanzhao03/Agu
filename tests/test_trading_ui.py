@@ -20,6 +20,16 @@ def test_trading_workbench_ui_route() -> None:
     assert "challengeGateMinValidationSharpeInput" in resp.text
     assert "autotuneReturnVarWeightInput" in resp.text
     assert "portfolioRiskMaxDailyLossInput" in resp.text
+    assert 'data-tab="datahub"' in resp.text
+    assert "runDataFetchBarsBtn" in resp.text
+    assert "runDataFetchIntradayBtn" in resp.text
+    assert "runDataFetchCapabilitiesBtn" in resp.text
+    assert "runDataFetchPrefetchBtn" in resp.text
+    assert "runDataFetchAllBtn" in resp.text
+    assert "runFullMarket2000ScanBtn" in resp.text
+    assert "dataFetchCapabilityRows" in resp.text
+    assert "dataFetchPrefetchRows" in resp.text
+    assert "fullMarket2000ScanRows" in resp.text
     assert 'data-tab="holdings"' in resp.text
     assert "submitHoldingTradeBtn" in resp.text
     assert "runHoldingAnalyzeBtn" in resp.text
@@ -50,6 +60,13 @@ def test_trading_workbench_ui_route() -> None:
     assert "runPortfolioBacktest" in js.text
     assert "rollbackAutotuneProfile" in js.text
     assert "loadRolloutRules" in js.text
+    assert "runDataFetchAll" in js.text
+    assert "buildFullMarket2000ScanRequest" in js.text
+    assert "runFullMarket2000Scan" in js.text
+    assert "renderFullMarket2000Scan" in js.text
+    assert "loadDataFetchTushareCapabilities" in js.text
+    assert "runDataFetchTusharePrefetch" in js.text
+    assert "renderDataFetchWorkbench" in js.text
     assert "buildStrategyChallengeRequest" in js.text
     assert "runStrategyChallenge" in js.text
     assert "renderChallengeWorkbench" in js.text

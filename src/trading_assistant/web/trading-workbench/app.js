@@ -138,6 +138,16 @@ const state = {
   latestRolloutRules: [],
   latestChallengeRequest: null,
   latestChallengeResult: null,
+  latestDataFetchBars: null,
+  latestDataFetchIntraday: null,
+  latestDataFetchCalendar: null,
+  latestDataFetchQuality: null,
+  latestDataFetchCapabilities: null,
+  latestDataFetchPrefetch: null,
+  latestDataFetchBatchRows: [],
+  latestDataFetchAllSummary: [],
+  latestFullMarket2000ScanRequest: null,
+  latestFullMarket2000ScanResult: null,
   latestMarketBars: null,
   latestRebalancePlan: null,
   latestHoldingTrades: [],
@@ -200,6 +210,29 @@ function minusDaysISO(days) {
   return d.toISOString().slice(0, 10);
 }
 
+function formatDateTimeLocal(dateObj) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${dateObj.getFullYear()}-${pad(dateObj.getMonth() + 1)}-${pad(dateObj.getDate())}T${pad(dateObj.getHours())}:${pad(dateObj.getMinutes())}`;
+}
+
+function minusHoursDateTimeLocal(hours) {
+  const d = new Date();
+  d.setHours(d.getHours() - Number(hours || 0), 0, 0, 0);
+  return formatDateTimeLocal(d);
+}
+
+function dateAtLocalTime(dateISO, timeHHMM) {
+  const rawDate = String(dateISO || "").trim();
+  if (!rawDate) return "";
+  const dateObj = new Date(`${rawDate}T00:00:00`);
+  if (Number.isNaN(dateObj.getTime())) return "";
+  const [hh, mm] = String(timeHHMM || "09:30")
+    .split(":")
+    .map((x) => parseInt(x, 10));
+  dateObj.setHours(Number.isFinite(hh) ? hh : 9, Number.isFinite(mm) ? mm : 30, 0, 0);
+  return formatDateTimeLocal(dateObj);
+}
+
 function showGlobalError(message) {
   const banner = el("globalError");
   if (!banner) return;
@@ -239,6 +272,11 @@ function setChallengeMessage(message) {
 
 function setHoldingMessage(message) {
   const msg = el("holdingMsg");
+  if (msg) msg.textContent = message || "-";
+}
+
+function setDataFetchMessage(message) {
+  const msg = el("dataFetchMsg");
   if (msg) msg.textContent = message || "-";
 }
 
@@ -1652,6 +1690,692 @@ function renderHoldings() {
   renderGoLiveReadiness();
 }
 
+function syncDataFetchInputsFromStrategy() {
+  const symbol = String(el("symbolInput")?.value || "").trim();
+  const symbols = String(el("symbolsInput")?.value || "").trim();
+  const startDate = String(el("startDateInput")?.value || "").trim();
+  const endDate = String(el("endDateInput")?.value || "").trim();
+
+  if (el("dataFetchSymbolInput") && symbol) el("dataFetchSymbolInput").value = symbol;
+  if (el("dataFetchSymbolsInput") && symbols) el("dataFetchSymbolsInput").value = symbols;
+  if (el("dataFetchStartDateInput") && startDate) el("dataFetchStartDateInput").value = startDate;
+  if (el("dataFetchEndDateInput") && endDate) el("dataFetchEndDateInput").value = endDate;
+
+  const intradayDate = endDate || todayISO();
+  if (el("dataFetchIntradayStartInput")) {
+    el("dataFetchIntradayStartInput").value = dateAtLocalTime(intradayDate, "09:30");
+  }
+  if (el("dataFetchIntradayEndInput")) {
+    el("dataFetchIntradayEndInput").value = dateAtLocalTime(intradayDate, "15:00");
+  }
+}
+
+function buildDataFetchDateRange() {
+  const startDate = String(el("dataFetchStartDateInput")?.value || "").trim();
+  const endDate = String(el("dataFetchEndDateInput")?.value || "").trim();
+  if (!startDate || !endDate) throw new Error("数据拉取 start_date/end_date 不能为空");
+  if (startDate > endDate) throw new Error("数据拉取 start_date 必须 <= end_date");
+  return { start_date: startDate, end_date: endDate };
+}
+
+function buildDataFetchBarsRequest() {
+  const symbol = String(el("dataFetchSymbolInput")?.value || "").trim();
+  if (!symbol) throw new Error("数据拉取 symbol 不能为空");
+  const range = buildDataFetchDateRange();
+  return {
+    symbol,
+    ...range,
+    limit: toNumber(el("dataFetchBarsLimitInput")?.value, "数据拉取 bars limit", { integer: true, min: 1, max: 200 }),
+  };
+}
+
+function buildDataFetchIntradayRequest() {
+  const symbol = String(el("dataFetchSymbolInput")?.value || "").trim();
+  if (!symbol) throw new Error("数据拉取 symbol 不能为空");
+  const startDatetime = String(el("dataFetchIntradayStartInput")?.value || "").trim();
+  const endDatetime = String(el("dataFetchIntradayEndInput")?.value || "").trim();
+  if (!startDatetime || !endDatetime) throw new Error("分钟线 start_datetime/end_datetime 不能为空");
+  const startTs = new Date(startDatetime).getTime();
+  const endTs = new Date(endDatetime).getTime();
+  if (!Number.isFinite(startTs) || !Number.isFinite(endTs)) throw new Error("分钟线时间格式无效");
+  if (startTs > endTs) throw new Error("分钟线 start_datetime 必须 <= end_datetime");
+  return {
+    symbol,
+    start_datetime: startDatetime,
+    end_datetime: endDatetime,
+    interval: String(el("dataFetchIntradayIntervalInput")?.value || "15m").trim() || "15m",
+    limit: toNumber(el("dataFetchIntradayLimitInput")?.value, "分钟线 limit", { integer: true, min: 1, max: 2400 }),
+  };
+}
+
+function buildDataFetchCalendarRequest() {
+  return buildDataFetchDateRange();
+}
+
+function buildDataFetchQualityRequest() {
+  const barsReq = buildDataFetchBarsRequest();
+  return {
+    symbol: barsReq.symbol,
+    start_date: barsReq.start_date,
+    end_date: barsReq.end_date,
+  };
+}
+
+function buildDataFetchCapabilitiesRequest() {
+  return {
+    user_points: toNumber(el("dataFetchTusharePointsInput")?.value, "Tushare user_points", {
+      integer: true,
+      min: 0,
+      max: 1_000_000,
+    }),
+  };
+}
+
+function buildDataFetchPrefetchRequest() {
+  const barsReq = buildDataFetchBarsRequest();
+  const capsReq = buildDataFetchCapabilitiesRequest();
+  return {
+    symbol: barsReq.symbol,
+    start_date: barsReq.start_date,
+    end_date: barsReq.end_date,
+    user_points: capsReq.user_points,
+    include_ineligible: Boolean(el("dataFetchIncludeIneligibleInput")?.checked),
+  };
+}
+
+function buildFullMarket2000ScanRequest() {
+  const range = buildDataFetchDateRange();
+  return {
+    start_date: range.start_date,
+    end_date: range.end_date,
+    principal: toNumber(el("fullMarket2000PrincipalInput")?.value, "全市场扫描 principal", { min: 100, max: 1_000_000 }),
+    max_single_position: toNumber(el("fullMarket2000MaxSinglePositionInput")?.value, "全市场扫描 max_single_position", {
+      min: 0.01,
+      max: 1.0,
+    }),
+    min_edge_bps: toNumber(el("fullMarket2000MinEdgeBpsInput")?.value, "全市场扫描 min_edge_bps", { min: 0, max: 5000 }),
+    max_symbols: toNumber(el("fullMarket2000MaxSymbolsInput")?.value, "全市场扫描 max_symbols", {
+      integer: true,
+      min: 0,
+      max: 20_000,
+    }),
+    sleep_ms: toNumber(el("fullMarket2000SleepMsInput")?.value, "全市场扫描 sleep_ms", {
+      integer: true,
+      min: 0,
+      max: 5000,
+    }),
+    top_n: toNumber(el("fullMarket2000TopNInput")?.value, "全市场扫描 top_n", {
+      integer: true,
+      min: 1,
+      max: 500,
+    }),
+    timeout_minutes: toNumber(el("fullMarket2000TimeoutMinInput")?.value, "全市场扫描 timeout_minutes", {
+      integer: true,
+      min: 1,
+      max: 1440,
+    }),
+  };
+}
+
+function collectDataFetchSymbolsForBatch() {
+  const primary = String(el("dataFetchSymbolInput")?.value || "").trim();
+  const explicit = parseSymbols(String(el("dataFetchSymbolsInput")?.value || ""));
+  const merged = Array.from(new Set([primary, ...explicit].filter((x) => x)));
+  if (!merged.length) throw new Error("批量拉取至少需要一个标的代码");
+  const maxSymbols = toNumber(el("dataFetchBatchLimitInput")?.value, "批量拉取最大标的数", {
+    integer: true,
+    min: 1,
+    max: 100,
+  });
+  return merged.slice(0, maxSymbols);
+}
+
+async function loadDataFetchBars({ silent = false } = {}) {
+  const meta = el("dataFetchBarsMeta");
+  if (!silent && meta) meta.textContent = "正在拉取 /market/bars ...";
+  const req = buildDataFetchBarsRequest();
+  const qs = new URLSearchParams({
+    symbol: req.symbol,
+    start_date: req.start_date,
+    end_date: req.end_date,
+    limit: String(req.limit),
+  });
+  const resp = await fetchJSON(`/market/bars?${qs.toString()}`);
+  state.latestDataFetchBars = resp;
+  renderDataFetchWorkbench();
+  if (meta) {
+    meta.textContent = `provider=${resp.provider || "-"} | row_count=${fmtNum(resp.row_count, 0)} | shown=${fmtNum(
+      Array.isArray(resp.bars) ? resp.bars.length : 0,
+      0
+    )}`;
+  }
+  return resp;
+}
+
+async function loadDataFetchIntraday({ silent = false } = {}) {
+  const meta = el("dataFetchIntradayMeta");
+  if (!silent && meta) meta.textContent = "正在拉取 /market/intraday ...";
+  const req = buildDataFetchIntradayRequest();
+  const qs = new URLSearchParams({
+    symbol: req.symbol,
+    start_datetime: req.start_datetime,
+    end_datetime: req.end_datetime,
+    interval: req.interval,
+    limit: String(req.limit),
+  });
+  const resp = await fetchJSON(`/market/intraday?${qs.toString()}`);
+  state.latestDataFetchIntraday = resp;
+  renderDataFetchWorkbench();
+  if (meta) {
+    meta.textContent = `provider=${resp.provider || "-"} | interval=${resp.interval || "-"} | row_count=${fmtNum(
+      resp.row_count,
+      0
+    )} | shown=${fmtNum(Array.isArray(resp.bars) ? resp.bars.length : 0, 0)}`;
+  }
+  return resp;
+}
+
+async function loadDataFetchCalendar({ silent = false } = {}) {
+  const meta = el("dataFetchCalendarMeta");
+  if (!silent && meta) meta.textContent = "正在拉取 /market/calendar ...";
+  const req = buildDataFetchCalendarRequest();
+  const qs = new URLSearchParams({
+    start_date: req.start_date,
+    end_date: req.end_date,
+  });
+  const resp = await fetchJSON(`/market/calendar?${qs.toString()}`);
+  state.latestDataFetchCalendar = resp;
+  renderDataFetchWorkbench();
+  if (meta) {
+    const days = Array.isArray(resp.days) ? resp.days : [];
+    const openDays = days.filter((x) => x && x.is_open).length;
+    meta.textContent = `provider=${resp.provider || "-"} | days=${fmtNum(days.length, 0)} | open_days=${fmtNum(openDays, 0)}`;
+  }
+  return resp;
+}
+
+async function loadDataFetchQualityReport({ silent = false } = {}) {
+  const meta = el("dataFetchQualityMeta");
+  if (!silent && meta) meta.textContent = "正在拉取 /data/quality/report ...";
+  const req = buildDataFetchQualityRequest();
+  const resp = await postJSON("/data/quality/report", req);
+  state.latestDataFetchQuality = resp;
+  renderDataFetchWorkbench();
+  if (meta) {
+    meta.textContent = `provider=${resp.provider || "-"} | row_count=${fmtNum(resp.row_count, 0)} | passed=${resp.passed ? "YES" : "NO"} | issues=${fmtNum(
+      Array.isArray(resp.issues) ? resp.issues.length : 0,
+      0
+    )}`;
+  }
+  return resp;
+}
+
+async function loadDataFetchTushareCapabilities({ silent = false } = {}) {
+  const meta = el("dataFetchCapabilitiesMeta");
+  if (!silent && meta) meta.textContent = "正在拉取 /market/tushare/capabilities ...";
+  const req = buildDataFetchCapabilitiesRequest();
+  const qs = new URLSearchParams({
+    user_points: String(req.user_points),
+  });
+  const resp = await fetchJSON(`/market/tushare/capabilities?${qs.toString()}`);
+  state.latestDataFetchCapabilities = resp;
+  renderDataFetchWorkbench();
+  if (meta) {
+    meta.textContent = `dataset_total=${fmtNum(resp.dataset_total, 0)} | ready_total=${fmtNum(resp.ready_total, 0)} | integrated_total=${fmtNum(
+      resp.integrated_total,
+      0
+    )}`;
+  }
+  return resp;
+}
+
+async function runDataFetchTusharePrefetch({ silent = false } = {}) {
+  const meta = el("dataFetchPrefetchMeta");
+  if (!silent && meta) meta.textContent = "正在执行 /market/tushare/prefetch ...";
+  const req = buildDataFetchPrefetchRequest();
+  const resp = await postJSON("/market/tushare/prefetch", req);
+  state.latestDataFetchPrefetch = resp;
+  renderDataFetchWorkbench();
+  if (meta) {
+    meta.textContent = `symbol=${resp.symbol || req.symbol} | success=${fmtNum(resp.summary?.success || 0, 0)} | failed=${fmtNum(
+      resp.summary?.failed || 0,
+      0
+    )} | skipped=${fmtNum(resp.summary?.skipped || 0, 0)}`;
+  }
+  return resp;
+}
+
+async function runDataFetchBatchBars({ silent = false } = {}) {
+  const range = buildDataFetchDateRange();
+  const symbols = collectDataFetchSymbolsForBatch();
+  const limit = toNumber(el("dataFetchBarsLimitInput")?.value, "数据拉取 bars limit", { integer: true, min: 1, max: 200 });
+  if (!silent) setDataFetchMessage(`正在批量拉取日线，共 ${fmtNum(symbols.length, 0)} 个标的...`);
+
+  const rows = await Promise.all(
+    symbols.map(async (symbol) => {
+      const qs = new URLSearchParams({
+        symbol,
+        start_date: range.start_date,
+        end_date: range.end_date,
+        limit: String(limit),
+      });
+      try {
+        const resp = await fetchJSON(`/market/bars?${qs.toString()}`);
+        return {
+          symbol,
+          status: "OK",
+          provider: String(resp.provider || "-"),
+          row_count: Number(resp.row_count || 0),
+          message: `shown=${fmtNum(Array.isArray(resp.bars) ? resp.bars.length : 0, 0)}`,
+        };
+      } catch (err) {
+        return {
+          symbol,
+          status: "FAILED",
+          provider: "-",
+          row_count: 0,
+          message: String(err.message || err),
+        };
+      }
+    })
+  );
+  state.latestDataFetchBatchRows = rows;
+  renderDataFetchWorkbench();
+  if (!silent) {
+    const failCount = rows.filter((x) => x.status !== "OK").length;
+    setDataFetchMessage(`批量拉取完成：成功 ${fmtNum(rows.length - failCount, 0)}，失败 ${fmtNum(failCount, 0)}。`);
+  }
+  return rows;
+}
+
+async function runFullMarket2000Scan({ silent = false } = {}) {
+  const meta = el("fullMarket2000ScanMeta");
+  if (!silent && meta) meta.textContent = "正在执行 /research/full-market-2000-scan ...";
+  if (!silent) setDataFetchMessage("全市场2000档扫描执行中，耗时可能较长，请稍候...");
+
+  const req = buildFullMarket2000ScanRequest();
+  const resp = await postJSON("/research/full-market-2000-scan", req);
+  state.latestFullMarket2000ScanRequest = req;
+  state.latestFullMarket2000ScanResult = resp;
+  renderDataFetchWorkbench();
+
+  if (meta) {
+    meta.textContent =
+      `窗口=${resp.start_date || req.start_date}~${resp.end_date || req.end_date} | ` +
+      `总标的=${fmtNum(resp.total_symbols || 0, 0)} | 可买=${fmtNum(resp.buy_pass_symbols || 0, 0)} | ` +
+      `错误=${fmtNum(resp.error_symbols || 0, 0)} | 开始=${fmtTs(resp.started_at)} | 结束=${fmtTs(resp.finished_at)}`;
+  }
+  if (!silent) {
+    const count = Array.isArray(resp.top_candidates) ? resp.top_candidates.length : 0;
+    setDataFetchMessage(`全市场扫描完成：Top 候选 ${fmtNum(count, 0)} 条（粒度：${resp.granularity || "daily"}）。`);
+  }
+  return resp;
+}
+
+async function runDataFetchAll() {
+  const summary = [];
+  const tasks = [
+    {
+      task: "日线拉取",
+      run: async () => {
+        const resp = await loadDataFetchBars({ silent: true });
+        return `provider=${resp.provider || "-"} row_count=${fmtNum(resp.row_count, 0)}`;
+      },
+    },
+    {
+      task: "分钟线拉取",
+      run: async () => {
+        const resp = await loadDataFetchIntraday({ silent: true });
+        return `provider=${resp.provider || "-"} row_count=${fmtNum(resp.row_count, 0)}`;
+      },
+    },
+    {
+      task: "交易日历拉取",
+      run: async () => {
+        const resp = await loadDataFetchCalendar({ silent: true });
+        return `provider=${resp.provider || "-"} days=${fmtNum(Array.isArray(resp.days) ? resp.days.length : 0, 0)}`;
+      },
+    },
+    {
+      task: "数据质量评分",
+      run: async () => {
+        const resp = await loadDataFetchQualityReport({ silent: true });
+        return `overall_score=${fmtPct(resp.overall_score || 0, 2)} issues=${fmtNum(Array.isArray(resp.issues) ? resp.issues.length : 0, 0)}`;
+      },
+    },
+    {
+      task: "Tushare 能力检测",
+      run: async () => {
+        const resp = await loadDataFetchTushareCapabilities({ silent: true });
+        return `ready=${fmtNum(resp.ready_total || 0, 0)}/${fmtNum(resp.dataset_total || 0, 0)}`;
+      },
+    },
+    {
+      task: "Tushare 预拉取",
+      run: async () => {
+        const resp = await runDataFetchTusharePrefetch({ silent: true });
+        return `success=${fmtNum(resp.summary?.success || 0, 0)} failed=${fmtNum(resp.summary?.failed || 0, 0)}`;
+      },
+    },
+  ];
+
+  setDataFetchMessage("一键拉取执行中，请稍候...");
+  for (const item of tasks) {
+    try {
+      const detail = await item.run();
+      summary.push({ task: item.task, status: "OK", detail });
+    } catch (err) {
+      summary.push({ task: item.task, status: "FAILED", detail: String(err.message || err) });
+    }
+  }
+
+  state.latestDataFetchAllSummary = summary;
+  renderDataFetchWorkbench();
+  const failCount = summary.filter((x) => x.status !== "OK").length;
+  setDataFetchMessage(`一键拉取完成：成功 ${fmtNum(summary.length - failCount, 0)}，失败 ${fmtNum(failCount, 0)}。`);
+  return summary;
+}
+
+function renderDataFetchSummaryKpis() {
+  if (el("dataFetchBarsKpi")) {
+    el("dataFetchBarsKpi").textContent = state.latestDataFetchBars ? fmtNum(state.latestDataFetchBars.row_count || 0, 0) : "-";
+  }
+  if (el("dataFetchIntradayKpi")) {
+    el("dataFetchIntradayKpi").textContent = state.latestDataFetchIntraday
+      ? fmtNum(state.latestDataFetchIntraday.row_count || 0, 0)
+      : "-";
+  }
+  if (el("dataFetchCalendarKpi")) {
+    const days = state.latestDataFetchCalendar && Array.isArray(state.latestDataFetchCalendar.days) ? state.latestDataFetchCalendar.days.length : 0;
+    el("dataFetchCalendarKpi").textContent = state.latestDataFetchCalendar ? fmtNum(days, 0) : "-";
+  }
+  if (el("dataFetchQualityKpi")) {
+    const score = Number(state.latestDataFetchQuality?.overall_score);
+    el("dataFetchQualityKpi").textContent =
+      state.latestDataFetchQuality && Number.isFinite(score) ? fmtPct(score, 2) : state.latestDataFetchQuality ? "0.00%" : "-";
+  }
+  if (el("dataFetchReadyKpi")) {
+    const cap = state.latestDataFetchCapabilities;
+    el("dataFetchReadyKpi").textContent = cap
+      ? `${fmtNum(cap.ready_total || 0, 0)}/${fmtNum(cap.dataset_total || 0, 0)}`
+      : "-";
+  }
+  if (el("dataFetchPrefetchKpi")) {
+    const pref = state.latestDataFetchPrefetch;
+    el("dataFetchPrefetchKpi").textContent = pref
+      ? `${fmtNum(pref.summary?.success || 0, 0)}/${fmtNum(pref.summary?.failed || 0, 0)}`
+      : "-";
+  }
+}
+
+function renderDataFetchAllRows() {
+  const host = el("dataFetchAllRows");
+  if (!host) return;
+  const rows = Array.isArray(state.latestDataFetchAllSummary) ? state.latestDataFetchAllSummary : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="3" class="muted">尚未执行一键拉取。</td></tr>';
+    if (el("dataFetchAllMeta")) el("dataFetchAllMeta").textContent = "尚未执行一键拉取。";
+    return;
+  }
+  const failCount = rows.filter((x) => String(x.status || "").toUpperCase() !== "OK").length;
+  if (el("dataFetchAllMeta")) {
+    el("dataFetchAllMeta").textContent = `总任务 ${fmtNum(rows.length, 0)} | 成功 ${fmtNum(rows.length - failCount, 0)} | 失败 ${fmtNum(failCount, 0)}`;
+  }
+  host.innerHTML = rows
+    .map(
+      (row) => `<tr>
+      <td>${esc(row.task || "-")}</td>
+      <td>${statusChip(row.status || "INFO")}</td>
+      <td>${esc(row.detail || "-")}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderDataFetchBarsRows() {
+  const host = el("dataFetchBarsRows");
+  if (!host) return;
+  const resp = state.latestDataFetchBars;
+  const provider = resp?.provider || "-";
+  const rows = resp && Array.isArray(resp.bars) ? resp.bars : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="7" class="muted">暂无日线数据。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .slice()
+    .sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)))
+    .map(
+      (bar) => `<tr>
+      <td>${esc(normalizeDateString(bar.trade_date))}</td>
+      <td>${fmtNum(bar.open, 4)}</td>
+      <td>${fmtNum(bar.high, 4)}</td>
+      <td>${fmtNum(bar.low, 4)}</td>
+      <td>${fmtNum(bar.close, 4)}</td>
+      <td>${fmtNum(bar.volume, 0)}</td>
+      <td>${esc(provider)}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderDataFetchIntradayRows() {
+  const host = el("dataFetchIntradayRows");
+  if (!host) return;
+  const resp = state.latestDataFetchIntraday;
+  const provider = resp?.provider || "-";
+  const rows = resp && Array.isArray(resp.bars) ? resp.bars : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="8" class="muted">暂无分钟线数据。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .slice()
+    .sort((a, b) => String(a.bar_time).localeCompare(String(b.bar_time)))
+    .map(
+      (bar) => `<tr>
+      <td>${esc(fmtTs(bar.bar_time))}</td>
+      <td>${fmtNum(bar.open, 4)}</td>
+      <td>${fmtNum(bar.high, 4)}</td>
+      <td>${fmtNum(bar.low, 4)}</td>
+      <td>${fmtNum(bar.close, 4)}</td>
+      <td>${fmtNum(bar.volume, 0)}</td>
+      <td>${esc(bar.interval || resp?.interval || "-")}</td>
+      <td>${esc(provider)}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderDataFetchCalendarRows() {
+  const host = el("dataFetchCalendarRows");
+  if (!host) return;
+  const rows = state.latestDataFetchCalendar && Array.isArray(state.latestDataFetchCalendar.days) ? state.latestDataFetchCalendar.days : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="2" class="muted">暂无交易日历数据。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .slice()
+    .sort((a, b) => String(a.trade_date).localeCompare(String(b.trade_date)))
+    .map(
+      (row) => `<tr>
+      <td>${esc(normalizeDateString(row.trade_date))}</td>
+      <td>${statusChip(row.is_open ? "OPEN" : "CLOSED", row.is_open ? "ok" : "warn")}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderDataFetchQuality() {
+  const fieldHost = el("dataFetchQualityFieldRows");
+  const issueHost = el("dataFetchQualityIssueRows");
+  if (!fieldHost || !issueHost) return;
+  const report = state.latestDataFetchQuality;
+  if (!report) {
+    fieldHost.innerHTML = '<tr><td colspan="2" class="muted">暂无数据质量字段评分。</td></tr>';
+    issueHost.innerHTML = '<tr><td colspan="3" class="muted">暂无数据质量问题。</td></tr>';
+    return;
+  }
+
+  const fieldScores = report.field_scores && typeof report.field_scores === "object" ? report.field_scores : {};
+  const fieldRows = Object.entries(fieldScores).sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+  fieldHost.innerHTML = fieldRows.length
+    ? fieldRows
+        .map(([k, v]) => `<tr><td>${esc(k)}</td><td>${fmtPct(v, 2)}</td></tr>`)
+        .join("")
+    : '<tr><td colspan="2" class="muted">无字段级评分。</td></tr>';
+
+  const issues = Array.isArray(report.issues) ? report.issues : [];
+  issueHost.innerHTML = issues.length
+    ? issues
+        .map(
+          (x) => `<tr>
+      <td>${esc(x.issue_type || "-")}</td>
+      <td>${statusChip(x.severity || "INFO")}</td>
+      <td>${esc(x.message || "-")}</td>
+    </tr>`
+        )
+        .join("")
+    : '<tr><td colspan="3" class="muted">无质量问题，当前数据通过检查。</td></tr>';
+}
+
+function renderDataFetchCapabilities() {
+  const host = el("dataFetchCapabilityRows");
+  if (!host) return;
+  const rows =
+    state.latestDataFetchCapabilities && Array.isArray(state.latestDataFetchCapabilities.capabilities)
+      ? state.latestDataFetchCapabilities.capabilities
+      : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="7" class="muted">暂无 Tushare 能力目录。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .map(
+      (item) => `<tr>
+      <td>${esc(item.dataset_name || "-")}</td>
+      <td>${esc(item.api_name || "-")}</td>
+      <td>${fmtNum(item.min_points_hint, 0)}</td>
+      <td>${statusChip(item.eligible ? "YES" : "NO", item.eligible ? "ok" : "warn")}</td>
+      <td>${statusChip(item.ready_to_call ? "READY" : "NOT_READY", item.ready_to_call ? "ok" : "warn")}</td>
+      <td>${statusChip(item.integrated_in_system ? "YES" : "NO", item.integrated_in_system ? "ok" : "info")}</td>
+      <td>${esc(item.notes || "-")}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderDataFetchPrefetch() {
+  const host = el("dataFetchPrefetchRows");
+  if (!host) return;
+  const rows = state.latestDataFetchPrefetch && Array.isArray(state.latestDataFetchPrefetch.results) ? state.latestDataFetchPrefetch.results : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="5" class="muted">暂无 Tushare 预拉取结果。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .map(
+      (item) => `<tr>
+      <td>${esc(item.dataset_name || "-")}</td>
+      <td>${statusChip(item.status || "INFO")}</td>
+      <td>${fmtNum(item.row_count || 0, 0)}</td>
+      <td>${fmtNum(item.column_count || 0, 0)}</td>
+      <td>${esc(item.error || "-")}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderDataFetchBatchRows() {
+  const host = el("dataFetchBatchRows");
+  if (!host) return;
+  const rows = Array.isArray(state.latestDataFetchBatchRows) ? state.latestDataFetchBatchRows : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="5" class="muted">尚未执行批量拉取。</td></tr>';
+    return;
+  }
+  host.innerHTML = rows
+    .map(
+      (row) => `<tr>
+      <td>${esc(row.symbol || "-")}</td>
+      <td>${statusChip(row.status || "INFO")}</td>
+      <td>${esc(row.provider || "-")}</td>
+      <td>${fmtNum(row.row_count || 0, 0)}</td>
+      <td>${esc(row.message || "-")}</td>
+    </tr>`
+    )
+    .join("");
+}
+
+function renderFullMarket2000Scan() {
+  const meta = el("fullMarket2000ScanMeta");
+  const totalKpi = el("fullMarket2000KpiTotal");
+  const buyPassKpi = el("fullMarket2000KpiBuyPass");
+  const errorKpi = el("fullMarket2000KpiErrors");
+  const granularityKpi = el("fullMarket2000KpiGranularity");
+  const host = el("fullMarket2000ScanRows");
+  if (!meta || !totalKpi || !buyPassKpi || !errorKpi || !granularityKpi || !host) return;
+
+  const resp = state.latestFullMarket2000ScanResult;
+  if (!resp) {
+    totalKpi.textContent = "-";
+    buyPassKpi.textContent = "-";
+    errorKpi.textContent = "-";
+    granularityKpi.textContent = "-";
+    meta.textContent = "尚未执行全市场扫描。";
+    host.innerHTML = '<tr><td colspan="8" class="muted">暂无全市场扫描结果。</td></tr>';
+    return;
+  }
+
+  totalKpi.textContent = fmtNum(resp.total_symbols || 0, 0);
+  buyPassKpi.textContent = fmtNum(resp.buy_pass_symbols || 0, 0);
+  errorKpi.textContent = fmtNum(resp.error_symbols || 0, 0);
+  granularityKpi.textContent = String(resp.granularity || "daily");
+  meta.textContent =
+    `窗口=${resp.start_date || "-"}~${resp.end_date || "-"} | run_id=${resp.run_id || "-"} | ` +
+    `summary=${resp.summary_path || "-"} | csv=${resp.csv_path || "-"} | jsonl=${resp.jsonl_path || "-"}`;
+
+  const rows = Array.isArray(resp.top_candidates) ? resp.top_candidates : [];
+  if (!rows.length) {
+    host.innerHTML = '<tr><td colspan="8" class="muted">本次没有可买候选（BUY + 未被风控拦截）。</td></tr>';
+    return;
+  }
+
+  host.innerHTML = rows
+    .map((row) => {
+      const buyRange =
+        row.buy_price_low !== null && row.buy_price_low !== undefined && row.buy_price_high !== null && row.buy_price_high !== undefined
+          ? `${fmtNum(row.buy_price_low, 3)} ~ ${fmtNum(row.buy_price_high, 3)}`
+          : "-";
+      const note = String(row.small_capital_note || row.reason || "-");
+      return `<tr>
+      <td>${esc(row.symbol || "-")}</td>
+      <td>${fmtPct(row.confidence || 0, 2)}</td>
+      <td>${row.close === null || row.close === undefined ? "-" : fmtNum(row.close, 3)}</td>
+      <td>${fmtNum(row.suggested_lots || 0, 0)}</td>
+      <td>${esc(buyRange)}</td>
+      <td>${row.max_buy_price === null || row.max_buy_price === undefined ? "-" : fmtNum(row.max_buy_price, 3)}</td>
+      <td>${statusChip(row.risk_level || "INFO")}</td>
+      <td>${esc(note)}</td>
+    </tr>`;
+    })
+    .join("");
+}
+
+function renderDataFetchWorkbench() {
+  renderDataFetchSummaryKpis();
+  renderDataFetchAllRows();
+  renderDataFetchBarsRows();
+  renderDataFetchIntradayRows();
+  renderDataFetchCalendarRows();
+  renderDataFetchQuality();
+  renderDataFetchCapabilities();
+  renderDataFetchPrefetch();
+  renderDataFetchBatchRows();
+  renderFullMarket2000Scan();
+}
+
 function syncBarsInputsFromStrategy() {
   const symbol = String(el("symbolInput")?.value || "").trim();
   const startDate = String(el("startDateInput")?.value || "").trim();
@@ -1787,6 +2511,11 @@ function updateRequestPreview() {
     } catch {
       // optional for preview
     }
+    try {
+      snapshot.full_market_2000_scan_request = buildFullMarket2000ScanRequest();
+    } catch {
+      // optional for preview
+    }
     host.textContent = JSON.stringify(snapshot, null, 2);
   } catch (err) {
     host.textContent = `参数校验提示：${err.message}`;
@@ -1823,13 +2552,16 @@ function bindTabEvents() {
     });
   });
   const hashName = String(window.location.hash || "").replace("#", "").trim();
-  if (["strategy", "autotune", "challenge", "results", "holdings", "execution"].includes(hashName)) switchTab(hashName);
+  if (["strategy", "datahub", "autotune", "challenge", "results", "holdings", "execution"].includes(hashName)) {
+    switchTab(hashName);
+  }
 }
 
 function saveFormSnapshot() {
   const data = {};
   const selector =
     "#tab-strategy input[id], #tab-strategy textarea[id], #tab-strategy select[id], " +
+    "#tab-datahub input[id], #tab-datahub textarea[id], #tab-datahub select[id], " +
     "#tab-autotune input[id], #tab-autotune textarea[id], #tab-autotune select[id], " +
     "#tab-challenge input[id], #tab-challenge textarea[id], #tab-challenge select[id], " +
     "#tab-holdings input[id], #tab-holdings textarea[id], #tab-holdings select[id]";
@@ -1860,6 +2592,7 @@ function applyFormSnapshot() {
 
   const selector =
     "#tab-strategy input[id], #tab-strategy textarea[id], #tab-strategy select[id], " +
+    "#tab-datahub input[id], #tab-datahub textarea[id], #tab-datahub select[id], " +
     "#tab-autotune input[id], #tab-autotune textarea[id], #tab-autotune select[id], " +
     "#tab-challenge input[id], #tab-challenge textarea[id], #tab-challenge select[id], " +
     "#tab-holdings input[id], #tab-holdings textarea[id], #tab-holdings select[id]";
@@ -3627,6 +4360,7 @@ function bindResultSelectionEvents() {
 function bindStrategyInputEvents() {
   const selector =
     "#tab-strategy input, #tab-strategy select, #tab-strategy textarea, " +
+    "#tab-datahub input, #tab-datahub select, #tab-datahub textarea, " +
     "#tab-autotune input, #tab-autotune select, #tab-autotune textarea, " +
     "#tab-challenge input, #tab-challenge select, #tab-challenge textarea, " +
     "#tab-holdings input, #tab-holdings select, #tab-holdings textarea";
@@ -3693,6 +4427,18 @@ function bindStrategyInputEvents() {
 function setDefaultDatesIfEmpty() {
   if (el("startDateInput") && !el("startDateInput").value) el("startDateInput").value = minusDaysISO(180);
   if (el("endDateInput") && !el("endDateInput").value) el("endDateInput").value = todayISO();
+  if (el("dataFetchStartDateInput") && !el("dataFetchStartDateInput").value) {
+    el("dataFetchStartDateInput").value = minusDaysISO(180);
+  }
+  if (el("dataFetchEndDateInput") && !el("dataFetchEndDateInput").value) {
+    el("dataFetchEndDateInput").value = todayISO();
+  }
+  if (el("dataFetchIntradayStartInput") && !el("dataFetchIntradayStartInput").value) {
+    el("dataFetchIntradayStartInput").value = minusHoursDateTimeLocal(6);
+  }
+  if (el("dataFetchIntradayEndInput") && !el("dataFetchIntradayEndInput").value) {
+    el("dataFetchIntradayEndInput").value = formatDateTimeLocal(new Date());
+  }
   if (el("barsStartDateInput") && !el("barsStartDateInput").value) el("barsStartDateInput").value = minusDaysISO(180);
   if (el("barsEndDateInput") && !el("barsEndDateInput").value) el("barsEndDateInput").value = todayISO();
   if (el("execDate") && !el("execDate").value) el("execDate").value = todayISO();
@@ -3738,10 +4484,14 @@ async function initHandlers() {
       await loadHoldingPositions({ silent: true }).catch(() => {});
       await loadHoldingAccuracyReport({ silent: true }).catch(() => {});
       await loadGoLiveReadinessReport({ silent: true }).catch(() => {});
+      syncDataFetchInputsFromStrategy();
+      await loadDataFetchBars({ silent: true }).catch(() => {});
+      await loadDataFetchCalendar({ silent: true }).catch(() => {});
       syncBarsInputsFromStrategy();
       syncRebalanceDefaults();
       await loadMarketBars({ silent: true }).catch(() => {});
       updateRequestPreview();
+      renderDataFetchWorkbench();
       renderResults();
       renderChallengeWorkbench();
       renderHoldings();
@@ -3811,6 +4561,108 @@ async function initHandlers() {
       el("lastUpdated").textContent = `最近更新时间：${new Date().toLocaleString()}`;
     } catch (err) {
       showGlobalError(`一键全跑失败：${err.message}`);
+    }
+  });
+
+  el("syncDataFetchParamsBtn")?.addEventListener("click", () => {
+    syncDataFetchInputsFromStrategy();
+    saveFormSnapshot();
+    setDataFetchMessage("已同步数据拉取参数（symbol/symbols/start_date/end_date）。");
+  });
+
+  el("runDataFetchBarsBtn")?.addEventListener("click", async () => {
+    try {
+      showGlobalError("");
+      await loadDataFetchBars();
+      setDataFetchMessage("日线数据拉取完成。");
+      saveFormSnapshot();
+    } catch (err) {
+      showGlobalError(`拉取日线失败：${err.message}`);
+    }
+  });
+
+  el("runDataFetchIntradayBtn")?.addEventListener("click", async () => {
+    try {
+      showGlobalError("");
+      await loadDataFetchIntraday();
+      setDataFetchMessage("分钟线数据拉取完成。");
+      saveFormSnapshot();
+    } catch (err) {
+      showGlobalError(`拉取分钟线失败：${err.message}`);
+    }
+  });
+
+  el("runDataFetchCalendarBtn")?.addEventListener("click", async () => {
+    try {
+      showGlobalError("");
+      await loadDataFetchCalendar();
+      setDataFetchMessage("交易日历拉取完成。");
+      saveFormSnapshot();
+    } catch (err) {
+      showGlobalError(`拉取交易日历失败：${err.message}`);
+    }
+  });
+
+  el("runDataFetchQualityBtn")?.addEventListener("click", async () => {
+    try {
+      showGlobalError("");
+      await loadDataFetchQualityReport();
+      setDataFetchMessage("数据质量评分已更新。");
+      saveFormSnapshot();
+    } catch (err) {
+      showGlobalError(`数据质量评分失败：${err.message}`);
+    }
+  });
+
+  el("runDataFetchCapabilitiesBtn")?.addEventListener("click", async () => {
+    try {
+      showGlobalError("");
+      await loadDataFetchTushareCapabilities();
+      setDataFetchMessage("Tushare 能力目录已更新。");
+      saveFormSnapshot();
+    } catch (err) {
+      showGlobalError(`加载 Tushare 能力目录失败：${err.message}`);
+    }
+  });
+
+  el("runDataFetchPrefetchBtn")?.addEventListener("click", async () => {
+    try {
+      showGlobalError("");
+      await runDataFetchTusharePrefetch();
+      setDataFetchMessage("Tushare 预拉取完成。");
+      saveFormSnapshot();
+    } catch (err) {
+      showGlobalError(`执行 Tushare 预拉取失败：${err.message}`);
+    }
+  });
+
+  el("runDataFetchBatchBarsBtn")?.addEventListener("click", async () => {
+    try {
+      showGlobalError("");
+      await runDataFetchBatchBars();
+      saveFormSnapshot();
+    } catch (err) {
+      showGlobalError(`批量拉取日线失败：${err.message}`);
+    }
+  });
+
+  el("runDataFetchAllBtn")?.addEventListener("click", async () => {
+    try {
+      showGlobalError("");
+      await runDataFetchAll();
+      saveFormSnapshot();
+    } catch (err) {
+      showGlobalError(`一键拉取关键数据失败：${err.message}`);
+    }
+  });
+
+  el("runFullMarket2000ScanBtn")?.addEventListener("click", async () => {
+    try {
+      showGlobalError("");
+      await runFullMarket2000Scan();
+      saveFormSnapshot();
+    } catch (err) {
+      showGlobalError(`执行全市场2000档扫描失败：${err.message}`);
     }
   });
 
@@ -4005,9 +4857,12 @@ async function initHandlers() {
   });
 
   el("jumpToStrategyBtn")?.addEventListener("click", () => switchTab("strategy"));
+  el("jumpToDataFetchBtn")?.addEventListener("click", () => switchTab("datahub"));
   el("jumpToAutotuneBtn")?.addEventListener("click", () => switchTab("autotune"));
   el("jumpToChallengeBtn")?.addEventListener("click", () => switchTab("challenge"));
   el("jumpToHoldingsBtn")?.addEventListener("click", () => switchTab("holdings"));
+  el("jumpToStrategyFromDataBtn")?.addEventListener("click", () => switchTab("strategy"));
+  el("jumpToResultsFromDataBtn")?.addEventListener("click", () => switchTab("results"));
   el("jumpToAutotuneCardBtn")?.addEventListener("click", () => switchTab("autotune"));
   el("jumpToAutotuneFromResultsHeadBtn")?.addEventListener("click", () => switchTab("autotune"));
   el("jumpToAutotuneFromResultsBtn")?.addEventListener("click", () => switchTab("autotune"));
@@ -4102,6 +4957,9 @@ async function bootstrap() {
     await loadHoldingAccuracyReport({ silent: true }).catch(() => {});
     await loadGoLiveReadinessReport({ silent: true }).catch(() => {});
     await loadCostCalibrationHistory().catch(() => {});
+    syncDataFetchInputsFromStrategy();
+    await loadDataFetchBars({ silent: true }).catch(() => {});
+    await loadDataFetchCalendar({ silent: true }).catch(() => {});
     syncBarsInputsFromStrategy();
     syncRebalanceDefaults();
     updateSmallCapitalHint();
@@ -4111,6 +4969,7 @@ async function bootstrap() {
     await initHandlers();
 
     updateRequestPreview();
+    renderDataFetchWorkbench();
     renderResults();
     renderChallengeWorkbench();
     renderHoldings();

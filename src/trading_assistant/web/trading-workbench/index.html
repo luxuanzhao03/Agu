@@ -19,7 +19,7 @@
         <div>
           <p class="eyebrow">A股半自动交易辅助系统</p>
           <h1>投研交易工作台</h1>
-          <p class="subtitle">策略参数配置 | 结果可视化 | 交易准备与执行回写</p>
+          <p class="subtitle">策略参数配置 | 数据拉取 | 结果可视化 | 交易准备与执行回写</p>
         </div>
         <div class="head-actions">
           <div class="quick-links">
@@ -46,6 +46,7 @@
 
       <nav class="tab-nav" data-animate>
         <button type="button" class="tab active" data-tab="strategy">策略与参数页</button>
+        <button type="button" class="tab" data-tab="datahub">数据拉取页</button>
         <button type="button" class="tab" data-tab="autotune">自动调参页</button>
         <button type="button" class="tab" data-tab="challenge">跨策略挑战赛页</button>
         <button type="button" class="tab" data-tab="results">结果可视化页</button>
@@ -308,6 +309,7 @@
             <button id="runPortfolioBacktestBtn" type="button">运行组合净值回测</button>
             <button id="runResearchBtn" type="button">运行研究工作流</button>
             <button id="runAllBtn" type="button" class="secondary">一键全跑（信号+回测+研究）</button>
+            <button id="jumpToDataFetchBtn" type="button" class="secondary">前往数据拉取页</button>
             <button id="jumpToAutotuneBtn" type="button" class="secondary">前往自动调参页</button>
             <button id="jumpToChallengeBtn" type="button" class="secondary">前往挑战赛页</button>
             <button id="jumpToHoldingsBtn" type="button" class="secondary">前往持仓分析页</button>
@@ -324,6 +326,328 @@
           <p class="muted">自动调参迁移到独立页签，支持任务运行、候选榜、基线对比、画像激活/回滚与灰度规则。</p>
           <div class="actions-row wrap">
             <button id="jumpToAutotuneCardBtn" type="button" class="secondary">打开自动调参页</button>
+          </div>
+        </article>
+      </section>
+
+      <section id="tab-datahub" class="tab-panel" data-animate>
+        <div class="panel-head">
+          <h2>数据拉取页</h2>
+          <p>按标的与时间段拉取系统所需核心数据（日线、分钟线、交易日历、数据质量、Tushare能力与预拉取）。</p>
+          <div class="actions-row wrap panel-jumps">
+            <button id="jumpToStrategyFromDataBtn" type="button" class="secondary">回到策略参数页</button>
+            <button id="jumpToResultsFromDataBtn" type="button" class="secondary">查看结果可视化</button>
+          </div>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>查询参数</h3>
+            <div class="form-grid">
+              <label>
+                主标的（symbol）
+                <input id="dataFetchSymbolInput" type="text" value="000001" />
+              </label>
+              <label>
+                多标的（逗号/空格/换行分隔）
+                <textarea id="dataFetchSymbolsInput" rows="3">000001,000002,600000</textarea>
+              </label>
+              <label>
+                日线起始（start_date）
+                <input id="dataFetchStartDateInput" type="date" />
+              </label>
+              <label>
+                日线结束（end_date）
+                <input id="dataFetchEndDateInput" type="date" />
+              </label>
+              <label>
+                分钟线起始（start_datetime）
+                <input id="dataFetchIntradayStartInput" type="datetime-local" />
+              </label>
+              <label>
+                分钟线结束（end_datetime）
+                <input id="dataFetchIntradayEndInput" type="datetime-local" />
+              </label>
+              <label>
+                分钟周期（interval）
+                <select id="dataFetchIntradayIntervalInput">
+                  <option value="1m">1m</option>
+                  <option value="5m">5m</option>
+                  <option value="15m" selected>15m</option>
+                  <option value="30m">30m</option>
+                  <option value="60m">60m</option>
+                </select>
+              </label>
+              <label>
+                日线返回行数（bars limit）
+                <input id="dataFetchBarsLimitInput" type="number" min="1" max="200" value="120" />
+              </label>
+              <label>
+                分钟线返回行数（intraday limit）
+                <input id="dataFetchIntradayLimitInput" type="number" min="1" max="2400" value="400" />
+              </label>
+              <label>
+                批量拉取最大标的数
+                <input id="dataFetchBatchLimitInput" type="number" min="1" max="100" value="12" />
+              </label>
+              <label>
+                Tushare 用户积分（user_points）
+                <input id="dataFetchTusharePointsInput" type="number" min="0" max="1000000" value="2120" />
+              </label>
+              <label class="inline">
+                <input id="dataFetchIncludeIneligibleInput" type="checkbox" /> prefetch 包含不满足积分的数据集
+              </label>
+              <label>
+                全市场扫描本金（principal）
+                <input id="fullMarket2000PrincipalInput" type="number" min="100" max="1000000" step="100" value="2000" />
+              </label>
+              <label>
+                全市场单标的仓位上限（max_single_position）
+                <input id="fullMarket2000MaxSinglePositionInput" type="number" min="0.05" max="1" step="0.01" value="0.6" />
+              </label>
+              <label>
+                全市场最低安全边际（min_edge_bps）
+                <input id="fullMarket2000MinEdgeBpsInput" type="number" min="0" max="5000" step="1" value="140" />
+              </label>
+              <label>
+                全市场最大扫描标的数（0=全量）
+                <input id="fullMarket2000MaxSymbolsInput" type="number" min="0" max="20000" step="1" value="0" />
+              </label>
+              <label>
+                全市场 TopN
+                <input id="fullMarket2000TopNInput" type="number" min="1" max="500" step="1" value="30" />
+              </label>
+              <label>
+                全市场每标的间隔（sleep_ms）
+                <input id="fullMarket2000SleepMsInput" type="number" min="0" max="5000" step="10" value="0" />
+              </label>
+              <label>
+                全市场任务超时（分钟）
+                <input id="fullMarket2000TimeoutMinInput" type="number" min="1" max="1440" step="1" value="120" />
+              </label>
+            </div>
+
+            <div class="actions-row wrap">
+              <button id="syncDataFetchParamsBtn" type="button" class="secondary">同步策略参数</button>
+              <button id="runDataFetchBarsBtn" type="button">拉取日线</button>
+              <button id="runDataFetchIntradayBtn" type="button">拉取分钟线</button>
+              <button id="runDataFetchCalendarBtn" type="button">拉取交易日历</button>
+              <button id="runDataFetchQualityBtn" type="button">数据质量评分</button>
+              <button id="runDataFetchCapabilitiesBtn" type="button">Tushare 能力检测</button>
+              <button id="runDataFetchPrefetchBtn" type="button">Tushare 预拉取</button>
+              <button id="runDataFetchBatchBarsBtn" type="button" class="secondary">批量拉取日线</button>
+              <button id="runDataFetchAllBtn" type="button" class="secondary">一键拉取系统关键数据</button>
+              <button id="runFullMarket2000ScanBtn" type="button">一键扫描全市场（2000档）</button>
+            </div>
+            <p id="dataFetchMsg" class="muted">-</p>
+          </article>
+
+          <article class="card">
+            <h3>拉取摘要</h3>
+            <div class="kpi-grid compact">
+              <article class="kpi-card"><p>日线行数</p><h3 id="dataFetchBarsKpi">-</h3></article>
+              <article class="kpi-card"><p>分钟线行数</p><h3 id="dataFetchIntradayKpi">-</h3></article>
+              <article class="kpi-card"><p>交易日历天数</p><h3 id="dataFetchCalendarKpi">-</h3></article>
+              <article class="kpi-card"><p>质量总分</p><h3 id="dataFetchQualityKpi">-</h3></article>
+              <article class="kpi-card"><p>Tushare ready</p><h3 id="dataFetchReadyKpi">-</h3></article>
+              <article class="kpi-card"><p>prefetch 成功/失败</p><h3 id="dataFetchPrefetchKpi">-</h3></article>
+            </div>
+            <p id="dataFetchAllMeta" class="muted">尚未执行一键拉取。</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>任务</th>
+                    <th>状态</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody id="dataFetchAllRows"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>日线结果（/market/bars）</h3>
+            <p id="dataFetchBarsMeta" class="muted">-</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>日期</th>
+                    <th>open</th>
+                    <th>high</th>
+                    <th>low</th>
+                    <th>close</th>
+                    <th>volume</th>
+                    <th>provider</th>
+                  </tr>
+                </thead>
+                <tbody id="dataFetchBarsRows"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>分钟线结果（/market/intraday）</h3>
+            <p id="dataFetchIntradayMeta" class="muted">-</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>open</th>
+                    <th>high</th>
+                    <th>low</th>
+                    <th>close</th>
+                    <th>volume</th>
+                    <th>interval</th>
+                    <th>provider</th>
+                  </tr>
+                </thead>
+                <tbody id="dataFetchIntradayRows"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>交易日历（/market/calendar）</h3>
+            <p id="dataFetchCalendarMeta" class="muted">-</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>trade_date</th>
+                    <th>is_open</th>
+                  </tr>
+                </thead>
+                <tbody id="dataFetchCalendarRows"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>数据质量报告（/data/quality/report）</h3>
+            <p id="dataFetchQualityMeta" class="muted">-</p>
+            <div class="grid two compact">
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>field</th>
+                      <th>score</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dataFetchQualityFieldRows"></tbody>
+                </table>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>issue_type</th>
+                      <th>severity</th>
+                      <th>message</th>
+                    </tr>
+                  </thead>
+                  <tbody id="dataFetchQualityIssueRows"></tbody>
+                </table>
+              </div>
+            </div>
+          </article>
+        </div>
+
+        <div class="grid two">
+          <article class="card">
+            <h3>Tushare 能力目录（/market/tushare/capabilities）</h3>
+            <p id="dataFetchCapabilitiesMeta" class="muted">-</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>dataset</th>
+                    <th>api</th>
+                    <th>积分门槛</th>
+                    <th>eligible</th>
+                    <th>ready</th>
+                    <th>已接入系统</th>
+                    <th>说明</th>
+                  </tr>
+                </thead>
+                <tbody id="dataFetchCapabilityRows"></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>Tushare 预拉取结果（/market/tushare/prefetch）</h3>
+            <p id="dataFetchPrefetchMeta" class="muted">-</p>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>dataset</th>
+                    <th>status</th>
+                    <th>rows</th>
+                    <th>cols</th>
+                    <th>error</th>
+                  </tr>
+                </thead>
+                <tbody id="dataFetchPrefetchRows"></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+
+        <article class="card">
+          <h3>批量拉取摘要（多标的日线）</h3>
+          <p class="muted">用于快速检查一组标的在指定区间内的数据可用性与数据源命中情况。</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>symbol</th>
+                  <th>status</th>
+                  <th>provider</th>
+                  <th>row_count</th>
+                  <th>message</th>
+                </tr>
+              </thead>
+              <tbody id="dataFetchBatchRows"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card">
+          <h3>全市场2000档扫描结果（/research/full-market-2000-scan）</h3>
+          <p class="muted">基于日线数据做全市场买点筛选，输出 TopN 候选及本地报告文件路径。</p>
+          <div class="kpi-grid compact">
+            <article class="kpi-card"><p>总标的</p><h3 id="fullMarket2000KpiTotal">-</h3></article>
+            <article class="kpi-card"><p>可买通过</p><h3 id="fullMarket2000KpiBuyPass">-</h3></article>
+            <article class="kpi-card"><p>错误数</p><h3 id="fullMarket2000KpiErrors">-</h3></article>
+            <article class="kpi-card"><p>粒度</p><h3 id="fullMarket2000KpiGranularity">-</h3></article>
+          </div>
+          <p id="fullMarket2000ScanMeta" class="muted">尚未执行全市场扫描。</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>symbol</th>
+                  <th>confidence</th>
+                  <th>close</th>
+                  <th>建议手数</th>
+                  <th>买入区间</th>
+                  <th>最高买价</th>
+                  <th>risk</th>
+                  <th>备注</th>
+                </tr>
+              </thead>
+              <tbody id="fullMarket2000ScanRows"></tbody>
+            </table>
           </div>
         </article>
       </section>
