@@ -17,6 +17,7 @@ def test_trading_workbench_ui_route() -> None:
     assert "rolloutRuleRows" in resp.text
     assert "runChallengeBtn" in resp.text
     assert "challengeResultRows" in resp.text
+    assert "challengeDisableRiskControlsInput" in resp.text
     assert "challengeGateMinValidationSharpeInput" in resp.text
     assert "autotuneReturnVarWeightInput" in resp.text
     assert "portfolioRiskMaxDailyLossInput" in resp.text
@@ -52,9 +53,6 @@ def test_trading_workbench_ui_route() -> None:
     assert "costModelHistoryRows" in resp.text
     assert "/market/bars" in resp.text
     assert "/portfolio/rebalance/plan" in resp.text
-    assert 'data-small-cap-template="2000"' in resp.text
-    assert 'data-small-cap-template="5000"' in resp.text
-    assert 'data-small-cap-template="8000"' in resp.text
 
     js = client.get("/ui/trading-workbench/app.js")
     assert js.status_code == 200
@@ -77,6 +75,7 @@ def test_trading_workbench_ui_route() -> None:
     assert "runDataFetchTusharePrefetch" in js.text
     assert "renderDataFetchWorkbench" in js.text
     assert "buildStrategyChallengeRequest" in js.text
+    assert "disable_risk_controls" in js.text
     assert "runStrategyChallenge" in js.text
     assert "renderChallengeWorkbench" in js.text
     assert "applyChallengeChampionToStrategyForm" in js.text
@@ -93,8 +92,6 @@ def test_trading_workbench_ui_route() -> None:
     assert "generateClosureReport" in js.text
     assert "runCostCalibration" in js.text
     assert "loadCostCalibrationHistory" in js.text
-    assert "SMALL_CAPITAL_TEMPLATE_LIBRARY" in js.text
-    assert "applySmallCapitalTemplate" in js.text
 
 
 def test_ui_main_portal_route() -> None:

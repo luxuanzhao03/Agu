@@ -44,6 +44,21 @@ class BacktestState:
     winning_trades: int = 0
 
 
+@dataclass
+class BacktestDiagnostics:
+    signal_count: int = 0
+    signal_buy_count: int = 0
+    signal_sell_count: int = 0
+    signal_watch_count: int = 0
+    blocked_buy_count: int = 0
+    blocked_sell_count: int = 0
+    blocked_tplus1_sell_count: int = 0
+    buy_no_fill_count: int = 0
+    sell_no_fill_count: int = 0
+    buy_budget_insufficient_count: int = 0
+    sell_without_position_count: int = 0
+
+
 class BacktestEngine:
     """
     A-share aware backtest skeleton:
@@ -107,6 +122,7 @@ class BacktestEngine:
             avg_cost=0.0,
             peak_equity=req.initial_cash,
         )
+        diagnostics = BacktestDiagnostics()
         equity_curve: list[EquityPoint] = []
         trades: list[BacktestTrade] = []
         buy_date = None
@@ -123,7 +139,7 @@ class BacktestEngine:
                     "enable_small_capital_mode": req.enable_small_capital_mode,
                     "small_capital_principal": float(req.small_capital_principal or req.initial_cash),
                     "small_capital_lot_size": int(req.lot_size),
-                    "small_capital_cash_buffer_ratio": 0.10,
+                    "small_capital_cash_buffer_ratio": 0.05,
                     "commission_rate": req.commission_rate,
                     "min_commission_cny": req.min_commission_cny,
                     "transfer_fee_rate": req.transfer_fee_rate,
@@ -152,6 +168,14 @@ class BacktestEngine:
                 )
                 continue
 
+            diagnostics.signal_count += 1
+            if signal.action == SignalAction.BUY:
+                diagnostics.signal_buy_count += 1
+            elif signal.action == SignalAction.SELL:
+                diagnostics.signal_sell_count += 1
+            else:
+                diagnostics.signal_watch_count += 1
+
             _ = apply_small_capital_overrides(
                 signal=signal,
                 enable_small_capital_mode=req.enable_small_capital_mode,
@@ -161,7 +185,7 @@ class BacktestEngine:
                 commission_rate=req.commission_rate,
                 min_commission=req.min_commission_cny,
                 transfer_fee_rate=req.transfer_fee_rate,
-                cash_buffer_ratio=0.10,
+                cash_buffer_ratio=0.05,
                 max_single_position=float(req.max_single_position),
                 max_positions=max(1, int(float(req.strategy_params.get("max_positions", 3)))),
             )
@@ -261,6 +285,12 @@ class BacktestEngine:
             risk_result = self.risk_engine.evaluate(risk_req)
             if risk_result.blocked:
                 state.blocked_signal_count += 1
+                if signal.action == SignalAction.BUY:
+                    diagnostics.blocked_buy_count += 1
+                elif signal.action == SignalAction.SELL:
+                    diagnostics.blocked_sell_count += 1
+                    if any((not hit.passed) and hit.rule_name == "t_plus_one" for hit in risk_result.hits):
+                        diagnostics.blocked_tplus1_sell_count += 1
                 trades.append(
                     BacktestTrade(
                         date=trade_date,
@@ -280,6 +310,7 @@ class BacktestEngine:
                     close=close,
                     state=state,
                     trades=trades,
+                    diagnostics=diagnostics,
                     available_qty=available_qty,
                     turnover20=turnover20,
                     is_suspended=bool(latest_bar.get("is_suspended", False)),
@@ -309,7 +340,13 @@ class BacktestEngine:
                 )
             )
 
-        return self._build_result(req=req, state=state, trades=trades, equity_curve=equity_curve)
+        return self._build_result(
+            req=req,
+            state=state,
+            diagnostics=diagnostics,
+            trades=trades,
+            equity_curve=equity_curve,
+        )
 
     def _execute_signal(
         self,
@@ -319,6 +356,7 @@ class BacktestEngine:
         close: float,
         state: BacktestState,
         trades: list[BacktestTrade],
+        diagnostics: BacktestDiagnostics,
         available_qty: int,
         turnover20: float | None,
         is_suspended: bool,
@@ -334,6 +372,7 @@ class BacktestEngine:
                 budget = min(budget, float(req.small_capital_principal or req.initial_cash))
             desired_qty = int(max(0.0, budget) // close // req.lot_size * req.lot_size)
             if desired_qty <= 0:
+                diagnostics.buy_budget_insufficient_count += 1
                 return
 
             desired_notional = desired_qty * close
@@ -371,6 +410,7 @@ class BacktestEngine:
                 fill_probability=fill_prob,
             )
             if qty <= 0:
+                diagnostics.buy_no_fill_count += 1
                 trades.append(
                     BacktestTrade(
                         date=trade_date,
@@ -400,6 +440,7 @@ class BacktestEngine:
                     break
                 qty -= req.lot_size
             if qty <= 0:
+                diagnostics.buy_budget_insufficient_count += 1
                 return
 
             gross = qty * trade_price
@@ -428,6 +469,10 @@ class BacktestEngine:
                     reason=f"{signal.reason}; fill_prob={fill_prob:.2f}",
                 )
             )
+            return
+
+        if signal.action == SignalAction.SELL and (state.quantity <= 0 or available_qty <= 0):
+            diagnostics.sell_without_position_count += 1
             return
 
         if signal.action == SignalAction.SELL and state.quantity > 0 and available_qty > 0:
@@ -466,6 +511,7 @@ class BacktestEngine:
                 fill_probability=fill_prob,
             )
             if qty <= 0:
+                diagnostics.sell_no_fill_count += 1
                 trades.append(
                     BacktestTrade(
                         date=trade_date,
@@ -516,6 +562,7 @@ class BacktestEngine:
         self,
         req: BacktestRequest,
         state: BacktestState,
+        diagnostics: BacktestDiagnostics,
         trades: list[BacktestTrade],
         equity_curve: list[EquityPoint],
     ) -> BacktestResult:
@@ -556,6 +603,17 @@ class BacktestEngine:
                 blocked_signal_count=state.blocked_signal_count,
                 annualized_return=round(annualized_return, 6),
                 sharpe=round(sharpe, 6),
+                signal_count=int(diagnostics.signal_count),
+                signal_buy_count=int(diagnostics.signal_buy_count),
+                signal_sell_count=int(diagnostics.signal_sell_count),
+                signal_watch_count=int(diagnostics.signal_watch_count),
+                blocked_buy_count=int(diagnostics.blocked_buy_count),
+                blocked_sell_count=int(diagnostics.blocked_sell_count),
+                blocked_tplus1_sell_count=int(diagnostics.blocked_tplus1_sell_count),
+                buy_no_fill_count=int(diagnostics.buy_no_fill_count),
+                sell_no_fill_count=int(diagnostics.sell_no_fill_count),
+                buy_budget_insufficient_count=int(diagnostics.buy_budget_insufficient_count),
+                sell_without_position_count=int(diagnostics.sell_without_position_count),
             ),
             trades=trades,
             equity_curve=equity_curve,

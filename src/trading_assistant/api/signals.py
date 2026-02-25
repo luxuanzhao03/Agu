@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -55,6 +56,7 @@ from trading_assistant.trading.costs import (
 from trading_assistant.trading.small_capital import apply_small_capital_overrides
 
 router = APIRouter(prefix="/signals", tags=["signals"])
+logger = logging.getLogger(__name__)
 
 
 def _infer_limit_flags(close_today: float, close_yesterday: float, is_st: bool) -> tuple[bool, bool]:
@@ -139,7 +141,20 @@ def generate_signals(
     if not pit_result.passed:
         raise HTTPException(status_code=422, detail={"message": "PIT validation failed", "issues": pit_result.model_dump()})
 
-    status = provider.get_security_status(req.symbol)
+    status = {
+        "is_st": bool(bars.iloc[-1].get("is_st", False)),
+        "is_suspended": bool(bars.iloc[-1].get("is_suspended", False)),
+    }
+    try:
+        fetched_status = provider.get_security_status(req.symbol)
+        status["is_st"] = bool(fetched_status.get("is_st", status["is_st"]))
+        status["is_suspended"] = bool(fetched_status.get("is_suspended", status["is_suspended"]))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Security status lookup failed for %s in signal generation; fallback to bars/default status: %s",
+            req.symbol,
+            exc,
+        )
     bars["is_st"] = bool(status.get("is_st", False))
     bars["is_suspended"] = bool(status.get("is_suspended", False))
     use_event_enrichment = req.enable_event_enrichment or req.strategy_name == "event_driven"

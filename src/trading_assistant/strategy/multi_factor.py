@@ -31,16 +31,16 @@ class MultiFactorStrategy(BaseStrategy):
             return []
 
         context = context or StrategyContext()
-        buy_threshold = float(context.params.get("buy_threshold", 0.55))
-        sell_threshold = float(context.params.get("sell_threshold", 0.35))
-        w_momentum = float(context.params.get("w_momentum", 0.35))
+        buy_threshold = float(context.params.get("buy_threshold", 0.49))
+        sell_threshold = float(context.params.get("sell_threshold", 0.42))
+        w_momentum = float(context.params.get("w_momentum", 0.40))
         w_quality = float(context.params.get("w_quality", 0.20))
-        w_low_vol = float(context.params.get("w_low_vol", 0.15))
-        w_liquidity = float(context.params.get("w_liquidity", 0.15))
-        w_fundamental = float(context.params.get("w_fundamental", 0.15))
-        w_tushare_advanced = float(context.params.get("w_tushare_advanced", 0.10))
-        min_fundamental_score_buy = float(context.params.get("min_fundamental_score_buy", 0.35))
-        min_tushare_score_buy = float(context.params.get("min_tushare_score_buy", 0.30))
+        w_low_vol = float(context.params.get("w_low_vol", 0.10))
+        w_liquidity = float(context.params.get("w_liquidity", 0.20))
+        w_fundamental = float(context.params.get("w_fundamental", 0.07))
+        w_tushare_advanced = float(context.params.get("w_tushare_advanced", 0.03))
+        min_fundamental_score_buy = float(context.params.get("min_fundamental_score_buy", 0.25))
+        min_tushare_score_buy = float(context.params.get("min_tushare_score_buy", 0.20))
 
         latest = features.iloc[-1]
         momentum = max(-0.5, min(0.5, float(latest.get("momentum60", 0.0)))) + 0.5
@@ -98,7 +98,7 @@ class MultiFactorStrategy(BaseStrategy):
                 confidence=min(0.95, max(0.25, score)),
                 reason=reason,
                 strategy_name=self.info.name,
-                suggested_position=0.03 if action == SignalAction.BUY else None,
+                suggested_position=0.06 if action == SignalAction.BUY else None,
                 metadata={
                     "factor_score": round(score, 4),
                     "momentum": round(momentum, 4),

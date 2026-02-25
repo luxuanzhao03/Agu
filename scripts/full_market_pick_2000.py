@@ -30,8 +30,8 @@ from trading_assistant.data.base import MarketDataProvider
 from trading_assistant.data.tushare_provider import TushareProvider
 from trading_assistant.factors.engine import FactorEngine
 from trading_assistant.risk.engine import RiskEngine
-from trading_assistant.strategy.base import StrategyContext
-from trading_assistant.strategy.small_capital_adaptive import SmallCapitalAdaptiveStrategy
+from trading_assistant.strategy.base import BaseStrategy, StrategyContext
+from trading_assistant.strategy.registry import StrategyRegistry
 from trading_assistant.trading.costs import (
     estimate_roundtrip_cost_bps,
     infer_expected_edge_bps,
@@ -76,6 +76,7 @@ class ScanRow:
 
 
 _WORKER_CONTEXT: dict[str, Any] = {}
+_STRATEGY_REGISTRY = StrategyRegistry()
 
 
 def _set_global_network_timeout(timeout_sec: float) -> None:
@@ -111,7 +112,7 @@ def _init_scan_worker(config: dict[str, Any]) -> None:
     _WORKER_CONTEXT = {
         "providers": providers,
         "factor_engine": FactorEngine(),
-        "strategy": SmallCapitalAdaptiveStrategy(),
+        "strategy": _STRATEGY_REGISTRY.get("multi_factor"),
         "risk_engine": RiskEngine(
             max_single_position=float(config["max_single_position"]),
             max_drawdown=0.12,
@@ -442,7 +443,7 @@ def _scan_symbol(
     end_date: date,
     providers: list[MarketDataProvider],
     factor_engine: FactorEngine,
-    strategy: SmallCapitalAdaptiveStrategy,
+    strategy: BaseStrategy,
     risk_engine: RiskEngine,
     principal: float,
     lot_size: int,
@@ -857,7 +858,7 @@ def main() -> None:
     fallback_note: str | None = None
     fallback_providers: list[MarketDataProvider] | None = None
     fallback_factor_engine: FactorEngine | None = None
-    fallback_strategy: SmallCapitalAdaptiveStrategy | None = None
+    fallback_strategy: BaseStrategy | None = None
     fallback_risk_engine: RiskEngine | None = None
     try:
         worker_pool = _open_worker_pool()
@@ -874,7 +875,7 @@ def main() -> None:
         if not fallback_providers:
             raise RuntimeError("no data provider available")
         fallback_factor_engine = FactorEngine()
-        fallback_strategy = SmallCapitalAdaptiveStrategy()
+        fallback_strategy = _STRATEGY_REGISTRY.get("multi_factor")
         fallback_risk_engine = RiskEngine(
             max_single_position=float(args.max_single_position),
             max_drawdown=0.12,
@@ -971,7 +972,7 @@ def main() -> None:
                         if fallback_factor_engine is None:
                             fallback_factor_engine = FactorEngine()
                         if fallback_strategy is None:
-                            fallback_strategy = SmallCapitalAdaptiveStrategy()
+                            fallback_strategy = _STRATEGY_REGISTRY.get("multi_factor")
                         if fallback_risk_engine is None:
                             fallback_risk_engine = RiskEngine(
                                 max_single_position=float(args.max_single_position),

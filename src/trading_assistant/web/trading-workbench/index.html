@@ -100,27 +100,9 @@
                 <input id="eventDecayInput" type="number" min="0.1" step="0.1" value="7" />
               </label>
               <label class="inline">
-                <input id="smallCapitalModeInput" type="checkbox" /> 启用小资金模式（small_capital_mode）
-              </label>
-              <label>
-                小资金本金（small_capital_principal）
-                <input id="smallCapitalPrincipalInput" type="number" min="100" step="100" value="2000" />
-              </label>
-              <label>
-                最低安全边际（bps）
-                <input id="smallCapitalMinEdgeInput" type="number" min="0" max="2000" step="1" value="80" />
-              </label>
-              <label class="inline">
                 <input id="useAutotuneProfileInput" type="checkbox" checked /> 启用自动调参画像覆盖（use_autotune_profile）
               </label>
             </div>
-            <div id="smallCapitalTemplateActions" class="actions-row wrap">
-              <button type="button" class="secondary" data-small-cap-template="2000">套用 2000 档</button>
-              <button type="button" class="secondary" data-small-cap-template="5000">套用 5000 档</button>
-              <button type="button" class="secondary" data-small-cap-template="8000">套用 8000 档</button>
-            </div>
-            <p class="muted">点击模板后会一键填充小资金策略、仓位、回测与费用相关关键参数。</p>
-            <p id="smallCapitalHint" class="muted">-</p>
           </article>
 
           <article class="card">
@@ -232,11 +214,11 @@
               </label>
               <label>
                 单标的上限（max_single_position）
-                <input id="maxSinglePositionInput" type="number" min="0.001" max="1" step="0.001" value="0.05" />
+                <input id="maxSinglePositionInput" type="number" min="0.001" max="1" step="0.001" value="0.35" />
               </label>
               <label>
                 行业敞口上限（max_industry_exposure）
-                <input id="maxIndustryExposureInput" type="number" min="0.001" max="1" step="0.001" value="0.2" />
+                <input id="maxIndustryExposureInput" type="number" min="0.001" max="1" step="0.001" value="0.35" />
               </label>
               <label>
                 目标总仓位（target_gross_exposure）
@@ -928,7 +910,7 @@
       <section id="tab-challenge" class="tab-panel" data-animate>
         <div class="panel-head">
           <h2>跨策略挑战赛页</h2>
-          <p>一键并行评测六策略：先调参，再按样本外硬门槛筛选，最后按综合分产出冠军/亚军与灰度上线建议。</p>
+          <p>一键并行评测五策略：先调参，再按样本外硬门槛筛选，最后按综合分产出冠军/亚军与灰度上线建议。</p>
           <div class="actions-row wrap panel-jumps">
             <button id="jumpToStrategyFromChallengeBtn" type="button" class="secondary">回到策略参数页</button>
             <button id="jumpToAutotuneFromChallengeBtn" type="button" class="secondary">打开自动调参页</button>
@@ -945,8 +927,16 @@
                 <input id="challengeRunByInput" type="text" value="workbench_user" />
               </label>
               <label>
+                挑战赛开始日期（challenge_start_date）
+                <input id="challengeStartDateInput" type="date" />
+              </label>
+              <label>
+                挑战赛结束日期（challenge_end_date）
+                <input id="challengeEndDateInput" type="date" />
+              </label>
+              <label>
                 每策略最大参数组合数（per_strategy_max_combinations）
-                <input id="challengePerStrategyMaxCombInput" type="number" min="1" max="5000" value="120" />
+                <input id="challengePerStrategyMaxCombInput" type="number" min="1" max="5000" value="180" />
               </label>
               <label>
                 验证集比例（validation_ratio）
@@ -980,21 +970,30 @@
                 小样本惩罚系数（low_sample_penalty）
                 <input id="challengeLowSamplePenaltyInput" type="number" min="0" max="5" step="0.01" value="0.1" />
               </label>
+              <label class="inline">
+                <input id="challengeEnableEventInput" type="checkbox" /> 启用事件增强（enable_event_enrichment）
+              </label>
+              <label class="inline">
+                <input id="challengeEnableFundamentalInput" type="checkbox" /> 启用基本面增强（enable_fundamental_enrichment）
+              </label>
+              <label class="inline">
+                <input id="challengeDisableRiskControlsInput" type="checkbox" checked /> 挑战赛放开风控（disable_risk_controls）
+              </label>
 
               <label class="inline">
                 <input id="challengeGateRequireValidationInput" type="checkbox" checked /> 启用验证门槛（gate_require_validation）
               </label>
               <label>
                 验证集最低总收益（gate_min_validation_total_return）
-                <input id="challengeGateMinValidationReturnInput" type="number" min="-1" max="5" step="0.001" value="0" />
+                <input id="challengeGateMinValidationReturnInput" type="number" min="-1" max="5" step="0.001" value="-0.02" />
               </label>
               <label>
                 验证集最大回撤上限（gate_max_validation_drawdown）
-                <input id="challengeGateMaxValidationDrawdownInput" type="number" min="0" max="1" step="0.001" value="0.25" />
+                <input id="challengeGateMaxValidationDrawdownInput" type="number" min="0" max="1" step="0.001" value="0.4" />
               </label>
               <label>
                 验证集最低夏普（gate_min_validation_sharpe）
-                <input id="challengeGateMinValidationSharpeInput" type="number" min="-10" max="20" step="0.01" value="0" />
+                <input id="challengeGateMinValidationSharpeInput" type="number" min="-10" max="20" step="0.01" value="-0.2" />
               </label>
               <label>
                 验证集最低交易次数（gate_min_validation_trade_count）
@@ -1002,11 +1001,11 @@
               </label>
               <label>
                 最少前瞻样本数（gate_min_walk_forward_samples）
-                <input id="challengeGateMinWfSamplesInput" type="number" min="0" max="50" value="2" />
+                <input id="challengeGateMinWfSamplesInput" type="number" min="0" max="50" value="1" />
               </label>
               <label>
                 前瞻收益波动上限（gate_max_walk_forward_return_std）
-                <input id="challengeGateMaxWfStdInput" type="number" min="0" max="5" step="0.001" value="0.2" />
+                <input id="challengeGateMaxWfStdInput" type="number" min="0" max="5" step="0.001" value="0.35" />
               </label>
 
               <label>
@@ -1035,14 +1034,13 @@
               </label>
 
               <div>
-                <p class="muted">参赛策略（全不勾选=后端按默认6策略）</p>
+                <p class="muted">参赛策略（全不勾选=后端按默认5策略）</p>
                 <div id="challengeStrategyPickers" class="inline-picks">
                   <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="trend_following" checked /> 趋势跟随（trend_following）</label>
                   <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="mean_reversion" checked /> 均值回归（mean_reversion）</label>
                   <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="multi_factor" checked /> 多因子（multi_factor）</label>
                   <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="sector_rotation" checked /> 行业轮动（sector_rotation）</label>
                   <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="event_driven" checked /> 事件驱动（event_driven）</label>
-                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="small_capital_adaptive" checked /> 小资金自适应（small_capital_adaptive）</label>
                 </div>
               </div>
               <label>
@@ -1109,6 +1107,8 @@
                   <th>validation_return</th>
                   <th>validation_mdd</th>
                   <th>validation_sharpe</th>
+                  <th>validation_trade_count</th>
+                  <th>validation_blocked</th>
                   <th>wf_samples</th>
                   <th>wf_return_std</th>
                   <th>stability_penalty</th>
@@ -1164,7 +1164,6 @@
                     <th>动作</th>
                     <th>置信度</th>
                     <th>财报评分</th>
-                    <th>小资金提示</th>
                     <th>风控等级</th>
                     <th>阻断</th>
                     <th>原因</th>
@@ -1210,7 +1209,6 @@
                     <th>动作</th>
                     <th>置信度</th>
                     <th>财报评分</th>
-                    <th>小资金提示</th>
                     <th>阻断</th>
                     <th>等级</th>
                     <th>事件行数</th>

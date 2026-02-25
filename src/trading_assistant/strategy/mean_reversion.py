@@ -20,13 +20,14 @@ class MeanReversionStrategy(BaseStrategy):
             return []
 
         context = context or StrategyContext()
-        z_enter = float(context.params.get("z_enter", 2.0))
-        z_exit = float(context.params.get("z_exit", 0.0))
-        min_turnover = float(context.params.get("min_turnover", 5_000_000.0))
+        z_enter = float(context.params.get("z_enter", 1.5))
+        z_exit = float(context.params.get("z_exit", -0.1))
+        min_turnover = float(context.params.get("min_turnover", 2_000_000.0))
 
         latest = features.iloc[-1]
         z = float(latest.get("zscore20", 0.0))
         turnover = float(latest.get("turnover20", 0.0))
+        momentum20 = float(latest.get("momentum20", 0.0))
         fundamental_available = bool(latest.get("fundamental_available", False))
         fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
         tushare_advanced_available = bool(latest.get("tushare_advanced_available", False))
@@ -41,26 +42,26 @@ class MeanReversionStrategy(BaseStrategy):
         elif z <= -abs(z_enter):
             action = SignalAction.BUY
             reason = f"Price deviates below mean (z={z:.2f}), reversion entry candidate."
-        elif z >= abs(z_exit):
+        elif z >= abs(z_exit) or (z > -0.15 and momentum20 < -0.02):
             action = SignalAction.SELL
             reason = f"Mean reversion completed (z={z:.2f}), consider exit."
         else:
             action = SignalAction.WATCH
             reason = "Z-score in neutral zone."
 
-        if action == SignalAction.BUY and fundamental_available and fundamental_score < 0.35:
+        if action == SignalAction.BUY and fundamental_available and fundamental_score < 0.25:
             action = SignalAction.WATCH
             reason = (
                 f"Mean-reversion setup exists, but fundamental score {fundamental_score:.3f} is too weak; "
                 "downgraded to WATCH."
             )
-        if action == SignalAction.BUY and tushare_advanced_available and tushare_advanced_score < 0.30:
+        if action == SignalAction.BUY and tushare_advanced_available and tushare_advanced_score < 0.18:
             action = SignalAction.WATCH
             reason = (
                 f"Mean-reversion setup exists, but tushare advanced score {tushare_advanced_score:.3f} is too weak; "
                 "downgraded to WATCH."
             )
-        if action == SignalAction.BUY and disclosure_risk >= 0.80:
+        if action == SignalAction.BUY and disclosure_risk >= 0.90:
             action = SignalAction.WATCH
             reason = f"Mean-reversion setup blocked by disclosure risk ({disclosure_risk:.2f})."
 
@@ -80,7 +81,7 @@ class MeanReversionStrategy(BaseStrategy):
                 confidence=confidence,
                 reason=reason,
                 strategy_name=self.info.name,
-                suggested_position=0.04 if action == SignalAction.BUY else None,
+                suggested_position=0.07 if action == SignalAction.BUY else None,
                 metadata={
                     "zscore20": round(z, 4),
                     "turnover20": round(turnover, 2),

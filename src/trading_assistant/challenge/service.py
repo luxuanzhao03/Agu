@@ -76,10 +76,11 @@ class StrategyChallengeService:
         self.max_parallel_workers = max(1, int(max_parallel_workers))
 
     def run(self, req: StrategyChallengeRequest) -> StrategyChallengeResult:
-        strategy_names = self._resolve_strategy_names(req.strategy_names)
+        effective_req = self._effective_request(req)
+        strategy_names = self._resolve_strategy_names(effective_req.strategy_names)
         run_id = uuid4().hex
 
-        results, total_evaluated = self._evaluate_strategies(req=req, strategy_names=strategy_names)
+        results, total_evaluated = self._evaluate_strategies(req=effective_req, strategy_names=strategy_names)
 
         ordered = sorted(results, key=self._result_sort_key, reverse=True)
         qualified = [item for item in ordered if item.qualified]
@@ -97,9 +98,9 @@ class StrategyChallengeService:
         return StrategyChallengeResult(
             run_id=run_id,
             generated_at=datetime.now(timezone.utc),
-            symbol=req.symbol,
-            start_date=req.start_date,
-            end_date=req.end_date,
+            symbol=effective_req.symbol,
+            start_date=effective_req.start_date,
+            end_date=effective_req.end_date,
             strategy_names=strategy_names,
             evaluated_count=total_evaluated,
             qualified_count=len(qualified),
@@ -109,14 +110,50 @@ class StrategyChallengeService:
             champion_strategy=(champion.strategy_name if champion is not None else None),
             runner_up_strategy=(runner_up.strategy_name if runner_up is not None else None),
             market_fit_summary=self._build_summary(
-                req=req,
+                req=effective_req,
                 ordered=ordered,
                 champion=champion,
                 run_status=run_status,
                 error_count=error_count,
             ),
-            rollout_plan=self._build_rollout_plan(req=req, champion=champion),
+            rollout_plan=self._build_rollout_plan(req=effective_req, champion=champion),
             results=ordered,
+        )
+
+    @staticmethod
+    def _effective_request(req: StrategyChallengeRequest) -> StrategyChallengeRequest:
+        if not req.disable_risk_controls:
+            return req
+
+        relaxed_initial_cash = max(float(req.initial_cash), 1_000_000.0)
+        return req.model_copy(
+            update={
+                "gate_require_validation": False,
+                "gate_min_validation_total_return": -1.0,
+                "gate_max_validation_drawdown": 1.0,
+                "gate_min_validation_sharpe": -10.0,
+                "gate_min_validation_trade_count": 0,
+                "gate_min_walk_forward_samples": 0,
+                "gate_max_walk_forward_return_std": 5.0,
+                "min_trade_count": 0,
+                "low_trade_penalty": 0.0,
+                "objective_weight_blocked_ratio": 0.0,
+                "enable_small_capital_mode": False,
+                "small_capital_principal": None,
+                "small_capital_min_expected_edge_bps": 0.0,
+                "initial_cash": relaxed_initial_cash,
+                "commission_rate": 0.0,
+                "slippage_rate": 0.0,
+                "min_commission_cny": 0.0,
+                "stamp_duty_sell_rate": 0.0,
+                "transfer_fee_rate": 0.0,
+                "lot_size": 1,
+                "max_single_position": 1.0,
+                "enable_realistic_cost_model": False,
+                "impact_cost_coeff": 0.0,
+                "impact_cost_exponent": 0.1,
+                "fill_probability_floor": 1.0,
+            }
         )
 
     def _evaluate_strategies(
@@ -235,6 +272,7 @@ class StrategyChallengeService:
                 stability_penalty=float(best.stability_penalty),
                 return_variance_penalty=float(best.return_variance_penalty),
                 param_drift_penalty=float(best.param_drift_penalty),
+                validation_diagnostic_hint=self._build_validation_diagnostic_hint(best.validation_metrics),
             )
             qualified, reasons = self._evaluate_gate(req=req, result=base_result)
             ranking_score = self._ranking_score(req=req, result=base_result, qualified=qualified)
@@ -255,6 +293,7 @@ class StrategyChallengeService:
                     strategy_name=strategy_name,
                     qualified=False,
                     qualification_reasons=["runtime_error"],
+                    validation_diagnostic_hint="运行期异常，策略评估中断。",
                     ranking_score=None,
                     error=str(exc),
                 ),
@@ -353,7 +392,7 @@ class StrategyChallengeService:
             raise ValueError("No market data available for challenge full-window backtest.")
 
         bars = bars.sort_values("trade_date").reset_index(drop=True).copy()
-        status = self.provider.get_security_status(req.symbol)
+        status = self._resolve_security_status(symbol=req.symbol, bars=bars)
         bars["is_st"] = bool(status.get("is_st", False))
         bars["is_suspended"] = bool(status.get("is_suspended", False))
 
@@ -402,6 +441,25 @@ class StrategyChallengeService:
         result = self.backtest_engine.run(bars, run_req, strategy)
         return result.metrics, provider_name
 
+    def _resolve_security_status(self, *, symbol: str, bars: pd.DataFrame) -> dict[str, bool]:
+        fallback = {
+            "is_st": bool(bars.iloc[-1].get("is_st", False)) if (bars is not None and not bars.empty) else False,
+            "is_suspended": bool(bars.iloc[-1].get("is_suspended", False)) if (bars is not None and not bars.empty) else False,
+        }
+        try:
+            status = self.provider.get_security_status(symbol)
+            return {
+                "is_st": bool(status.get("is_st", fallback["is_st"])),
+                "is_suspended": bool(status.get("is_suspended", fallback["is_suspended"])),
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Security status lookup failed for %s in challenge full backtest; fallback to bars/default status: %s",
+                symbol,
+                exc,
+            )
+            return fallback
+
     def _evaluate_gate(
         self,
         *,
@@ -438,6 +496,77 @@ class StrategyChallengeService:
             )
 
         return len(reasons) == 0, reasons
+
+    @staticmethod
+    def _build_validation_diagnostic_hint(vm: BacktestMetrics | None) -> str | None:
+        if vm is None:
+            return "验证集指标缺失，可能是样本不足或切分失败。"
+
+        trade_count = int(vm.trade_count)
+        blocked = int(vm.blocked_signal_count)
+        signal_buy = int(vm.signal_buy_count)
+        signal_sell = int(vm.signal_sell_count)
+        signal_watch = int(vm.signal_watch_count)
+        blocked_buy = int(vm.blocked_buy_count)
+        blocked_t1_sell = int(vm.blocked_tplus1_sell_count)
+        buy_no_fill = int(vm.buy_no_fill_count)
+        buy_budget_insufficient = int(vm.buy_budget_insufficient_count)
+
+        if trade_count > 0:
+            return (
+                f"验证期已有成交（{trade_count} 笔），但仍未通过其他门槛；"
+                f"BUY信号={signal_buy}，SELL信号={signal_sell}，拦截={blocked}。"
+            )
+
+        if signal_buy <= 0 and signal_sell <= 0 and signal_watch > 0:
+            return "验证期只有观望信号（WATCH），没有触发买卖条件。"
+
+        if signal_buy <= 0 and signal_sell > 0:
+            if blocked_t1_sell > 0:
+                return (
+                    "验证期主要是卖出信号，且因为无可卖仓位被 T+1 规则拦截；"
+                    f"SELL信号={signal_sell}，T+1拦截={blocked_t1_sell}。"
+                )
+            if blocked > 0:
+                return (
+                    "验证期主要是卖出信号，卖出执行被风控拦截；"
+                    f"SELL信号={signal_sell}，拦截={blocked}。"
+                )
+            return (
+                "验证期出现卖出信号，但没有形成可执行成交（通常是无持仓可卖）；"
+                f"SELL信号={signal_sell}。"
+            )
+
+        if signal_buy > 0:
+            if blocked_buy >= signal_buy and blocked_buy > 0:
+                return (
+                    "验证期有买入信号，但买入被风控全部拦截；"
+                    f"BUY信号={signal_buy}，BUY拦截={blocked_buy}。"
+                )
+            if buy_no_fill >= signal_buy and buy_no_fill > 0:
+                return (
+                    "验证期有买入信号，但因流动性/涨跌停约束未成交；"
+                    f"BUY信号={signal_buy}，未成交={buy_no_fill}。"
+                )
+            if buy_budget_insufficient >= signal_buy and buy_budget_insufficient > 0:
+                return (
+                    "验证期有买入信号，但资金或最小手数约束导致无法下单；"
+                    f"BUY信号={signal_buy}，资金不足={buy_budget_insufficient}。"
+                )
+            if blocked > 0:
+                return (
+                    "验证期有买入信号，但执行阶段存在较多风控拦截；"
+                    f"BUY信号={signal_buy}，总拦截={blocked}。"
+                )
+            return (
+                "验证期有买入信号，但未形成有效成交；"
+                f"BUY信号={signal_buy}，SELL信号={signal_sell}。"
+            )
+
+        if blocked > 0:
+            return f"验证期信号被风控拦截较多（{blocked} 次），建议检查流动性/ST/停牌/T+1约束。"
+
+        return "验证期未形成有效交易，请检查策略触发阈值与门槛配置。"
 
     @staticmethod
     def _metric_for_ranking(result: StrategyChallengeStrategyResult) -> BacktestMetrics | None:

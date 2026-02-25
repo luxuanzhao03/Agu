@@ -30,7 +30,6 @@
 - `multi_factor`
 - `sector_rotation`
 - `event_driven`
-- `small_capital_adaptive`（1万元以下账户优先策略）
 - 策略注册与策略元数据接口。
 
 4. 风险引擎
@@ -505,7 +504,6 @@ AUTOTUNE_DB_PATH=data/autotune.db
 
 说明：
 - 小资金模式开启后，`signals/pipeline/research/backtest`会对 BUY 信号增加“可买一手 + 成本覆盖边际”过滤。
-- 新增 `small_capital_adaptive` 策略：对 `1万以下资金`默认采用低换手、可交易性优先、动态仓位（按一手可买性 + 波动风险 + 资金分桶）规则。
 - 即使使用其他策略，小资金模式也会在 BUY 信号前执行“仓位覆写”：买不起一手或一手集中度过高时自动降级为 `WATCH`。
 - 前端策略页新增三档一键模板：`2000 / 5000 / 8000`，自动填充小资金策略与关键参数。
 - 回测中费用模型会计入最低佣金、卖出印花税、过户费，避免小本金回测被过度乐观高估。

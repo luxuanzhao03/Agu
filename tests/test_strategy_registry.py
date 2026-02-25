@@ -10,8 +10,8 @@ def test_registry_contains_required_strategies() -> None:
         "multi_factor",
         "sector_rotation",
         "event_driven",
-        "small_capital_adaptive",
     } <= names
+    assert len(names) == 5
 
 
 def test_registry_get_strategy() -> None:

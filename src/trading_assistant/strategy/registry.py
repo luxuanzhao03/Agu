@@ -6,7 +6,6 @@ from trading_assistant.strategy.event_driven import EventDrivenStrategy
 from trading_assistant.strategy.mean_reversion import MeanReversionStrategy
 from trading_assistant.strategy.multi_factor import MultiFactorStrategy
 from trading_assistant.strategy.sector_rotation import SectorRotationStrategy
-from trading_assistant.strategy.small_capital_adaptive import SmallCapitalAdaptiveStrategy
 from trading_assistant.strategy.trend import TrendFollowingStrategy
 
 
@@ -18,7 +17,6 @@ class StrategyRegistry:
             MultiFactorStrategy(),
             SectorRotationStrategy(),
             EventDrivenStrategy(),
-            SmallCapitalAdaptiveStrategy(),
         ]
         self._mapping = {strategy.info.name: strategy for strategy in strategies}
 

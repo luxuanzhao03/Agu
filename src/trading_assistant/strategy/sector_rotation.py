@@ -37,29 +37,34 @@ class SectorRotationStrategy(BaseStrategy):
             float(latest.get("tushare_disclosure_risk_score", 0.5)) if tushare_advanced_available else 0.5
         )
 
-        if sector_strength >= 0.6 and momentum20 > 0 and momentum20 >= momentum60 and vol20 < 0.05:
+        if (
+            sector_strength >= 0.52
+            and momentum20 >= -0.01
+            and momentum20 >= (momentum60 - 0.02)
+            and vol20 < 0.075
+        ):
             action = SignalAction.BUY
             reason = "Sector strength and symbol momentum align."
-        elif risk_off_strength >= 0.65 or (momentum20 < 0 and latest["close"] < latest["ma20"]):
+        elif risk_off_strength >= 0.58 or (momentum20 < -0.01 and latest["close"] < latest["ma20"] * 1.01):
             action = SignalAction.SELL
             reason = "Risk-off regime or sector momentum deterioration."
         else:
             action = SignalAction.WATCH
             reason = "Rotation signal not confirmed."
 
-        if action == SignalAction.BUY and fundamental_available and fundamental_score < 0.35:
+        if action == SignalAction.BUY and fundamental_available and fundamental_score < 0.25:
             action = SignalAction.WATCH
             reason = (
                 f"Rotation buy setup exists, but fundamental score {fundamental_score:.3f} is too weak; "
                 "downgraded to WATCH."
             )
-        if action == SignalAction.BUY and tushare_advanced_available and tushare_advanced_score < 0.30:
+        if action == SignalAction.BUY and tushare_advanced_available and tushare_advanced_score < 0.20:
             action = SignalAction.WATCH
             reason = (
                 f"Rotation buy setup exists, but tushare advanced score {tushare_advanced_score:.3f} is too weak; "
                 "downgraded to WATCH."
             )
-        if action == SignalAction.BUY and disclosure_risk >= 0.80:
+        if action == SignalAction.BUY and disclosure_risk >= 0.90:
             action = SignalAction.WATCH
             reason = f"Rotation buy setup blocked by disclosure risk ({disclosure_risk:.2f})."
 
@@ -79,7 +84,7 @@ class SectorRotationStrategy(BaseStrategy):
                 confidence=confidence,
                 reason=reason,
                 strategy_name=self.info.name,
-                suggested_position=0.04 if action == SignalAction.BUY else None,
+                suggested_position=0.07 if action == SignalAction.BUY else None,
                 metadata={
                     "sector_strength": round(sector_strength, 4),
                     "risk_off_strength": round(risk_off_strength, 4),

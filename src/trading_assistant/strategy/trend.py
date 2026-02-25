@@ -20,8 +20,20 @@ class TrendFollowingStrategy(BaseStrategy):
             return []
 
         context = context or StrategyContext()
-        atr_mult = float(context.params.get("atr_multiplier", 2.0))
-        df = features
+        entry_ma_fast = max(2, int(context.params.get("entry_ma_fast", 12)))
+        entry_ma_slow = max(entry_ma_fast + 1, int(context.params.get("entry_ma_slow", 34)))
+        atr_mult = float(context.params.get("atr_multiplier", 1.6))
+        df = features.copy()
+        close_series = pd.to_numeric(df["close"], errors="coerce")
+
+        def _resolve_ma(window: int) -> pd.Series:
+            col = f"ma{window}"
+            if col in df.columns:
+                return pd.to_numeric(df[col], errors="coerce").fillna(close_series)
+            return close_series.rolling(window=window, min_periods=1).mean()
+
+        fast_ma = _resolve_ma(entry_ma_fast)
+        slow_ma = _resolve_ma(entry_ma_slow)
         latest = df.iloc[-1]
         fundamental_available = bool(latest.get("fundamental_available", False))
         fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
@@ -36,15 +48,25 @@ class TrendFollowingStrategy(BaseStrategy):
             action = SignalAction.WATCH
             reason = "Insufficient history for trend confirmation."
         else:
-            prev = df.iloc[-2]
+            prev_fast = float(fast_ma.iloc[-2])
+            prev_slow = float(slow_ma.iloc[-2])
+            latest_fast = float(fast_ma.iloc[-1])
+            latest_slow = float(slow_ma.iloc[-1])
+            latest_close = float(close_series.iloc[-1])
+            momentum20 = float(latest.get("momentum20", 0.0))
             long_signal = bool(
-                latest["ma20"] > latest["ma60"] and prev["close"] <= prev["ma20"] and latest["close"] > latest["ma20"]
+                latest_fast >= latest_slow * 0.998
+                and latest_close >= latest_fast * 0.997
             )
-            exit_signal = bool(latest["close"] < latest["ma20"] - atr_mult * latest["atr14"])
+            exit_signal = bool(
+                (latest_fast < latest_slow * 0.998 and prev_fast >= prev_slow * 0.995)
+                or (latest_close < latest_fast - atr_mult * float(latest.get("atr14", 0.0)))
+                or (momentum20 < -0.015 and latest_close < latest_fast)
+            )
 
             if long_signal:
                 action = SignalAction.BUY
-                reason = "MA20 above MA60 and price confirms breakout."
+                reason = f"MA{entry_ma_fast} is above MA{entry_ma_slow} and price confirms breakout."
             elif exit_signal:
                 action = SignalAction.SELL
                 reason = "Price breaks below dynamic ATR exit band."
@@ -52,19 +74,19 @@ class TrendFollowingStrategy(BaseStrategy):
                 action = SignalAction.WATCH
                 reason = "No clear trend entry or exit."
 
-        if action == SignalAction.BUY and fundamental_available and fundamental_score < 0.35:
+        if action == SignalAction.BUY and fundamental_available and fundamental_score < 0.25:
             action = SignalAction.WATCH
             reason = (
                 f"Trend entry detected, but fundamental score {fundamental_score:.3f} is too weak; "
                 "downgraded to WATCH."
             )
-        if action == SignalAction.BUY and tushare_advanced_available and tushare_advanced_score < 0.32:
+        if action == SignalAction.BUY and tushare_advanced_available and tushare_advanced_score < 0.20:
             action = SignalAction.WATCH
             reason = (
                 f"Trend entry detected, but tushare advanced score {tushare_advanced_score:.3f} is too weak; "
                 "downgraded to WATCH."
             )
-        if action == SignalAction.BUY and disclosure_risk >= 0.82:
+        if action == SignalAction.BUY and disclosure_risk >= 0.90:
             action = SignalAction.WATCH
             reason = f"Trend entry blocked by disclosure risk ({disclosure_risk:.2f})."
 
@@ -88,10 +110,12 @@ class TrendFollowingStrategy(BaseStrategy):
                 confidence=confidence,
                 reason=reason,
                 strategy_name=self.info.name,
-                suggested_position=0.05 if action == SignalAction.BUY else None,
+                suggested_position=0.08 if action == SignalAction.BUY else None,
                 metadata={
-                    "ma20": round(float(latest.get("ma20", 0.0)), 4),
-                    "ma60": round(float(latest.get("ma60", 0.0)), 4),
+                    "entry_ma_fast": entry_ma_fast,
+                    "entry_ma_slow": entry_ma_slow,
+                    "ma_fast": round(float(fast_ma.iloc[-1]), 4),
+                    "ma_slow": round(float(slow_ma.iloc[-1]), 4),
                     "atr14": round(float(latest.get("atr14", 0.0)), 4),
                     "fundamental_score": round(fundamental_score, 4),
                     "fundamental_available": fundamental_available,

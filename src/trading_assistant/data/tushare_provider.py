@@ -25,7 +25,7 @@ class TushareProvider(MarketDataProvider):
             "param_profile": "ts_code_date_range",
             "category": "market_microstructure",
             "integrated_in_system": True,
-            "integrated_targets": ["factor_engine", "multi_factor", "small_capital_adaptive"],
+            "integrated_targets": ["factor_engine", "multi_factor"],
             "notes": "估值、换手、市值等关键字段。",
         },
         {
@@ -35,7 +35,7 @@ class TushareProvider(MarketDataProvider):
             "param_profile": "ts_code_date_range",
             "category": "market_microstructure",
             "integrated_in_system": True,
-            "integrated_targets": ["factor_engine", "multi_factor", "small_capital_adaptive"],
+            "integrated_targets": ["factor_engine", "multi_factor"],
             "notes": "主力/超大单净流入，可用于事件与趋势确认。",
         },
         {
@@ -165,7 +165,7 @@ class TushareProvider(MarketDataProvider):
             "param_profile": "ts_code_only",
             "category": "risk_event",
             "integrated_in_system": True,
-            "integrated_targets": ["risk", "factor_engine", "small_capital_adaptive"],
+            "integrated_targets": ["risk", "factor_engine"],
             "notes": "股权质押统计，生成股权质押风险因子。",
         },
         {
@@ -205,7 +205,7 @@ class TushareProvider(MarketDataProvider):
             "param_profile": "ts_code_date_range",
             "category": "corporate_action",
             "integrated_in_system": True,
-            "integrated_targets": ["risk", "factor_engine", "small_capital_adaptive"],
+            "integrated_targets": ["risk", "factor_engine"],
             "notes": "限售股解禁，生成供给冲击风险因子。",
         },
         {

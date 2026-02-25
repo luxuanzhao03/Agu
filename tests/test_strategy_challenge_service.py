@@ -46,6 +46,12 @@ class FakeProvider:
         return {"is_st": False, "is_suspended": False}
 
 
+class StatusFailProvider(FakeProvider):
+    def get_security_status(self, symbol: str) -> dict[str, bool]:
+        _ = symbol
+        raise RuntimeError("status lookup unavailable")
+
+
 class StrategyAwareBacktestEngine:
     _base_return = {
         "trend_following": 0.23,
@@ -53,7 +59,6 @@ class StrategyAwareBacktestEngine:
         "multi_factor": 0.18,
         "sector_rotation": 0.15,
         "event_driven": 0.13,
-        "small_capital_adaptive": 0.17,
     }
     _target = {
         "trend_following": {"entry_ma_fast": 20.0, "entry_ma_slow": 60.0, "atr_multiplier": 2.0},
@@ -61,7 +66,6 @@ class StrategyAwareBacktestEngine:
         "multi_factor": {"buy_threshold": 0.55, "sell_threshold": 0.35},
         "sector_rotation": {"sector_strength": 0.60, "risk_off_strength": 0.50},
         "event_driven": {"event_score": 0.70, "negative_event_score": 0.60},
-        "small_capital_adaptive": {"buy_threshold": 0.64, "sell_threshold": 0.34, "max_positions": 3.0},
     }
 
     def run(self, bars: pd.DataFrame, req, strategy) -> BacktestResult:
@@ -105,8 +109,8 @@ class StrategyAwareBacktestEngine:
         )
 
 
-def _service(tmp_path: Path) -> StrategyChallengeService:
-    provider = FakeProvider()
+def _service(tmp_path: Path, provider: FakeProvider | None = None) -> StrategyChallengeService:
+    provider = provider or FakeProvider()
     engine = StrategyAwareBacktestEngine()
     registry = StrategyRegistry()
     gov = StrategyGovernanceService(
@@ -192,6 +196,27 @@ def test_strategy_challenge_returns_no_champion_when_gate_is_too_strict(tmp_path
     assert out.error_count == 0
 
 
+def test_strategy_challenge_disable_risk_controls_relaxes_gates(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    req = StrategyChallengeRequest(
+        symbol="000001",
+        start_date=date(2024, 1, 1),
+        end_date=date(2025, 12, 31),
+        strategy_names=["trend_following", "mean_reversion"],
+        per_strategy_max_combinations=24,
+        gate_require_validation=True,
+        gate_min_validation_total_return=0.60,
+        gate_max_validation_drawdown=0.05,
+        gate_min_validation_sharpe=3.0,
+        gate_min_walk_forward_samples=4,
+        gate_max_walk_forward_return_std=0.05,
+        disable_risk_controls=True,
+    )
+    out = service.run(req)
+    assert out.qualified_count >= 1
+    assert out.champion_strategy is not None
+
+
 def test_strategy_challenge_partial_failed_status(tmp_path: Path) -> None:
     service = _service(tmp_path)
     req = StrategyChallengeRequest(
@@ -258,3 +283,49 @@ def test_strategy_challenge_uses_sequential_path_when_disabled(tmp_path: Path) -
     assert called["sequential"] is True
     assert results == []
     assert evaluated == 0
+
+
+def test_strategy_challenge_tolerates_status_lookup_failure(tmp_path: Path) -> None:
+    service = _service(tmp_path, provider=StatusFailProvider())
+    req = StrategyChallengeRequest(
+        symbol="000001",
+        start_date=date(2024, 1, 1),
+        end_date=date(2025, 12, 31),
+        strategy_names=["event_driven"],
+        per_strategy_max_combinations=16,
+    )
+    out = service.run(req)
+    assert out.run_status == StrategyChallengeRunStatus.SUCCESS
+    assert out.error_count == 0
+    assert out.results
+    assert out.results[0].strategy_name == "event_driven"
+    assert out.results[0].error is None
+
+
+def test_validation_diagnostic_hint_watch_only() -> None:
+    vm = BacktestMetrics(
+        total_return=0.0,
+        max_drawdown=0.0,
+        trade_count=0,
+        win_rate=0.0,
+        blocked_signal_count=0,
+        signal_watch_count=120,
+    )
+    hint = StrategyChallengeService._build_validation_diagnostic_hint(vm)
+    assert hint is not None
+    assert "观望信号" in hint
+
+
+def test_validation_diagnostic_hint_tplus1_blocked_sell_only() -> None:
+    vm = BacktestMetrics(
+        total_return=0.0,
+        max_drawdown=0.0,
+        trade_count=0,
+        win_rate=0.0,
+        blocked_signal_count=28,
+        signal_sell_count=28,
+        blocked_tplus1_sell_count=28,
+    )
+    hint = StrategyChallengeService._build_validation_diagnostic_hint(vm)
+    assert hint is not None
+    assert "T+1" in hint

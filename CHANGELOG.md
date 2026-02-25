@@ -72,7 +72,6 @@
   - `POST /market/tushare/prefetch`
 - 因子与策略升级：
   - 因子引擎新增 `tushare_valuation_score`、`tushare_moneyflow_score`、`tushare_tradability_score`、`tushare_advanced_score`。
-  - `multi_factor` 与 `small_capital_adaptive` 策略接入 `tushare_advanced_score` 买入侧约束。
 - 新增测试：
   - `test_tushare_provider_advanced.py`
   - `test_market_tushare_endpoints.py`
@@ -80,7 +79,6 @@
   - 既有 `factor/small_capital` 测试补充 `tushare` 高级分值断言。
 ## 0.8.4
 
-- 新增小资金专用策略：`small_capital_adaptive`
   - 目标场景：本金长期低于 1 万元
   - 低换手、可执行优先：一手可买性、集中度、波动、流动性联合约束
   - 动态仓位：按本金、最小手数、可用现金缓冲、波动风险自适应计算 `suggested_position`
@@ -92,11 +90,9 @@
   - `StrategyContext.market_state` 传入小资金与费用参数（本金、手数、佣金、过户费、滑点等）
   - 支持策略在生成阶段做账户规模感知
 - 前端工作台增强：
-  - 新增 `small_capital_adaptive` 默认参数模板
   - 小资金提示区在本金 `<=10000` 时给出策略切换建议
   - 新增三档一键模板按钮（`2000/5000/8000`）自动填充小资金参数
 - 新增测试：
-  - `test_strategy_small_capital_adaptive.py`
   - `test_strategy_registry.py` 更新策略覆盖断言
 
 ## 0.8.3

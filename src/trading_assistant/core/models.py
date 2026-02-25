@@ -125,7 +125,7 @@ class GenerateSignalRequest(BaseModel):
     enable_event_enrichment: bool = False
     enable_small_capital_mode: bool = False
     small_capital_principal: float | None = Field(default=None, gt=0)
-    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
+    small_capital_min_expected_edge_bps: float = Field(default=45.0, ge=0.0, le=2000.0)
     enable_fundamental_enrichment: bool = True
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
@@ -234,7 +234,7 @@ class BacktestRequest(BaseModel):
     enable_event_enrichment: bool = False
     enable_small_capital_mode: bool = False
     small_capital_principal: float | None = Field(default=None, gt=0)
-    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
+    small_capital_min_expected_edge_bps: float = Field(default=45.0, ge=0.0, le=2000.0)
     enable_fundamental_enrichment: bool = True
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
@@ -247,7 +247,7 @@ class BacktestRequest(BaseModel):
     stamp_duty_sell_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
     transfer_fee_rate: float = Field(default=0.00001, ge=0.0, le=0.01)
     lot_size: int = Field(default=100, ge=1)
-    max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
+    max_single_position: float = Field(default=0.35, gt=0.0, le=1.0)
     enable_realistic_cost_model: bool = True
     impact_cost_coeff: float = Field(default=0.18, ge=0.0, le=5.0)
     impact_cost_exponent: float = Field(default=0.60, ge=0.1, le=2.0)
@@ -286,6 +286,17 @@ class BacktestMetrics(BaseModel):
     blocked_signal_count: int
     annualized_return: float = 0.0
     sharpe: float = 0.0
+    signal_count: int = 0
+    signal_buy_count: int = 0
+    signal_sell_count: int = 0
+    signal_watch_count: int = 0
+    blocked_buy_count: int = 0
+    blocked_sell_count: int = 0
+    blocked_tplus1_sell_count: int = 0
+    buy_no_fill_count: int = 0
+    sell_no_fill_count: int = 0
+    buy_budget_insufficient_count: int = 0
+    sell_without_position_count: int = 0
 
 
 class BacktestResult(BaseModel):
@@ -310,7 +321,7 @@ class PortfolioBacktestRequest(BaseModel):
     initial_cash: float = Field(default=1_000_000.0, gt=0)
     target_gross_exposure: float = Field(default=0.95, gt=0.0, le=1.0)
     cash_reserve_ratio: float = Field(default=0.05, ge=0.0, le=0.95)
-    max_single_position: float = Field(default=0.15, gt=0.0, le=1.0)
+    max_single_position: float = Field(default=0.35, gt=0.0, le=1.0)
     max_industry_exposure: float = Field(default=0.35, gt=0.0, le=1.0)
     max_theme_exposure: float = Field(default=0.45, gt=0.0, le=1.0)
     lot_size: int = Field(default=100, ge=1)
@@ -430,7 +441,7 @@ class AutoTuneRunRequest(BaseModel):
     enable_fundamental_enrichment: bool = True
     enable_small_capital_mode: bool = False
     small_capital_principal: float | None = Field(default=None, gt=0)
-    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
+    small_capital_min_expected_edge_bps: float = Field(default=45.0, ge=0.0, le=2000.0)
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
     event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
@@ -441,7 +452,7 @@ class AutoTuneRunRequest(BaseModel):
     stamp_duty_sell_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
     transfer_fee_rate: float = Field(default=0.00001, ge=0.0, le=0.01)
     lot_size: int = Field(default=100, ge=1)
-    max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
+    max_single_position: float = Field(default=0.35, gt=0.0, le=1.0)
     enable_realistic_cost_model: bool = True
     impact_cost_coeff: float = Field(default=0.18, ge=0.0, le=5.0)
     impact_cost_exponent: float = Field(default=0.60, ge=0.1, le=2.0)
@@ -558,7 +569,7 @@ class StrategyChallengeRequest(BaseModel):
     enable_fundamental_enrichment: bool = True
     enable_small_capital_mode: bool = False
     small_capital_principal: float | None = Field(default=None, gt=0)
-    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
+    small_capital_min_expected_edge_bps: float = Field(default=45.0, ge=0.0, le=2000.0)
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
     event_decay_half_life_days: float = Field(default=7.0, gt=0.0, le=365.0)
@@ -569,11 +580,12 @@ class StrategyChallengeRequest(BaseModel):
     stamp_duty_sell_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
     transfer_fee_rate: float = Field(default=0.00001, ge=0.0, le=0.01)
     lot_size: int = Field(default=100, ge=1)
-    max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
+    max_single_position: float = Field(default=0.35, gt=0.0, le=1.0)
     enable_realistic_cost_model: bool = True
     impact_cost_coeff: float = Field(default=0.18, ge=0.0, le=5.0)
     impact_cost_exponent: float = Field(default=0.60, ge=0.1, le=2.0)
     fill_probability_floor: float = Field(default=0.02, ge=0.0, le=1.0)
+    disable_risk_controls: bool = False
 
     gate_require_validation: bool = True
     gate_min_validation_total_return: float = Field(default=0.0, ge=-1.0, le=5.0)
@@ -615,6 +627,7 @@ class StrategyChallengeStrategyResult(BaseModel):
     param_drift_penalty: float = 0.0
     qualified: bool = False
     qualification_reasons: list[str] = Field(default_factory=list)
+    validation_diagnostic_hint: str | None = None
     ranking_score: float | None = None
     error: str | None = None
 
@@ -727,7 +740,7 @@ class PipelineRunRequest(BaseModel):
     enable_event_enrichment: bool = False
     enable_small_capital_mode: bool = False
     small_capital_principal: float | None = Field(default=None, gt=0)
-    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
+    small_capital_min_expected_edge_bps: float = Field(default=45.0, ge=0.0, le=2000.0)
     enable_fundamental_enrichment: bool = True
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
@@ -844,8 +857,8 @@ class OptimizeCandidate(BaseModel):
 
 class PortfolioOptimizeRequest(BaseModel):
     candidates: list[OptimizeCandidate] = Field(default_factory=list)
-    max_single_position: float = Field(default=0.05, gt=0, le=1)
-    max_industry_exposure: float = Field(default=0.2, gt=0, le=1)
+    max_single_position: float = Field(default=0.35, gt=0, le=1)
+    max_industry_exposure: float = Field(default=0.35, gt=0, le=1)
     min_weight_threshold: float = Field(default=0.005, ge=0, le=1)
     risk_aversion: float = Field(default=0.5, ge=0, le=5)
     target_gross_exposure: float = Field(default=1.0, gt=0, le=1)
@@ -1260,7 +1273,7 @@ class ResearchWorkflowRequest(BaseModel):
     enable_event_enrichment: bool = False
     enable_small_capital_mode: bool = False
     small_capital_principal: float | None = Field(default=None, gt=0)
-    small_capital_min_expected_edge_bps: float = Field(default=80.0, ge=0.0, le=2000.0)
+    small_capital_min_expected_edge_bps: float = Field(default=45.0, ge=0.0, le=2000.0)
     enable_fundamental_enrichment: bool = True
     fundamental_max_staleness_days: int = Field(default=540, ge=1, le=3650)
     event_lookback_days: int = Field(default=30, ge=1, le=3650)
@@ -1268,8 +1281,8 @@ class ResearchWorkflowRequest(BaseModel):
     use_autotune_profile: bool = True
     industry_map: dict[str, str] = Field(default_factory=dict)
     optimize_portfolio: bool = True
-    max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
-    max_industry_exposure: float = Field(default=0.2, gt=0.0, le=1.0)
+    max_single_position: float = Field(default=0.35, gt=0.0, le=1.0)
+    max_industry_exposure: float = Field(default=0.35, gt=0.0, le=1.0)
     target_gross_exposure: float = Field(default=1.0, gt=0.0, le=1.0)
 
     @model_validator(mode="after")
@@ -2160,7 +2173,7 @@ class EventNLPDriftCheckRequest(BaseModel):
     contribution_commission_rate: float = Field(default=0.0003, ge=0.0, le=0.02)
     contribution_slippage_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
     contribution_lot_size: int = Field(default=100, ge=1)
-    contribution_max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
+    contribution_max_single_position: float = Field(default=0.35, gt=0.0, le=1.0)
     include_feedback_quality: bool = True
     feedback_min_samples: int = Field(default=20, ge=1, le=100000)
     save_snapshot: bool = True
@@ -2698,7 +2711,7 @@ class EventFeatureBacktestCompareRequest(BaseModel):
     commission_rate: float = Field(default=0.0003, ge=0.0, le=0.02)
     slippage_rate: float = Field(default=0.0005, ge=0.0, le=0.02)
     lot_size: int = Field(default=100, ge=1)
-    max_single_position: float = Field(default=0.05, gt=0.0, le=1.0)
+    max_single_position: float = Field(default=0.35, gt=0.0, le=1.0)
     save_report: bool = True
     watermark: str = "For Research Only"
 

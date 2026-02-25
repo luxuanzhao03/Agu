@@ -1,293 +1,187 @@
-# A股半自动交易辅助系统使用手册（Windows）
+﻿# A鑲″崐鑷姩浜ゆ槗杈呭姪绯荤粺浣跨敤鎵嬪唽锛圵indows锛?
+鏇存柊鏃堕棿锛?026-02-23
+閫傜敤鐗堟湰锛氬綋鍓嶄粨搴撲富骞诧紙鍚嚜鍔ㄨ皟鍙傘€佹寫鎴樿禌銆佹寔浠撳垎鏋愩€佸噯纭€т笌涓婄嚎鍑嗗叆鐪嬫澘锛?
+## 1. 绯荤粺瀹氫綅涓庤竟鐣?
+鏈郴缁熸槸鈥滄姇鐮斾笌浜ゆ槗鍐崇瓥鏀寔骞冲彴鈥濓紝涓嶆槸鑷姩涓嬪崟绯荤粺銆?
+- 鏀寔锛氭暟鎹媺鍙栥€佸洜瀛愯绠椼€佺瓥鐣ヤ俊鍙枫€侀鎺с€佸洖娴嬨€佺粍鍚堜紭鍖栥€佹墽琛屽洖鍐欍€佸鐩樸€佸璁°€佽繍缁寸洃鎺с€?- 涓嶆敮鎸侊細鍒稿晢 API 鑷姩涓嬪崟銆佹敹鐩婁繚璇併€侀浂鍥炴挙淇濊瘉銆?- 缁撹锛氱郴缁熺洰鏍囨槸鈥滄彁鍗囪儨鐜囦笌鎵ц璐ㄩ噺銆佹帶鍒堕闄┾€濓紝涓嶆槸鈥滀繚璇佷笉浜忛挶鈥濄€?
+## 2. 椤甸潰涓庡鑸€昏
 
-更新时间：2026-02-23
-适用版本：当前仓库主干（含自动调参、挑战赛、持仓分析、准确性与上线准入看板）
+绯荤粺鍓嶇鍏ュ彛鍏?3 涓細
 
-## 1. 系统定位与边界
+1. 涓荤晫闈細`/ui/`
+2. 鎶曠爺浜ゆ槗宸ヤ綔鍙帮細`/trading/workbench`
+3. 杩愮淮鐪嬫澘锛歚/ops/dashboard`
 
-本系统是“投研与交易决策支持平台”，不是自动下单系统。
+宸ヤ綔鍙板唴鏈?6 涓富鏍囩椤碉細
 
-- 支持：数据拉取、因子计算、策略信号、风控、回测、组合优化、执行回写、复盘、审计、运维监控。
-- 不支持：券商 API 自动下单、收益保证、零回撤保证。
-- 结论：系统目标是“提升胜率与执行质量、控制风险”，不是“保证不亏钱”。
-
-## 2. 页面与导航总览
-
-系统前端入口共 3 个：
-
-1. 主界面：`/ui/`
-2. 投研交易工作台：`/trading/workbench`
-3. 运维看板：`/ops/dashboard`
-
-工作台内有 6 个主标签页：
-
-1. 策略与参数页
-2. 自动调参页
-3. 跨策略挑战赛页
-4. 结果可视化页
-5. 持仓分析页
-6. 交易准备单与执行回写页
-
-## 3. 功能覆盖矩阵（已实现）
-
-| 功能域 | 已实现能力 | 主要页面/API |
+1. 绛栫暐涓庡弬鏁伴〉
+2. 鑷姩璋冨弬椤?3. 璺ㄧ瓥鐣ユ寫鎴樿禌椤?4. 缁撴灉鍙鍖栭〉
+5. 鎸佷粨鍒嗘瀽椤?6. 浜ゆ槗鍑嗗鍗曚笌鎵ц鍥炲啓椤?
+## 3. 鍔熻兘瑕嗙洊鐭╅樀锛堝凡瀹炵幇锛?
+| 鍔熻兘鍩?| 宸插疄鐜拌兘鍔?| 涓昏椤甸潰/API |
 |---|---|---|
-| 自动调参防过拟合 | walk-forward 多窗口、稳定性惩罚、参数漂移惩罚、收益方差惩罚 | `POST /autotune/run`、自动调参页 |
-| 自动调参前端化 | 任务运行、候选榜、基线对比、画像激活/回滚、灰度规则 | 自动调参页、`/autotune/*` |
-| 画像回滚与灰度 | 一键回滚上个画像、按策略/按标的灰度启用 | `POST /autotune/profiles/rollback`、`/autotune/rollout/rules/*` |
-| 跨策略挑战赛 | 六策略同窗评测、硬门槛筛选、冠军亚军、灰度计划 | 挑战赛页、`POST /challenge/run` |
-| 组合级回测 | 多标的净值、调仓周期、仓位上限、行业/主题约束、资金利用率 | `POST /backtest/portfolio-run` |
-| 拟真成本与成交 | 最低佣金、印花税、过户费、冲击成本、分档滑点、成交概率 | 回测引擎、`/replay/cost-model/*` |
-| 风控增强 | 连续亏损、单日亏损、VaR/ES、集中度阈值、T+1/ST/停牌等 | `POST /risk/check`、`POST /portfolio/risk/check` |
-| 研究-执行闭环 | 建议单 -> 手工执行回写 -> 偏差归因 -> 参数建议 | 执行回写页、`/replay/*`、`/reports/generate` |
-| 数据层增强 | 多源回退、时序缓存与增量补拉、字段质量评分 | `data/*`、`POST /data/quality/report` |
-| 数据许可证治理 | 数据集授权登记、用途校验、导出权限检查 | `POST /data/licenses/register`、`POST /data/licenses/check` |
-| 因子快照与落库留痕 | 因子实时快照、数据快照哈希登记、可追溯 | `GET /factors/snapshot`、`POST /data/snapshots/register` |
-| 策略治理与审批 | 版本注册、送审、多角色审批、运行时强制只用已审批版本 | `/strategy-governance/*` |
-| 研究流水线编排 | 每日研究管线一键运行（信号+事件增强+小资金过滤） | `POST /pipeline/daily-run` |
-| 模型风险监控 | 策略漂移检测、风险告警、审计留痕 | `POST /model-risk/drift-check` |
-| 系统配置与权限 | 环境配置查看、鉴权角色识别、权限矩阵查询 | `/system/config`、`/system/auth/*` |
-| 生产运维与审计 | 作业调度、SLA、告警降噪、证据包、审计哈希链 | `/ops/*`、`/alerts/*`、`/compliance/evidence/*` |
-| 持仓分析闭环 | 手工成交、持仓快照、次日预测、动作建议（ADD/REDUCE/EXIT/HOLD/BUY_NEW） | 持仓分析页、`/holdings/*` |
-| 策略准确性看板 | OOS 命中率、Brier、收益偏差、成本后收益、执行覆盖率 | `GET /reports/strategy-accuracy` |
-| 上线准入与回滚建议 | 门槛判定、自动回滚触发器、每日验收清单 | `GET /reports/go-live-readiness` |
+| 鑷姩璋冨弬闃茶繃鎷熷悎 | walk-forward 澶氱獥鍙ｃ€佺ǔ瀹氭€ф儵缃氥€佸弬鏁版紓绉绘儵缃氥€佹敹鐩婃柟宸儵缃?| `POST /autotune/run`銆佽嚜鍔ㄨ皟鍙傞〉 |
+| 鑷姩璋冨弬鍓嶇鍖?| 浠诲姟杩愯銆佸€欓€夋銆佸熀绾垮姣斻€佺敾鍍忔縺娲?鍥炴粴銆佺伆搴﹁鍒?| 鑷姩璋冨弬椤点€乣/autotune/*` |
+| 鐢诲儚鍥炴粴涓庣伆搴?| 涓€閿洖婊氫笂涓敾鍍忋€佹寜绛栫暐/鎸夋爣鐨勭伆搴﹀惎鐢?| `POST /autotune/profiles/rollback`銆乣/autotune/rollout/rules/*` |
+| 璺ㄧ瓥鐣ユ寫鎴樿禌 | 鍏瓥鐣ュ悓绐楄瘎娴嬨€佺‖闂ㄦ绛涢€夈€佸啝鍐涗簹鍐涖€佺伆搴﹁鍒?| 鎸戞垬璧涢〉銆乣POST /challenge/run` |
+| 缁勫悎绾у洖娴?| 澶氭爣鐨勫噣鍊笺€佽皟浠撳懆鏈熴€佷粨浣嶄笂闄愩€佽涓?涓婚绾︽潫銆佽祫閲戝埄鐢ㄧ巼 | `POST /backtest/portfolio-run` |
+| 鎷熺湡鎴愭湰涓庢垚浜?| 鏈€浣庝剑閲戙€佸嵃鑺辩◣銆佽繃鎴疯垂銆佸啿鍑绘垚鏈€佸垎妗ｆ粦鐐广€佹垚浜ゆ鐜?| 鍥炴祴寮曟搸銆乣/replay/cost-model/*` |
+| 椋庢帶澧炲己 | 杩炵画浜忔崯銆佸崟鏃ヤ簭鎹熴€乂aR/ES銆侀泦涓害闃堝€笺€乀+1/ST/鍋滅墝绛?| `POST /risk/check`銆乣POST /portfolio/risk/check` |
+| 鐮旂┒-鎵ц闂幆 | 寤鸿鍗?-> 鎵嬪伐鎵ц鍥炲啓 -> 鍋忓樊褰掑洜 -> 鍙傛暟寤鸿 | 鎵ц鍥炲啓椤点€乣/replay/*`銆乣/reports/generate` |
+| 鏁版嵁灞傚寮?| 澶氭簮鍥為€€銆佹椂搴忕紦瀛樹笌澧為噺琛ユ媺銆佸瓧娈佃川閲忚瘎鍒?| `data/*`銆乣POST /data/quality/report` |
+| 鏁版嵁璁稿彲璇佹不鐞?| 鏁版嵁闆嗘巿鏉冪櫥璁般€佺敤閫旀牎楠屻€佸鍑烘潈闄愭鏌?| `POST /data/licenses/register`銆乣POST /data/licenses/check` |
+| 鍥犲瓙蹇収涓庤惤搴撶暀鐥?| 鍥犲瓙瀹炴椂蹇収銆佹暟鎹揩鐓у搱甯岀櫥璁般€佸彲杩芥函 | `GET /factors/snapshot`銆乣POST /data/snapshots/register` |
+| 绛栫暐娌荤悊涓庡鎵?| 鐗堟湰娉ㄥ唽銆侀€佸銆佸瑙掕壊瀹℃壒銆佽繍琛屾椂寮哄埗鍙敤宸插鎵圭増鏈?| `/strategy-governance/*` |
+| 鐮旂┒娴佹按绾跨紪鎺?| 姣忔棩鐮旂┒绠＄嚎涓€閿繍琛岋紙淇″彿+浜嬩欢澧炲己+灏忚祫閲戣繃婊わ級 | `POST /pipeline/daily-run` |
+| 妯″瀷椋庨櫓鐩戞帶 | 绛栫暐婕傜Щ妫€娴嬨€侀闄╁憡璀︺€佸璁＄暀鐥?| `POST /model-risk/drift-check` |
+| 绯荤粺閰嶇疆涓庢潈闄?| 鐜閰嶇疆鏌ョ湅銆侀壌鏉冭鑹茶瘑鍒€佹潈闄愮煩闃垫煡璇?| `/system/config`銆乣/system/auth/*` |
+| 鐢熶骇杩愮淮涓庡璁?| 浣滀笟璋冨害銆丼LA銆佸憡璀﹂檷鍣€佽瘉鎹寘銆佸璁″搱甯岄摼 | `/ops/*`銆乣/alerts/*`銆乣/compliance/evidence/*` |
+| 鎸佷粨鍒嗘瀽闂幆 | 鎵嬪伐鎴愪氦銆佹寔浠撳揩鐓с€佹鏃ラ娴嬨€佸姩浣滃缓璁紙ADD/REDUCE/EXIT/HOLD/BUY_NEW锛?| 鎸佷粨鍒嗘瀽椤点€乣/holdings/*` |
+| 绛栫暐鍑嗙‘鎬х湅鏉?| OOS 鍛戒腑鐜囥€丅rier銆佹敹鐩婂亸宸€佹垚鏈悗鏀剁泭銆佹墽琛岃鐩栫巼 | `GET /reports/strategy-accuracy` |
+| 涓婄嚎鍑嗗叆涓庡洖婊氬缓璁?| 闂ㄦ鍒ゅ畾銆佽嚜鍔ㄥ洖婊氳Е鍙戝櫒銆佹瘡鏃ラ獙鏀舵竻鍗?| `GET /reports/go-live-readiness` |
 
-## 4. 启动方式与端口
+## 4. 鍚姩鏂瑰紡涓庣鍙?
+### 4.1 涓€閿惎鍔紙鎺ㄨ崘锛?
+鍙屽嚮锛歚start_system_windows.bat`
 
-### 4.1 一键启动（推荐）
+榛樿鍚庣绔彛锛歚127.0.0.1:8000`
 
-双击：`start_system_windows.bat`
+鑴氭湰浼氳嚜鍔細
 
-默认后端端口：`127.0.0.1:8000`
+1. 鍒涘缓/澶嶇敤 `.venv`
+2. 鍒涘缓/澶嶇敤 `.env`
+3. 瀹夎渚濊禆
+4. 鍚姩 API
+5. 鎵撳紑涓変釜椤甸潰锛歚/ui/`銆乣/trading/workbench`銆乣/ops/dashboard`
 
-脚本会自动：
-
-1. 创建/复用 `.venv`
-2. 创建/复用 `.env`
-3. 安装依赖
-4. 启动 API
-5. 打开三个页面：`/ui/`、`/trading/workbench`、`/ops/dashboard`
-
-### 4.2 手动启动（PowerShell）
-
+### 4.2 鎵嬪姩鍚姩锛圥owerShell锛?
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 ```
 
-### 4.3 常见启动日志说明
+### 4.3 甯歌鍚姩鏃ュ織璇存槑
 
-- `GET /favicon.ico 404`：正常，不影响业务功能。
-- `ops_scheduler_enabled bool parsing error`：`.env` 值后面有空格（例如 `true `），改成严格 `true`/`false`。
+- `GET /favicon.ico 404`锛氭甯革紝涓嶅奖鍝嶄笟鍔″姛鑳姐€?- `ops_scheduler_enabled bool parsing error`锛歚.env` 鍊煎悗闈㈡湁绌烘牸锛堜緥濡?`true `锛夛紝鏀规垚涓ユ牸 `true`/`false`銆?
+## 5. 宸ヤ綔鍙颁娇鐢ㄨ鏄庯紙鎸夋爣绛鹃〉锛?
+### 5.1 绛栫暐涓庡弬鏁伴〉
 
-## 5. 工作台使用说明（按标签页）
+涓昏鐢ㄤ簬鐢熸垚淇″彿銆佸洖娴嬨€佺爺绌朵笌缁勫悎璋冧粨銆?
+鍏抽敭鑳藉姏锛?
+1. 閫夋嫨绛栫暐涓庡弬鏁帮紙6 绛栫暐锛夈€?2. 閰嶇疆浜嬩欢澧炲己銆佽储鎶ュ寮恒€佸皬璧勯噾妯″紡銆?3. 杩愯锛?   - `杩愯淇″彿鐢熸垚` -> `POST /signals/generate`
+   - `杩愯鍥炴祴` -> `POST /backtest/run`
+   - `杩愯缁勫悎鍑€鍊煎洖娴媊 -> `POST /backtest/portfolio-run`
+   - `杩愯鐮旂┒宸ヤ綔娴乣 -> `POST /research/run`
+4. 灏忚祫閲戞ā鏉匡細`2000/5000/8000` 涓€閿鍙傘€?
+### 5.2 鑷姩璋冨弬椤?
+涓昏鐢ㄤ簬鍙傛暟鎼滅储銆佽繃鎷熷悎鎶戝埗鍜岀敾鍍忕鐞嗐€?
+鍏抽敭鑳藉姏锛?
+1. 鎼滅储绌洪棿 + 鍩虹嚎鍙傛暟璁剧疆銆?2. walk-forward 澶氱獥鍙ｉ獙璇併€?3. 鍊欓€夋帓琛屾锛坥bjective銆乷verfit銆乻tability銆乸aram drift銆乺eturn variance锛夈€?4. 鍙傛暟鐢诲儚绠＄悊锛?   - 婵€娲荤敾鍍?   - 涓€閿洖婊氫笂涓€涓敾鍍?   - 鏌ョ湅褰撳墠鐢熸晥鐢诲儚
+5. 鐏板害瑙勫垯锛氭寜绛栫暐/鎸夋爣鐨勫惎鍋溿€?
+### 5.3 璺ㄧ瓥鐣ユ寫鎴樿禌椤?
+鐢ㄤ簬鈥滃悓绐楀彛銆佸悓绾︽潫鈥濅笅姣旇緝鍏瓥鐣ュ競鍦洪€傞厤鎬с€?
+鍏抽敭鑳藉姏锛?
+1. 鍚屾椂璺戝叚绛栫暐锛堟瘡涓瓥鐣ュ厛璋冨弬鍐嶈瘎娴嬶級銆?2. 纭棬妲涚瓫閫夛紙鍥炴挙銆佸鏅€佷氦鏄撴暟銆亀alk-forward 绋冲畾鎬э級銆?3. 缁煎悎璇勫垎鎺掑簭锛堟敹鐩?+ 绋冲畾鎬?- 鍥炴挙 - 鏂瑰樊鎯╃綒锛夈€?4. 杈撳嚭鍐犲啗/浜氬啗涓庣伆搴︿笂绾胯鍒掋€?5. 鍐犲啗鍙傛暟鍙竴閿洖濉埌绛栫暐椤点€?
+### 5.4 缁撴灉鍙鍖栭〉
 
-### 5.1 策略与参数页
-
-主要用于生成信号、回测、研究与组合调仓。
-
-关键能力：
-
-1. 选择策略与参数（6 策略）。
-2. 配置事件增强、财报增强、小资金模式。
-3. 运行：
-   - `运行信号生成` -> `POST /signals/generate`
-   - `运行回测` -> `POST /backtest/run`
-   - `运行组合净值回测` -> `POST /backtest/portfolio-run`
-   - `运行研究工作流` -> `POST /research/run`
-4. 小资金模板：`2000/5000/8000` 一键套参。
-
-### 5.2 自动调参页
-
-主要用于参数搜索、过拟合抑制和画像管理。
-
-关键能力：
-
-1. 搜索空间 + 基线参数设置。
-2. walk-forward 多窗口验证。
-3. 候选排行榜（objective、overfit、stability、param drift、return variance）。
-4. 参数画像管理：
-   - 激活画像
-   - 一键回滚上一个画像
-   - 查看当前生效画像
-5. 灰度规则：按策略/按标的启停。
-
-### 5.3 跨策略挑战赛页
-
-用于“同窗口、同约束”下比较六策略市场适配性。
-
-关键能力：
-
-1. 同时跑六策略（每个策略先调参再评测）。
-2. 硬门槛筛选（回撤、夏普、交易数、walk-forward 稳定性）。
-3. 综合评分排序（收益 + 稳定性 - 回撤 - 方差惩罚）。
-4. 输出冠军/亚军与灰度上线计划。
-5. 冠军参数可一键回填到策略页。
-
-### 5.4 结果可视化页
-
-用于看图看表并联动调仓。
-
-关键能力：
-
-1. KPI：信号数、阻断数、回测收益/回撤/夏普等。
-2. 信号表 + 风控明细联动。
-3. K 线叠加信号点位。
-4. 组合权重图、行业暴露图。
-5. 调仓计划联动：`POST /portfolio/rebalance/plan`。
-6. 组合级回测结果展示。
-
-### 5.5 持仓分析页
-
-用于手工交易台账、持仓画像、次日建议和准确性复盘。
-
-#### 5.5.1 手工成交录入（`POST /holdings/trades`）
-
-字段说明：
-
-1. `trade_date`：成交日期
-2. `symbol` / `symbol_name`
-3. `side`：BUY/SELL
-4. `price`：成交价
+鐢ㄤ簬鐪嬪浘鐪嬭〃骞惰仈鍔ㄨ皟浠撱€?
+鍏抽敭鑳藉姏锛?
+1. KPI锛氫俊鍙锋暟銆侀樆鏂暟銆佸洖娴嬫敹鐩?鍥炴挙/澶忔櫘绛夈€?2. 淇″彿琛?+ 椋庢帶鏄庣粏鑱斿姩銆?3. K 绾垮彔鍔犱俊鍙风偣浣嶃€?4. 缁勫悎鏉冮噸鍥俱€佽涓氭毚闇插浘銆?5. 璋冧粨璁″垝鑱斿姩锛歚POST /portfolio/rebalance/plan`銆?6. 缁勫悎绾у洖娴嬬粨鏋滃睍绀恒€?
+### 5.5 鎸佷粨鍒嗘瀽椤?
+鐢ㄤ簬鎵嬪伐浜ゆ槗鍙拌处銆佹寔浠撶敾鍍忋€佹鏃ュ缓璁拰鍑嗙‘鎬у鐩樸€?
+#### 5.5.1 鎵嬪伐鎴愪氦褰曞叆锛坄POST /holdings/trades`锛?
+瀛楁璇存槑锛?
+1. `trade_date`锛氭垚浜ゆ棩鏈?2. `symbol` / `symbol_name`
+3. `side`锛欱UY/SELL
+4. `price`锛氭垚浜や环
 5. `lots` / `lot_size`
-6. `fee`：总费用
-7. `reference_price`：建议/参考价（用于滑点评估）
-8. `executed_at`：成交时间
-9. `is_partial_fill`：是否部分成交
-10. `unfilled_reason`：未成交或部分成交原因
-11. `note`
+6. `fee`锛氭€昏垂鐢?7. `reference_price`锛氬缓璁?鍙傝€冧环锛堢敤浜庢粦鐐硅瘎浼帮級
+8. `executed_at`锛氭垚浜ゆ椂闂?9. `is_partial_fill`锛氭槸鍚﹂儴鍒嗘垚浜?10. `unfilled_reason`锛氭湭鎴愪氦鎴栭儴鍒嗘垚浜ゅ師鍥?11. `note`
 
-#### 5.5.2 持仓快照与次日建议
+#### 5.5.2 鎸佷粨蹇収涓庢鏃ュ缓璁?
+- 鎸佷粨蹇収锛歚GET /holdings/positions`
+- 娆℃棩鍒嗘瀽锛歚POST /holdings/analyze`
 
-- 持仓快照：`GET /holdings/positions`
-- 次日分析：`POST /holdings/analyze`
-
-建议动作包括：
-
+寤鸿鍔ㄤ綔鍖呮嫭锛?
 1. `ADD`
 2. `REDUCE`
 3. `EXIT`
 4. `HOLD`
 5. `BUY_NEW`
 
-每条建议含：`target_lots`、`delta_lots`、`confidence`、`risk_flags`、执行时段建议等。
+姣忔潯寤鸿鍚細`target_lots`銆乣delta_lots`銆乣confidence`銆乣risk_flags`銆佹墽琛屾椂娈靛缓璁瓑銆?
+#### 5.5.3 绛栫暐鍑嗙‘鎬х湅鏉?
+鎺ュ彛锛歚GET /reports/strategy-accuracy`
 
-#### 5.5.3 策略准确性看板
+鏍稿績鎸囨爣锛?
+1. 鏍锋湰澶栧懡涓巼锛坔it rate锛?2. Brier 鍒嗘暟锛堟鐜囨牎鍑嗚宸級
+3. 鏀剁泭鍋忓樊锛堥娴?瀹為檯锛?4. 鎴愭湰鍚庡姩浣滄敹鐩?5. 鎵ц瑕嗙洊鐜囷紙寤鸿鏄惁琚洖鍐欐墽琛岋級
 
-接口：`GET /reports/strategy-accuracy`
+#### 5.5.4 涓婄嚎鍑嗗叆闂ㄦ琛?
+鎺ュ彛锛歚GET /reports/go-live-readiness`
 
-核心指标：
+杈撳嚭鍐呭锛?
+1. 闂ㄦ妫€鏌ワ紙pass/fail锛?2. Readiness 绛夌骇锛坄BLOCKED` / `GRAY_READY_WITH_WARNINGS` / `GRAY_READY`锛?3. 鑷姩鍥炴粴瑙﹀彂瑙勫垯
+4. 姣忔棩楠屾敹娓呭崟
 
-1. 样本外命中率（hit rate）
-2. Brier 分数（概率校准误差）
-3. 收益偏差（预测-实际）
-4. 成本后动作收益
-5. 执行覆盖率（建议是否被回写执行）
+### 5.6 浜ゆ槗鍑嗗鍗曚笌鎵ц鍥炲啓椤?
+鍏抽敭鑳藉姏锛?
+1. 鏌ョ湅寤鸿鍗曞苟涓€閿～鍏ユ墽琛屽崟銆?2. 鎵ц鍥炲啓锛歚POST /replay/executions/record`銆?3. 鎵ц澶嶇洏锛歚GET /replay/report`銆?4. 鍋忓樊褰掑洜锛歚GET /replay/attribution`銆?5. closure 鎶ュ憡锛歚POST /reports/generate` (`report_type=closure`)銆?6. 鎴愭湰妯″瀷閲嶄及锛歚POST /replay/cost-model/calibrate`銆?
+## 6. 浠庣爺绌跺埌鎵ц鐨勯棴鐜紙鏍囧噯娴佺▼锛?
+1. 鍦ㄧ瓥鐣ラ〉鐢熸垚淇″彿銆?2. 鍦ㄧ粨鏋滈〉妫€鏌ラ鎺с€佸洖娴嬨€佺粍鍚堝缓璁€?3. 鎵嬪伐涓嬪崟鍚庡綍鍏ユ寔浠撲氦鏄撳彴璐︺€?4. 鍦ㄦ墽琛岄〉鍥炲啓鎴愪氦銆?5. 鏌ョ湅澶嶇洏涓庡綊鍥狅紝璇嗗埆鍋忓樊鏉ユ簮銆?6. 鍒锋柊鍑嗙‘鎬х湅鏉夸笌涓婄嚎鍑嗗叆鎶ュ憡銆?7. 鑻ヤ笉杈炬爣锛屽洖婊氱敾鍍忓苟璋冩暣鍙傛暟锛屽啀杩涘叆涓嬩竴杞€?
+## 7. 鏁版嵁涓庣畻娉曡鏄?
+### 7.1 鏁版嵁婧?
+1. `tushare` 浼樺厛
+2. `akshare` 鍥為€€
+3. 鏈湴缂撳瓨锛氭椂搴忓閲忚ˉ鎷夛紙鍑忓皯閲嶅璇锋眰锛?
+### 7.2 棰戠巼鏀寔
 
-#### 5.5.4 上线准入门槛表
+1. 鏃ョ嚎锛氫富绛栫暐涓庡洖娴嬩富棰?2. 鍒嗛挓绾匡紙1m/5m/15m/30m/60m锛夛細鐢ㄤ簬鎸佷粨椤垫墽琛屾椂娈靛缓璁笌鐩樹腑椋庨櫓杈呭姪
 
-接口：`GET /reports/go-live-readiness`
+### 7.3 绠楁硶鍘熷垯
 
-输出内容：
+1. 涓嶉€夆€滃崟娈靛埄娑︽渶楂樷€濓紝閫夆€滄牱鏈鏇寸ǔ鈥濄€?2. 澶氭寚鏍囩患鍚堣瘎鍒嗚€岄潪鍗曚竴鏀剁泭銆?3. 鍏堣繃纭棬妲涳紝鍐嶅仛鎺掑悕銆?
+### 7.4 鍥犲瓙蹇収涓庢ā鍨嬫紓绉?
+1. 鍙敤 `GET /factors/snapshot` 鏌ョ湅鎸囧畾鏍囩殑鍦ㄦ寚瀹氬尯闂寸殑鏈€鏂板洜瀛愬€硷紙鍚熀鏈潰澧炲己鍥犲瓙锛夈€?2. 姣忔鍥犲瓙蹇収浼氱櫥璁版暟鎹揩鐓у搱甯岋紝渚夸簬鍥炴祴涓庡疄鐩樺璐﹁拷婧€?3. 鍙敤 `POST /model-risk/drift-check` 鍋氱瓥鐣ユ紓绉绘娴嬶紝闃叉妯″瀷鍦ㄥ競鍦哄垏鎹㈠悗澶辨晥銆?
+## 8. 椋庢帶銆佹垚鏈笌鍙氦鏄撴€?
+绯荤粺宸茶鐩栵細
 
-1. 门槛检查（pass/fail）
-2. Readiness 等级（`BLOCKED` / `GRAY_READY_WITH_WARNINGS` / `GRAY_READY`）
-3. 自动回滚触发规则
-4. 每日验收清单
+1. T+1銆丼T銆佸仠鐗屻€佹定璺屽仠绛夊熀纭€绾︽潫
+2. 鍗曠エ浠撲綅涓婇檺銆佽涓?涓婚闆嗕腑搴︾害鏉?3. 杩炵画浜忔崯銆佸崟鏃ヤ簭鎹熴€乂aR/ES 绛夌粍鍚堥闄╂帶鍒?4. 鏈€浣庝剑閲戙€佸嵃鑺辩◣銆佽繃鎴疯垂
+5. 鎷熺湡婊戠偣涓庡啿鍑绘垚鏈缓妯?6. 灏忚祫閲戝彲浜ゆ槗杩囨护锛堣兘鍚︿拱涓€鎵嬨€佽竟闄呮槸鍚﹁鐩栨垚鏈級
 
-### 5.6 交易准备单与执行回写页
+## 9. 杩愮淮銆佸憡璀︿笌瀹¤
 
-关键能力：
+### 9.1 杩愮淮浣滀笟
 
-1. 查看建议单并一键填入执行单。
-2. 执行回写：`POST /replay/executions/record`。
-3. 执行复盘：`GET /replay/report`。
-4. 偏差归因：`GET /replay/attribution`。
-5. closure 报告：`POST /reports/generate` (`report_type=closure`)。
-6. 成本模型重估：`POST /replay/cost-model/calibrate`。
+- 浣滀笟娉ㄥ唽銆佽Е鍙戙€佽皟搴︺€丼LA 妫€鏌ワ細`/ops/jobs/*`
 
-## 6. 从研究到执行的闭环（标准流程）
+### 9.2 鍛婅绯荤粺
 
-1. 在策略页生成信号。
-2. 在结果页检查风控、回测、组合建议。
-3. 手工下单后录入持仓交易台账。
-4. 在执行页回写成交。
-5. 查看复盘与归因，识别偏差来源。
-6. 刷新准确性看板与上线准入报告。
-7. 若不达标，回滚画像并调整参数，再进入下一轮。
+- 璁㈤槄銆佸幓閲嶃€丄CK銆佸€肩彮鍥炶皟銆佸璐︼細`/alerts/*`
 
-## 7. 数据与算法说明
+### 9.3 鍚堣璇佹嵁鍖?
+- 瀵煎嚭銆佺鍚嶃€佸绛俱€佹牎楠岋細`/compliance/evidence/*`
 
-### 7.1 数据源
+### 9.4 瀹¤閾?
+- 瀹¤鏌ヨ锛歚/audit/events`
+- 閾炬牎楠岋細`/audit/verify-chain`
 
-1. `tushare` 优先
-2. `akshare` 回退
-3. 本地缓存：时序增量补拉（减少重复请求）
+## 10. 鍏抽敭 API 鍒嗙粍绱㈠紩
 
-### 7.2 频率支持
-
-1. 日线：主策略与回测主频
-2. 分钟线（1m/5m/15m/30m/60m）：用于持仓页执行时段建议与盘中风险辅助
-
-### 7.3 算法原则
-
-1. 不选“单段利润最高”，选“样本外更稳”。
-2. 多指标综合评分而非单一收益。
-3. 先过硬门槛，再做排名。
-
-### 7.4 因子快照与模型漂移
-
-1. 可用 `GET /factors/snapshot` 查看指定标的在指定区间的最新因子值（含基本面增强因子）。
-2. 每次因子快照会登记数据快照哈希，便于回测与实盘对账追溯。
-3. 可用 `POST /model-risk/drift-check` 做策略漂移检测，防止模型在市场切换后失效。
-
-## 8. 风控、成本与可交易性
-
-系统已覆盖：
-
-1. T+1、ST、停牌、涨跌停等基础约束
-2. 单票仓位上限、行业/主题集中度约束
-3. 连续亏损、单日亏损、VaR/ES 等组合风险控制
-4. 最低佣金、印花税、过户费
-5. 拟真滑点与冲击成本建模
-6. 小资金可交易过滤（能否买一手、边际是否覆盖成本）
-
-## 9. 运维、告警与审计
-
-### 9.1 运维作业
-
-- 作业注册、触发、调度、SLA 检查：`/ops/jobs/*`
-
-### 9.2 告警系统
-
-- 订阅、去重、ACK、值班回调、对账：`/alerts/*`
-
-### 9.3 合规证据包
-
-- 导出、签名、复签、校验：`/compliance/evidence/*`
-
-### 9.4 审计链
-
-- 审计查询：`/audit/events`
-- 链校验：`/audit/verify-chain`
-
-## 10. 关键 API 分组索引
-
-### 10.1 系统与鉴权
-
+### 10.1 绯荤粺涓庨壌鏉?
 - `GET /system/config`
 - `GET /system/auth/me`
 - `GET /system/auth/permissions`
 
-### 10.2 市场与数据接入
-
+### 10.2 甯傚満涓庢暟鎹帴鍏?
 - `GET /market/bars`
 - `GET /market/intraday`
 - `GET /market/calendar`
 - `GET /market/tushare/capabilities`
 - `POST /market/tushare/prefetch`
 
-### 10.3 数据治理与许可证
+### 10.3 鏁版嵁娌荤悊涓庤鍙瘉
 
 - `POST /data/quality/report`
 - `POST /data/snapshots/register`
@@ -298,7 +192,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 - `GET /data/licenses`
 - `POST /data/licenses/check`
 
-### 10.4 事件与 NLP
+### 10.4 浜嬩欢涓?NLP
 
 - `POST /events/sources/register`
 - `POST /events/ingest`
@@ -310,7 +204,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 - `POST /events/nlp/drift-check`
 - `GET /events/nlp/drift/slo/history`
 
-### 10.5 因子、策略与治理
+### 10.5 鍥犲瓙銆佺瓥鐣ヤ笌娌荤悊
 
 - `GET /factors/snapshot`
 - `GET /strategies`
@@ -321,7 +215,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 - `GET /strategy-governance/policy`
 - `POST /model-risk/drift-check`
 
-### 10.6 信号、风控与组合
+### 10.6 淇″彿銆侀鎺т笌缁勫悎
 
 - `POST /signals/generate`
 - `POST /risk/check`
@@ -330,8 +224,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 - `POST /portfolio/rebalance/plan`
 - `POST /portfolio/stress-test`
 
-### 10.7 回测、研究、调参与挑战赛
-
+### 10.7 鍥炴祴銆佺爺绌躲€佽皟鍙備笌鎸戞垬璧?
 - `POST /backtest/run`
 - `POST /backtest/portfolio-run`
 - `POST /research/run`
@@ -341,8 +234,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 - `POST /autotune/profiles/rollback`
 - `POST /challenge/run`
 
-### 10.8 持仓与上线闭环
-
+### 10.8 鎸佷粨涓庝笂绾块棴鐜?
 - `POST /holdings/trades`
 - `GET /holdings/trades`
 - `GET /holdings/positions`
@@ -350,8 +242,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 - `GET /reports/strategy-accuracy`
 - `GET /reports/go-live-readiness`
 
-### 10.9 执行回写与复盘
-
+### 10.9 鎵ц鍥炲啓涓庡鐩?
 - `POST /replay/signals/record`
 - `POST /replay/executions/record`
 - `GET /replay/report`
@@ -359,16 +250,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 - `POST /replay/cost-model/calibrate`
 - `GET /replay/cost-model/calibrations`
 
-### 10.10 报告、合规与证据包
-
+### 10.10 鎶ュ憡銆佸悎瑙勪笌璇佹嵁鍖?
 - `POST /reports/generate`
 - `POST /compliance/preflight`
 - `POST /compliance/evidence/export`
 - `POST /compliance/evidence/verify`
 - `POST /compliance/evidence/countersign`
 
-### 10.11 运维调度与告警
-
+### 10.11 杩愮淮璋冨害涓庡憡璀?
 - `GET /metrics/summary`
 - `GET /metrics/ops-dashboard`
 - `POST /ops/jobs/register`
@@ -379,72 +268,52 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 - `GET /alerts/recent`
 - `POST /alerts/oncall/reconcile`
 
-### 10.12 审计
+### 10.12 瀹¤
 
 - `GET /audit/events`
 - `GET /audit/export`
 - `GET /audit/verify-chain`
 
-## 11. 每日操作 SOP（建议）
+## 11. 姣忔棩鎿嶄綔 SOP锛堝缓璁級
 
-### 11.1 盘前
+### 11.1 鐩樺墠
 
-1. 看 `/ops/dashboard`，确认无 critical。
-2. 跑挑战赛或确认当前冠军画像仍生效。
-3. 刷新持仓分析，生成次日建议。
-4. 刷新上线准入报告，确认是否允许继续灰度。
+1. 鐪?`/ops/dashboard`锛岀‘璁ゆ棤 critical銆?2. 璺戞寫鎴樿禌鎴栫‘璁ゅ綋鍓嶅啝鍐涚敾鍍忎粛鐢熸晥銆?3. 鍒锋柊鎸佷粨鍒嗘瀽锛岀敓鎴愭鏃ュ缓璁€?4. 鍒锋柊涓婄嚎鍑嗗叆鎶ュ憡锛岀‘璁ゆ槸鍚﹀厑璁哥户缁伆搴︺€?
+### 11.2 鐩樹腑
 
-### 11.2 盘中
+1. 鍙傝€冩寔浠撻〉鎺ㄨ崘鎵ц鏃舵銆?2. 鎵嬪伐涓嬪崟鍚庣珛鍗冲洖濉垚浜よ褰曘€?3. 鑻ヨЕ鍙戝洖婊氭潯浠讹紝鍋滄澧炰粨骞跺洖婊氱敾鍍忋€?
+### 11.3 鐩樺悗
 
-1. 参考持仓页推荐执行时段。
-2. 手工下单后立即回填成交记录。
-3. 若触发回滚条件，停止增仓并回滚画像。
+1. 鍥炲啓鎵ц骞跺埛鏂板鐩樺綊鍥犮€?2. 鍒锋柊鍑嗙‘鎬х湅鏉夸笌涓婄嚎鍑嗗叆鐪嬫澘銆?3. 璁板綍寮傚父涓庣浜屽ぉ淇鍔ㄤ綔銆?
+## 12. 涓婄嚎鍑嗗叆寤鸿锛堝疄鐩樼伆搴︼級
 
-### 11.3 盘后
-
-1. 回写执行并刷新复盘归因。
-2. 刷新准确性看板与上线准入看板。
-3. 记录异常与第二天修正动作。
-
-## 12. 上线准入建议（实盘灰度）
-
-建议门槛（可按你的风险偏好微调）：
-
-1. OOS 样本数 `>= 40`
-2. OOS 命中率 `>= 55%`
+寤鸿闂ㄦ锛堝彲鎸変綘鐨勯闄╁亸濂藉井璋冿級锛?
+1. OOS 鏍锋湰鏁?`>= 40`
+2. OOS 鍛戒腑鐜?`>= 55%`
 3. Brier `<= 0.23`
-4. 执行覆盖率 `>= 70%`
-5. 成本后动作收益 `>= 0`
-6. 执行跟随率 `>= 65%`
-7. 平均滑点 `<= 35 bps`
-8. 平均延迟 `<= 1.2 天`
-9. 最近 30 天存在挑战赛验证结果
+4. 鎵ц瑕嗙洊鐜?`>= 70%`
+5. 鎴愭湰鍚庡姩浣滄敹鐩?`>= 0`
+6. 鎵ц璺熼殢鐜?`>= 65%`
+7. 骞冲潎婊戠偣 `<= 35 bps`
+8. 骞冲潎寤惰繜 `<= 1.2 澶ー
+9. 鏈€杩?30 澶╁瓨鍦ㄦ寫鎴樿禌楠岃瘉缁撴灉
 
-自动回滚触发器（示例）：
+鑷姩鍥炴粴瑙﹀彂鍣紙绀轰緥锛夛細
 
-1. 连续 3 日亏损
-2. 单日组合收益 `<= -2.5%`
-3. 灰度窗口最大回撤 `> 6%`
-4. 5 日执行覆盖率 `< 60%` 或 5 日平均滑点 `> 45 bps`
+1. 杩炵画 3 鏃ヤ簭鎹?2. 鍗曟棩缁勫悎鏀剁泭 `<= -2.5%`
+3. 鐏板害绐楀彛鏈€澶у洖鎾?`> 6%`
+4. 5 鏃ユ墽琛岃鐩栫巼 `< 60%` 鎴?5 鏃ュ钩鍧囨粦鐐?`> 45 bps`
 
-## 13. 常见问题
+## 13. 甯歌闂
 
-1. 标签页点不动
-- 先看浏览器控制台是否有 JS 报错。
-- 强刷缓存后重试。
-- 确认 `/ui/trading-workbench/app.js` 能正常加载（HTTP 200）。
+1. 鏍囩椤电偣涓嶅姩
+- 鍏堢湅娴忚鍣ㄦ帶鍒跺彴鏄惁鏈?JS 鎶ラ敊銆?- 寮哄埛缂撳瓨鍚庨噸璇曘€?- 纭 `/ui/trading-workbench/app.js` 鑳芥甯稿姞杞斤紙HTTP 200锛夈€?
+2. 鏂囨。鎴栭〉闈㈠嚭鐜颁贡鐮?- 纭鏂囦欢淇濆瓨涓?UTF-8銆?- Windows 缁堢寤鸿浣跨敤 `chcp 65001`銆?
+3. 鍚姩澶辫触鎻愮ず甯冨皵瑙ｆ瀽閿欒
+- `.env` 涓嶈鍐?`true `锛堟湯灏剧┖鏍硷級锛屽繀椤绘槸 `true` 鎴?`false`銆?
+4. 涓轰粈涔堟敹鐩婂拰鍥炴祴涓嶅悓
+- 瀹炵洏鏈夋墽琛屽亸宸€佹粦鐐广€佸欢杩熶笌婕忓崟銆?- 璇蜂互鈥滄垚鏈悗鏀剁泭 + 鍑嗙‘鎬х湅鏉?+ 涓婄嚎鍑嗗叆鎶ュ憡鈥濈患鍚堝垽鏂€?
+## 14. 缁撹
 
-2. 文档或页面出现乱码
-- 确认文件保存为 UTF-8。
-- Windows 终端建议使用 `chcp 65001`。
+杩欎唤鎵嬪唽宸茬粡瑕嗙洊褰撳墠绯荤粺涓诲姛鑳介潰銆傝嫢鍚庣画鏂板妯″潡锛岃鍚屾鏇存柊鏈枃浠跺拰 `README.md` 鐨勨€滆兘鍔涜寖鍥粹€濅笌鈥淎PI 鎬昏鈥濄€?
 
-3. 启动失败提示布尔解析错误
-- `.env` 不要写 `true `（末尾空格），必须是 `true` 或 `false`。
-
-4. 为什么收益和回测不同
-- 实盘有执行偏差、滑点、延迟与漏单。
-- 请以“成本后收益 + 准确性看板 + 上线准入报告”综合判断。
-
-## 14. 结语
-
-这份手册已经覆盖当前系统主功能面。若后续新增模块，请同步更新本文件和 `README.md` 的“能力范围”与“API 总览”。

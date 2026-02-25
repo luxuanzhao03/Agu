@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import itertools
 import json
+import logging
 import statistics
 from datetime import date, datetime, timezone
 from typing import Any
@@ -31,46 +32,39 @@ from trading_assistant.governance.event_service import EventService
 from trading_assistant.strategy.governance_service import StrategyGovernanceService
 from trading_assistant.strategy.registry import StrategyRegistry
 
+logger = logging.getLogger(__name__)
+
 
 _DEFAULT_SPACE: dict[str, dict[str, list[float | int | str | bool]]] = {
     "trend_following": {
-        "entry_ma_fast": [10, 15, 20, 25],
-        "entry_ma_slow": [40, 60, 80],
-        "atr_multiplier": [1.5, 2.0, 2.5],
+        "entry_ma_fast": [6, 10, 14, 18, 24],
+        "entry_ma_slow": [20, 30, 40, 55, 60],
+        "atr_multiplier": [1.1, 1.4, 1.8, 2.2],
     },
     "mean_reversion": {
-        "z_enter": [1.4, 1.8, 2.0, 2.3],
-        "z_exit": [-0.2, 0.0, 0.2],
-        "min_turnover": [3_000_000, 5_000_000, 8_000_000],
+        "z_enter": [1.0, 1.3, 1.6, 2.0],
+        "z_exit": [-0.4, -0.2, 0.0, 0.2],
+        "min_turnover": [1_500_000, 2_500_000, 4_000_000, 5_000_000, 7_000_000],
     },
     "multi_factor": {
-        "buy_threshold": [0.52, 0.55, 0.58, 0.62],
-        "sell_threshold": [0.30, 0.35, 0.40],
-        "w_momentum": [0.25, 0.35, 0.45],
-        "w_quality": [0.15, 0.25, 0.35],
-        "w_low_vol": [0.10, 0.20],
-        "w_liquidity": [0.10, 0.20],
-        "w_fundamental": [0.10, 0.15, 0.20],
-        "w_tushare_advanced": [0.05, 0.10, 0.15],
+        "buy_threshold": [0.45, 0.49, 0.53, 0.55, 0.58],
+        "sell_threshold": [0.35, 0.36, 0.40, 0.44, 0.48],
+        "w_momentum": [0.30, 0.40, 0.50],
+        "w_quality": [0.15, 0.20, 0.28],
+        "w_low_vol": [0.05, 0.10, 0.15],
+        "w_liquidity": [0.15, 0.22, 0.30],
+        "w_fundamental": [0.03, 0.07, 0.12],
+        "w_tushare_advanced": [0.02, 0.05, 0.10],
+        "min_fundamental_score_buy": [0.20, 0.25, 0.32],
+        "min_tushare_score_buy": [0.16, 0.20, 0.26],
     },
     "sector_rotation": {
-        "sector_strength": [0.45, 0.55, 0.65, 0.75],
-        "risk_off_strength": [0.35, 0.45, 0.55, 0.65],
+        "sector_strength": [0.40, 0.48, 0.56, 0.65],
+        "risk_off_strength": [0.30, 0.40, 0.50, 0.60, 0.65],
     },
     "event_driven": {
-        "event_score": [0.55, 0.65, 0.75, 0.85],
-        "negative_event_score": [0.45, 0.55, 0.65, 0.75],
-    },
-    "small_capital_adaptive": {
-        "buy_threshold": [0.60, 0.64, 0.68],
-        "sell_threshold": [0.30, 0.34, 0.38],
-        "min_turnover20": [8_000_000, 12_000_000, 15_000_000],
-        "max_volatility20": [0.035, 0.042, 0.050],
-        "min_fundamental_score_buy": [0.42, 0.47, 0.52],
-        "max_positions": [2, 3, 4],
-        "risk_per_trade": [0.008, 0.010, 0.012],
-        "max_single_position": [0.30, 0.40, 0.55],
-        "min_tushare_advanced_score_buy": [0.35, 0.40, 0.45],
+        "event_score": [0.45, 0.55, 0.65, 0.70, 0.75],
+        "negative_event_score": [0.35, 0.45, 0.55, 0.60, 0.65],
     },
 }
 
@@ -194,7 +188,7 @@ class AutoTuneService:
             raise ValueError("No market data available for requested range.")
 
         bars = bars.sort_values("trade_date").reset_index(drop=True).copy()
-        status = self.provider.get_security_status(req.symbol)
+        status = self._resolve_security_status(provider=self.provider, symbol=req.symbol, bars=bars)
         bars["is_st"] = bool(status.get("is_st", False))
         bars["is_suspended"] = bool(status.get("is_suspended", False))
 
@@ -780,6 +774,31 @@ class AutoTuneService:
         if pd.isna(parsed):
             return fallback
         return parsed.date()
+
+    @staticmethod
+    def _resolve_security_status(
+        *,
+        provider: CompositeDataProvider,
+        symbol: str,
+        bars: pd.DataFrame,
+    ) -> dict[str, bool]:
+        fallback = {
+            "is_st": bool(bars.iloc[-1].get("is_st", False)) if (bars is not None and not bars.empty) else False,
+            "is_suspended": bool(bars.iloc[-1].get("is_suspended", False)) if (bars is not None and not bars.empty) else False,
+        }
+        try:
+            status = provider.get_security_status(symbol)
+            return {
+                "is_st": bool(status.get("is_st", fallback["is_st"])),
+                "is_suspended": bool(status.get("is_suspended", fallback["is_suspended"])),
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Security status lookup failed for %s in autotune; fallback to bars/default status: %s",
+                symbol,
+                exc,
+            )
+            return fallback
 
     @staticmethod
     def _split_bars(

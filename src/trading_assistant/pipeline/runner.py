@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from uuid import uuid4
 
 from trading_assistant.core.models import (
@@ -34,6 +35,8 @@ from trading_assistant.trading.costs import (
 )
 from trading_assistant.trading.small_capital import apply_small_capital_overrides
 
+logger = logging.getLogger(__name__)
+
 
 class DailyPipelineRunner:
     def __init__(
@@ -58,8 +61,8 @@ class DailyPipelineRunner:
         fee_transfer_rate: float = 0.00001,
         small_capital_mode_enabled: bool = False,
         small_capital_principal_cny: float = 2000.0,
-        small_capital_cash_buffer_ratio: float = 0.10,
-        small_capital_min_expected_edge_bps: float = 80.0,
+        small_capital_cash_buffer_ratio: float = 0.05,
+        small_capital_min_expected_edge_bps: float = 45.0,
         small_capital_lot_size: int = 100,
     ) -> None:
         self.provider = provider
@@ -169,7 +172,20 @@ class DailyPipelineRunner:
                 )
                 continue
 
-            status = self.provider.get_security_status(symbol)
+            status = {
+                "is_st": bool(bars.iloc[-1].get("is_st", False)),
+                "is_suspended": bool(bars.iloc[-1].get("is_suspended", False)),
+            }
+            try:
+                fetched_status = self.provider.get_security_status(symbol)
+                status["is_st"] = bool(fetched_status.get("is_st", status["is_st"]))
+                status["is_suspended"] = bool(fetched_status.get("is_suspended", status["is_suspended"]))
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "Security status lookup failed for %s in pipeline; fallback to bars/default status: %s",
+                    symbol,
+                    exc,
+                )
             bars["is_st"] = bool(status.get("is_st", False))
             bars["is_suspended"] = bool(status.get("is_suspended", False))
             event_stats = {"events_loaded": 0}
@@ -264,7 +280,7 @@ class DailyPipelineRunner:
                     min_commission=self.fee_min_commission_cny,
                     transfer_fee_rate=self.fee_transfer_rate,
                     cash_buffer_ratio=self.small_capital_cash_buffer_ratio,
-                    max_single_position=0.35,
+                    max_single_position=0.50,
                     max_positions=max(1, int(float(strategy_params.get("max_positions", 3)))),
                 )
                 expected_edge_bps = infer_expected_edge_bps(
