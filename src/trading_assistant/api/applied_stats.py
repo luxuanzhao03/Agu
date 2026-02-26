@@ -53,6 +53,34 @@ class OLSAnalysisRequest(BaseModel):
         return self
 
 
+class RidgeAnalysisRequest(BaseModel):
+    target: list[float | int | None] = Field(default_factory=list)
+    features: dict[str, list[float | int | None]] = Field(default_factory=dict)
+    alpha: float | None = Field(default=None, ge=0.0)
+    alpha_grid: list[float] | None = None
+    cv_folds: int = Field(default=5, ge=2, le=20)
+    standardize: bool = True
+    random_seed: int = 42
+
+    @model_validator(mode="after")
+    def _validate_lengths(self) -> "RidgeAnalysisRequest":
+        if not self.target:
+            raise ValueError("target must not be empty.")
+        if not self.features:
+            raise ValueError("features must not be empty.")
+        target_len = len(self.target)
+        for name, values in self.features.items():
+            if len(values) != target_len:
+                raise ValueError(f"feature '{name}' length mismatch with target.")
+        if self.alpha_grid is not None:
+            if not self.alpha_grid:
+                raise ValueError("alpha_grid must not be empty when provided.")
+            bad = [a for a in self.alpha_grid if a is None or float(a) < 0.0]
+            if bad:
+                raise ValueError("alpha_grid must contain non-negative numeric values only.")
+        return self
+
+
 class MarketFactorStudyRequest(BaseModel):
     symbol: str
     start_date: date
@@ -158,6 +186,40 @@ def ols_analysis(
     return result
 
 
+@router.post("/model/ridge")
+def ridge_analysis(
+    req: RidgeAnalysisRequest,
+    service: AppliedStatisticsService = Depends(get_applied_statistics_service),
+    audit: AuditService = Depends(get_audit_service),
+    _auth: AuthContext = Depends(require_roles(UserRole.RESEARCH, UserRole.RISK, UserRole.READONLY)),
+) -> dict[str, Any]:
+    try:
+        result = service.ridge_analysis(
+            target=req.target,
+            features=req.features,
+            alpha=req.alpha,
+            alpha_grid=req.alpha_grid,
+            cv_folds=req.cv_folds,
+            standardize=req.standardize,
+            random_seed=req.random_seed,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    audit.log(
+        event_type="applied_stats",
+        action="ridge_analysis",
+        payload={
+            "n_target": len(req.target),
+            "feature_count": len(req.features),
+            "alpha": result.get("alpha"),
+            "standardize": result.get("standardize"),
+            "r2": result.get("r2"),
+        },
+    )
+    return result
+
+
 @router.post("/cases/market-factor-study")
 def market_factor_study(
     req: MarketFactorStudyRequest,
@@ -195,4 +257,3 @@ def market_factor_study(
         },
     )
     return result
-

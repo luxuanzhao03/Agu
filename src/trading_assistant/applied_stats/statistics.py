@@ -333,3 +333,187 @@ def ols_regression(
         "p_value_method": "normal_approximation",
     }
 
+
+def ridge_select_alpha_cv(
+    *,
+    features: pd.DataFrame | np.ndarray,
+    target: pd.Series | np.ndarray,
+    alphas: list[float] | None = None,
+    folds: int = 5,
+    standardize: bool = True,
+    random_seed: int = 42,
+) -> dict[str, Any]:
+    x = np.asarray(features, dtype=float)
+    y = np.asarray(target, dtype=float).reshape(-1)
+    if x.ndim == 1:
+        x = x.reshape(-1, 1)
+    if x.ndim != 2:
+        raise ValueError("features must be a 2D array.")
+    if x.shape[0] != y.shape[0]:
+        raise ValueError("features and target must have the same row count.")
+
+    finite_mask = np.isfinite(y)
+    finite_mask &= np.isfinite(x).all(axis=1)
+    x = x[finite_mask]
+    y = y[finite_mask]
+    n, p = x.shape
+    if n < 8:
+        raise ValueError("Insufficient observations for ridge CV (need at least 8 rows).")
+    if p < 1:
+        raise ValueError("features must contain at least 1 column.")
+
+    k = int(folds)
+    k = max(2, min(k, n))
+
+    if alphas is None:
+        alphas = [float(v) for v in np.logspace(-4, 4, num=25)]
+    alpha_list = [float(a) for a in alphas if float(a) >= 0.0]
+    if not alpha_list:
+        raise ValueError("alphas must contain at least one non-negative value.")
+
+    rng = np.random.default_rng(int(random_seed))
+    indices = rng.permutation(n)
+    fold_sizes = [(n // k) + (1 if i < (n % k) else 0) for i in range(k)]
+    folds_idx: list[np.ndarray] = []
+    cursor = 0
+    for size in fold_sizes:
+        folds_idx.append(indices[cursor : cursor + size])
+        cursor += size
+
+    def _fit_ridge(train_x: np.ndarray, train_y: np.ndarray, alpha: float) -> tuple[np.ndarray, float]:
+        x_mean = train_x.mean(axis=0)
+        y_mean = float(np.mean(train_y))
+        x_centered = train_x - x_mean
+        y_centered = train_y - y_mean
+
+        if standardize:
+            x_std = train_x.std(axis=0, ddof=0)
+            x_std = np.where(np.abs(x_std) <= _EPS, 1.0, x_std)
+            z = x_centered / x_std
+        else:
+            x_std = np.ones(train_x.shape[1], dtype=float)
+            z = x_centered
+
+        a = z.T @ z + float(alpha) * np.eye(train_x.shape[1], dtype=float)
+        try:
+            beta_std = np.linalg.solve(a, z.T @ y_centered)
+        except Exception:  # noqa: BLE001
+            beta_std = np.linalg.pinv(a) @ (z.T @ y_centered)
+
+        beta = beta_std / x_std
+        intercept = y_mean - float(x_mean @ beta)
+        return beta, intercept
+
+    rows: list[dict[str, float]] = []
+    for alpha in alpha_list:
+        fold_mse: list[float] = []
+        for fold in folds_idx:
+            val_idx = fold
+            train_idx = np.setdiff1d(indices, val_idx, assume_unique=False)
+            beta, intercept = _fit_ridge(x[train_idx], y[train_idx], alpha)
+            preds = intercept + x[val_idx] @ beta
+            resid = y[val_idx] - preds
+            fold_mse.append(float(np.mean(resid**2)))
+
+        mean_mse = float(np.mean(fold_mse))
+        rows.append({"alpha": float(alpha), "mean_mse": mean_mse, "mean_rmse": float(math.sqrt(max(0.0, mean_mse)))})
+
+    best = min(rows, key=lambda item: item["mean_mse"])
+    return {
+        "folds": int(k),
+        "standardize": bool(standardize),
+        "alpha_grid": [item["alpha"] for item in rows],
+        "mean_mse": [item["mean_mse"] for item in rows],
+        "mean_rmse": [item["mean_rmse"] for item in rows],
+        "best_alpha": float(best["alpha"]),
+        "best_rmse": float(best["mean_rmse"]),
+    }
+
+
+def ridge_regression(
+    *,
+    features: pd.DataFrame | np.ndarray,
+    target: pd.Series | np.ndarray,
+    feature_names: list[str] | None = None,
+    alpha: float = 1.0,
+    standardize: bool = True,
+) -> dict[str, Any]:
+    x = np.asarray(features, dtype=float)
+    y = np.asarray(target, dtype=float).reshape(-1)
+    if x.ndim == 1:
+        x = x.reshape(-1, 1)
+    if x.ndim != 2:
+        raise ValueError("features must be a 2D array.")
+    if x.shape[0] != y.shape[0]:
+        raise ValueError("features and target must have the same row count.")
+
+    finite_mask = np.isfinite(y)
+    finite_mask &= np.isfinite(x).all(axis=1)
+    x = x[finite_mask]
+    y = y[finite_mask]
+    n, p = x.shape
+    if n < 3 or p < 1:
+        raise ValueError("Insufficient data for ridge regression.")
+
+    if feature_names is None:
+        feature_names = [f"x{i + 1}" for i in range(p)]
+    if len(feature_names) != p:
+        raise ValueError("feature_names length must equal number of feature columns.")
+
+    alpha_val = float(alpha)
+    if alpha_val < 0.0:
+        raise ValueError("alpha must be >= 0.")
+
+    x_mean = x.mean(axis=0)
+    y_mean = float(np.mean(y))
+    x_centered = x - x_mean
+    y_centered = y - y_mean
+
+    if standardize:
+        x_std = x.std(axis=0, ddof=0)
+        x_std = np.where(np.abs(x_std) <= _EPS, 1.0, x_std)
+        z = x_centered / x_std
+    else:
+        x_std = np.ones(p, dtype=float)
+        z = x_centered
+
+    a = z.T @ z + alpha_val * np.eye(p, dtype=float)
+    try:
+        beta_std = np.linalg.solve(a, z.T @ y_centered)
+    except Exception:  # noqa: BLE001
+        beta_std = np.linalg.pinv(a) @ (z.T @ y_centered)
+
+    beta = beta_std / x_std
+    intercept = y_mean - float(x_mean @ beta)
+    y_hat = intercept + x @ beta
+    residuals = y - y_hat
+
+    rss = float(np.sum(residuals**2))
+    tss = float(np.sum((y - y_mean) ** 2))
+    r2 = 1.0 - rss / max(_EPS, tss)
+    mae = float(np.mean(np.abs(residuals)))
+    rmse = float(math.sqrt(max(0.0, np.mean(residuals**2))))
+
+    coef_table: list[dict[str, float | str | None]] = [
+        {"term": "intercept", "coefficient": float(intercept), "standardized_coefficient": None}
+    ]
+    for idx, name in enumerate(feature_names):
+        coef_table.append(
+            {
+                "term": name,
+                "coefficient": float(beta[idx]),
+                "standardized_coefficient": float(beta_std[idx]) if standardize else None,
+            }
+        )
+
+    return {
+        "n": int(n),
+        "p": int(p),
+        "alpha": float(alpha_val),
+        "standardize": bool(standardize),
+        "r2": float(r2),
+        "mae": mae,
+        "rmse": rmse,
+        "coefficients": coef_table,
+        "method": "ridge",
+    }

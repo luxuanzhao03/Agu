@@ -133,6 +133,32 @@ def test_applied_stats_ols_endpoint(tmp_path: Path) -> None:
         app.dependency_overrides.clear()
 
 
+def test_applied_stats_ridge_endpoint(tmp_path: Path) -> None:
+    _setup_overrides(tmp_path)
+    client = TestClient(app)
+    try:
+        resp = client.post(
+            "/applied-stats/model/ridge",
+            json={
+                "target": [15, 18, 24, 29, 34, 37, 42, 48],
+                "features": {
+                    "x1": [1, 2, 3, 4, 5, 6, 7, 8],
+                    "x2": [3, 3, 4, 4, 5, 5, 6, 6],
+                },
+                "alpha": 1.0,
+                "standardize": True,
+            },
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["n"] == 8
+        assert payload["p"] == 2
+        assert payload["method"] == "ridge"
+        assert len(payload["coefficients"]) == 3
+    finally:
+        app.dependency_overrides.clear()
+
+
 def test_applied_stats_market_factor_case_endpoint(tmp_path: Path) -> None:
     _setup_overrides(tmp_path)
     client = TestClient(app)
@@ -158,4 +184,3 @@ def test_applied_stats_market_factor_case_endpoint(tmp_path: Path) -> None:
         assert "interpretation" in payload
     finally:
         app.dependency_overrides.clear()
-

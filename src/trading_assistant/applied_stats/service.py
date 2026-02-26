@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date
 from pathlib import Path
@@ -12,6 +12,8 @@ from trading_assistant.applied_stats.statistics import (
     correlation_matrix_with_p_values,
     jarque_bera_test,
     ols_regression,
+    ridge_regression,
+    ridge_select_alpha_cv,
     summarize_series,
     two_sample_mean_test,
 )
@@ -110,6 +112,53 @@ class AppliedStatisticsService:
             feature_names=feature_names,
         )
 
+    def ridge_analysis(
+        self,
+        *,
+        target: list[float | int | None],
+        features: dict[str, list[float | int | None]],
+        alpha: float | None = None,
+        alpha_grid: list[float] | None = None,
+        cv_folds: int = 5,
+        standardize: bool = True,
+        random_seed: int = 42,
+    ) -> dict[str, Any]:
+        if not features:
+            raise ValueError("features must not be empty.")
+        feature_names = list(features.keys())
+        expected = len(target)
+        if expected <= 0:
+            raise ValueError("target must not be empty.")
+        for name, values in features.items():
+            if len(values) != expected:
+                raise ValueError("target and all feature vectors must have identical lengths.")
+
+        frame = pd.DataFrame(features).apply(pd.to_numeric, errors="coerce")
+        y = pd.to_numeric(pd.Series(target), errors="coerce")
+
+        cv = None
+        if alpha is None:
+            cv = ridge_select_alpha_cv(
+                features=frame[feature_names],
+                target=y,
+                alphas=alpha_grid,
+                folds=int(cv_folds),
+                standardize=bool(standardize),
+                random_seed=int(random_seed),
+            )
+            alpha = float(cv["best_alpha"])
+
+        result = ridge_regression(
+            features=frame[feature_names],
+            target=y,
+            feature_names=feature_names,
+            alpha=float(alpha),
+            standardize=bool(standardize),
+        )
+        if cv is not None:
+            result["cv"] = cv
+        return result
+
     def market_factor_study(
         self,
         *,
@@ -152,6 +201,7 @@ class AppliedStatisticsService:
             "fundamental_score",
         ]
         dataset = factors[research_columns].copy()
+
         model_cols = [
             "ret_next_1d",
             "momentum20",
@@ -168,62 +218,29 @@ class AppliedStatisticsService:
             )
 
         target = model_ready["ret_next_1d"]
-        predictors = ["momentum20", "volatility20", "zscore20", "log_turnover20", "fundamental_score"]
+        predictors_all = ["momentum20", "volatility20", "zscore20", "log_turnover20", "fundamental_score"]
+
         dropped_predictors: list[str] = []
-        predictor_stds: dict[str, float] = {}
-        for name in predictors:
+        for name in predictors_all:
             series = pd.to_numeric(model_ready[name], errors="coerce")
             std_val = float(series.std(ddof=1)) if len(series) > 1 else 0.0
-            predictor_stds[name] = std_val
-            if (not np.isfinite(std_val)) or abs(std_val) <= 1e-12 or int(series.nunique(dropna=True)) <= 1:
+            nunique = int(series.nunique(dropna=True))
+            if (not np.isfinite(std_val)) or abs(std_val) <= 1e-12 or nunique <= 1:
                 dropped_predictors.append(name)
 
-        predictors_used = [name for name in predictors if name not in dropped_predictors]
-        if not predictors_used:
+        predictors = [name for name in predictors_all if name not in dropped_predictors]
+        if not predictors:
             raise ValueError(
                 "All predictors have zero variance in the analysis window. "
                 "Try extending date range or disable fundamental enrichment."
             )
 
-        collinearity_threshold = 0.80
-        dropped_collinear_predictors: list[str] = []
-        predictors_model = list(predictors_used)
-        if len(predictors_model) >= 2:
-            corr_abs = model_ready[predictors_model].corr().abs()
-            np.fill_diagonal(corr_abs.values, 0.0)
-            while len(predictors_model) >= 2:
-                max_val = float(np.nanmax(corr_abs.values))
-                if (not np.isfinite(max_val)) or max_val <= collinearity_threshold:
-                    break
-                row_idx, col_idx = np.unravel_index(int(np.nanargmax(corr_abs.values)), corr_abs.shape)
-                name_a = str(corr_abs.index[row_idx])
-                name_b = str(corr_abs.columns[col_idx])
-                if name_a == "momentum20" and name_b != "momentum20":
-                    drop_name = name_b
-                elif name_b == "momentum20" and name_a != "momentum20":
-                    drop_name = name_a
-                elif {name_a, name_b} == {"momentum20", "zscore20"}:
-                    drop_name = "zscore20"
-                else:
-                    avg_a = float(np.nanmean(corr_abs.loc[name_a].to_numpy(dtype=float)))
-                    avg_b = float(np.nanmean(corr_abs.loc[name_b].to_numpy(dtype=float)))
-                    drop_name = name_a if avg_a >= avg_b else name_b
-                if drop_name not in predictors_model:
-                    break
-                dropped_collinear_predictors.append(drop_name)
-                predictors_model = [item for item in predictors_model if item != drop_name]
-                if len(predictors_model) < 2:
-                    break
-                corr_abs = model_ready[predictors_model].corr().abs()
-                np.fill_diagonal(corr_abs.values, 0.0)
-
         descriptive = {
             col: summarize_series(model_ready[col].to_numpy(dtype=float))
-            for col in ["ret_next_1d", *predictors]
+            for col in ["ret_next_1d", *predictors_all]
         }
         target_normality = jarque_bera_test(target.to_numpy(dtype=float))
-        correlation_full = correlation_matrix_with_p_values(model_ready, ["ret_next_1d", *predictors_used])
-        correlation = correlation_matrix_with_p_values(model_ready, ["ret_next_1d", *predictors_model])
+        correlation = correlation_matrix_with_p_values(model_ready, ["ret_next_1d", *predictors])
 
         momentum_median = float(np.median(model_ready["momentum20"].to_numpy(dtype=float)))
         high_momentum = model_ready.loc[model_ready["momentum20"] >= momentum_median, "ret_next_1d"].to_numpy(dtype=float)
@@ -245,20 +262,58 @@ class AppliedStatisticsService:
             bootstrap_samples=bootstrap_samples,
             random_seed=random_seed,
         )
+
         ols = ols_regression(
-            features=model_ready[predictors_model],
+            features=model_ready[predictors],
             target=target,
-            feature_names=predictors_model,
+            feature_names=predictors,
         )
+
+        alpha_grid = [float(v) for v in np.logspace(-4, 4, num=25)]
+        ridge_cv = ridge_select_alpha_cv(
+            features=model_ready[predictors],
+            target=target,
+            alphas=alpha_grid,
+            folds=5,
+            standardize=True,
+            random_seed=random_seed,
+        )
+        ridge = ridge_regression(
+            features=model_ready[predictors],
+            target=target,
+            feature_names=predictors,
+            alpha=float(ridge_cv["best_alpha"]),
+            standardize=True,
+        )
+        ridge["cv"] = ridge_cv
+
+        max_abs_corr = None
+        cond_standardized = None
+        if len(predictors) >= 2:
+            corr_abs = model_ready[predictors].corr().abs()
+            np.fill_diagonal(corr_abs.values, 0.0)
+            value = float(np.nanmax(corr_abs.values))
+            max_abs_corr = value if np.isfinite(value) else None
+
+        x = model_ready[predictors].to_numpy(dtype=float)
+        x_mean = x.mean(axis=0)
+        x_std = x.std(axis=0, ddof=0)
+        x_std = np.where(np.abs(x_std) <= 1e-12, 1.0, x_std)
+        z = (x - x_mean) / x_std
+        try:
+            cond_standardized = float(np.linalg.cond(np.column_stack([np.ones(len(z)), z])))
+        except Exception:  # noqa: BLE001
+            cond_standardized = None
 
         significant_terms = [
             item["term"]
             for item in ols["coefficients"]
             if item["term"] != "intercept" and float(item["p_value_normal_approx"]) < 0.05
         ]
+
         interpretation = [
             (
-                "目标变量（日度未来收益率）正态性检验"
+                "目标变量（次日收益率）正态性检验"
                 + ("通过" if float(target_normality["p_value"]) >= 0.05 else "未通过")
                 + f"，p={float(target_normality['p_value']):.4f}。"
             ),
@@ -267,13 +322,16 @@ class AppliedStatisticsService:
                 + ("显著" if float(mean_test["p_value_permutation"]) < 0.05 else "不显著")
                 + f"，置换检验 p={float(mean_test['p_value_permutation']):.4f}。"
             ),
-            f"多元线性回归 R²={float(ols['r2']):.4f}，调整后 R²={float(ols['adjusted_r2']):.4f}。",
             (
-                "5% 显著性水平下显著变量："
-                + (", ".join(significant_terms) if significant_terms else "无")
-                + "。"
+                f"OLS 回归 R²={float(ols['r2']):.4f}，调整后 R²={float(ols['adjusted_r2']):.4f}。"
+                + (f"（5% 显著变量：{', '.join(significant_terms)}）" if significant_terms else "（5% 显著变量：无）")
+            ),
+            (
+                f"岭回归用于缓解多重共线性（保留全部变量），alpha={float(ridge['alpha']):.4g}，R²={float(ridge['r2']):.4f}。"
             ),
         ]
+        if max_abs_corr is not None:
+            interpretation.append(f"自变量最大绝对相关系数约 {max_abs_corr:.3f}，存在多重共线性风险。")
 
         report: dict[str, Any] = {
             "study_name": "market_factor_applied_statistics_case",
@@ -282,32 +340,30 @@ class AppliedStatisticsService:
             "start_date": start_date.isoformat(),
             "end_date": end_date.isoformat(),
             "sample_size": int(len(model_ready)),
-            "predictors": predictors_model,
+            "predictors": predictors,
+            "predictors_all": predictors_all,
             "dropped_predictors": dropped_predictors,
-            "dropped_collinear_predictors": dropped_collinear_predictors,
-            "collinearity_threshold": collinearity_threshold,
             "descriptive_statistics": descriptive,
             "target_normality": target_normality,
             "momentum_group_mean_test": mean_test,
             "target_bootstrap_ci": bootstrap_ci,
             "correlation": correlation,
-            "correlation_full": correlation_full,
+            "collinearity_diagnostics": {
+                "max_abs_corr": max_abs_corr,
+                "condition_number_standardized": cond_standardized,
+                "vif": ols.get("vif"),
+            },
             "ols": ols,
+            "ridge": ridge,
             "interpretation": interpretation,
             "notes": [
+                "OLS 在多重共线性下系数和显著性可能不稳定；岭回归通过 L2 正则化降低方差以获得更稳定估计。",
                 (
-                    "Dropped zero-variance predictors from correlation/OLS: "
+                    "Zero-variance predictors are excluded from correlation/regression: "
                     + (", ".join(dropped_predictors) if dropped_predictors else "none")
                     + "."
                 ),
-                (
-                    "Dropped highly collinear predictors (|corr| >="
-                    f" {collinearity_threshold:.2f}): "
-                    + (", ".join(dropped_collinear_predictors) if dropped_collinear_predictors else "none")
-                    + "."
-                ),
                 "p 值采用正态近似，仅用于工程内快速研究；正式论文建议用 scipy/statsmodels 复核。",
-                "该案例保留了应用统计完整流程：数据清洗 -> 统计描述 -> 假设检验 -> 建模诊断 -> 结论解释。",
             ],
         }
 
@@ -319,9 +375,7 @@ class AppliedStatisticsService:
         output_dir = Path("reports")
         output_dir.mkdir(parents=True, exist_ok=True)
         safe_symbol = "".join(ch for ch in str(report.get("symbol", "unknown")) if ch.isalnum() or ch in ("_", "-"))
-        filename = (
-            f"applied_stats_{safe_symbol}_{report.get('start_date', 'start')}_{report.get('end_date', 'end')}.md"
-        )
+        filename = f"applied_stats_{safe_symbol}_{report.get('start_date', 'start')}_{report.get('end_date', 'end')}.md"
         target_path = output_dir / filename
 
         lines: list[str] = []
@@ -332,33 +386,59 @@ class AppliedStatisticsService:
         lines.append(f"- 时间区间: `{report.get('start_date')} ~ {report.get('end_date')}`")
         lines.append(f"- 样本量: `{report.get('sample_size')}`")
         lines.append("")
+
         lines.append("## 研究流程")
         lines.append("1. 描述统计与分布检验")
         lines.append("2. 组间均值差异检验（高动量 vs 低动量）")
-        lines.append("3. 多元线性回归建模与诊断")
-        lines.append("4. 结论解释与统计意义说明")
+        lines.append("3. 回归建模：OLS 与 Ridge（缓解多重共线性）")
+        lines.append("4. 诊断与结论解释")
         lines.append("")
+
         lines.append("## 关键结论")
         for sentence in report.get("interpretation", []):
             lines.append(f"- {sentence}")
         lines.append("")
-        lines.append("## OLS 主要指标")
+
         ols = report.get("ols", {})
+        lines.append("## OLS 主要指标")
         lines.append(f"- R²: `{float(ols.get('r2', 0.0)):.6f}`")
         lines.append(f"- Adjusted R²: `{float(ols.get('adjusted_r2', 0.0)):.6f}`")
         lines.append(f"- RMSE: `{float(ols.get('rmse', 0.0)):.6f}`")
         lines.append(f"- Durbin-Watson: `{float(ols.get('durbin_watson', 0.0)):.6f}`")
         lines.append("")
-        lines.append("## 回归系数（节选）")
+
+        ridge = report.get("ridge", {})
+        if ridge:
+            lines.append("## Ridge 主要指标")
+            lines.append(f"- alpha: `{float(ridge.get('alpha', 0.0)):.6g}`")
+            lines.append(f"- R²: `{float(ridge.get('r2', 0.0)):.6f}`")
+            lines.append(f"- RMSE: `{float(ridge.get('rmse', 0.0)):.6f}`")
+            cv = ridge.get("cv") or {}
+            if cv:
+                lines.append(f"- CV best_rmse: `{float(cv.get('best_rmse', 0.0)):.6f}`")
+            lines.append("")
+
+        lines.append("## OLS 回归系数（节选）")
         lines.append("| term | coef | p-value | ci95_low | ci95_high |")
         lines.append("|---|---:|---:|---:|---:|")
-        for row in ols.get("coefficients", [])[:10]:
+        for row in (ols.get("coefficients") or [])[:10]:
             lines.append(
                 "| {term} | {coefficient:.6f} | {p_value_normal_approx:.6f} | {ci95_low:.6f} | {ci95_high:.6f} |".format(
                     **row
                 )
             )
         lines.append("")
+
+        if ridge:
+            lines.append("## Ridge 系数")
+            lines.append("| term | coef | standardized_coef |")
+            lines.append("|---|---:|---:|")
+            for row in ridge.get("coefficients") or []:
+                std_coef = row.get("standardized_coefficient")
+                std_text = "" if std_coef is None else f"{float(std_coef):.6f}"
+                lines.append(f"| {row.get('term')} | {float(row.get('coefficient', 0.0)):.6f} | {std_text} |")
+            lines.append("")
+
         lines.append("## 备注")
         for note in report.get("notes", []):
             lines.append(f"- {note}")
