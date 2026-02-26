@@ -180,6 +180,8 @@ def test_applied_stats_market_factor_case_endpoint(tmp_path: Path) -> None:
         payload = resp.json()
         assert payload["symbol"] == "000001"
         assert payload["sample_size"] >= 24
+        assert payload["target_selected_horizon"] == 10
+        assert payload["target_selected"] == "ret_next_10d"
         assert "ols" in payload
         assert "interpretation" in payload
     finally:

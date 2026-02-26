@@ -36,9 +36,9 @@ class AlwaysBuyStrategy(BaseStrategy):
         ]
 
 
-def _bars(symbol: str, start: date, base_price: float) -> pd.DataFrame:
+def _bars(symbol: str, start: date, base_price: float, days: int = 45) -> pd.DataFrame:
     rows = []
-    for i in range(15):
+    for i in range(days):
         d = start + timedelta(days=i)
         close = base_price * (1.0 + 0.005 * i)
         rows.append(
@@ -58,11 +58,15 @@ def _bars(symbol: str, start: date, base_price: float) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _downtrend_bars(symbol: str, start: date, base_price: float) -> pd.DataFrame:
+def _downtrend_bars(symbol: str, start: date, base_price: float, days: int = 48) -> pd.DataFrame:
     rows = []
-    for i in range(18):
+    close = float(base_price)
+    for i in range(days):
         d = start + timedelta(days=i)
-        close = max(0.5, base_price * (1.0 - 0.016 * i))
+        if i < 24:
+            close = close * 1.004
+        else:
+            close = max(0.5, close * 0.984)
         rows.append(
             {
                 "trade_date": d,
@@ -85,7 +89,7 @@ def test_portfolio_backtest_engine_runs_multi_symbol() -> None:
     req = PortfolioBacktestRequest(
         symbols=["000001", "000002"],
         start_date=date(2025, 1, 1),
-        end_date=date(2025, 1, 15),
+        end_date=date(2025, 2, 14),
         strategy_name="always_buy",
         rebalance_interval_days=3,
         initial_cash=200_000,
@@ -122,7 +126,7 @@ def test_portfolio_backtest_risk_circuit_breaker_blocks_rebalance() -> None:
     req = PortfolioBacktestRequest(
         symbols=["000001", "000002"],
         start_date=date(2025, 2, 1),
-        end_date=date(2025, 2, 18),
+        end_date=date(2025, 3, 20),
         strategy_name="always_buy",
         rebalance_interval_days=1,
         initial_cash=200_000,

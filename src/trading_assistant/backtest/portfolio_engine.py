@@ -291,6 +291,16 @@ class PortfolioBacktestEngine:
         params_by_symbol: dict[str, dict[str, float | int | str | bool]],
     ) -> dict[str, float]:
         candidates: list[OptimizeCandidate] = []
+
+        def _opt_float(value: object) -> float | None:
+            try:
+                out = float(value)
+            except Exception:  # noqa: BLE001
+                return None
+            if out != out:  # NaN
+                return None
+            return out
+
         for symbol in req.symbols:
             rows = normalized.get(symbol, {})
             if not rows:
@@ -302,7 +312,7 @@ class PortfolioBacktestEngine:
             features = self.factor_engine.compute(history)
             feature_cache[symbol] = features
             latest = features.iloc[-1]
-            latest_turnover[symbol] = float(latest.get("turnover20", 0.0) or 0.0)
+            latest_turnover[symbol] = float(_opt_float(latest.get("turnover20")) or 0.0)
             latest_flags[symbol] = {
                 "is_suspended": bool(latest.get("is_suspended", False)),
                 "at_limit_up": bool(latest.get("at_limit_up", False)),
@@ -320,10 +330,13 @@ class PortfolioBacktestEngine:
             signal = strategy_signals[-1]
             if signal.action != SignalAction.BUY:
                 continue
-            momentum = float(latest.get("momentum20", 0.0) or 0.0)
+            momentum = _opt_float(latest.get("momentum20"))
+            volatility = _opt_float(latest.get("volatility20"))
+            if momentum is None or volatility is None:
+                continue
             fundamental = float(latest.get("fundamental_score", 0.5) or 0.5)
-            expected = 0.65 * momentum + 0.35 * (fundamental - 0.5)
-            volatility = max(0.001, float(latest.get("volatility20", 0.01) or 0.01))
+            expected = 0.65 * float(momentum) + 0.35 * (fundamental - 0.5)
+            volatility = max(0.001, float(volatility))
             liquidity = min(1.0, latest_turnover[symbol] / 40_000_000.0)
             candidates.append(
                 OptimizeCandidate(

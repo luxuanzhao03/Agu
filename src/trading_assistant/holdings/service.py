@@ -719,9 +719,10 @@ class HoldingService:
     def _raw_forecast_next_day(latest_row: pd.Series) -> tuple[float, float]:
         close = float(latest_row.get("close", 0.0) or 0.0)
         ma20 = float(latest_row.get("ma20", 0.0) or 0.0)
-        momentum5 = float(latest_row.get("momentum5", 0.0) or 0.0)
-        momentum20 = float(latest_row.get("momentum20", 0.0) or 0.0)
-        volatility20 = max(0.0, float(latest_row.get("volatility20", 0.0) or 0.0))
+        momentum5 = HoldingService._to_float(latest_row.get("momentum5"))
+        momentum20 = HoldingService._to_float(latest_row.get("momentum20"))
+        volatility20_raw = HoldingService._to_float(latest_row.get("volatility20"))
+        volatility20 = max(0.0, float(volatility20_raw)) if volatility20_raw is not None else None
         fundamental_score = float(latest_row.get("fundamental_score", 0.5) or 0.5)
         advanced_score = float(latest_row.get("tushare_advanced_score", 0.5) or 0.5)
         event_score = float(latest_row.get("event_score", 0.0) or 0.0)
@@ -754,12 +755,16 @@ class HoldingService:
             1.0,
         )
 
-        ma_bias = ((close - ma20) / ma20) if ma20 > 1e-12 else 0.0
+        ma_bias = ((close - ma20) / ma20) if ma20 > 1e-12 else None
         score = 0.0
-        score += HoldingService._bounded(momentum5, -0.30, 0.30) * 2.3
-        score += HoldingService._bounded(momentum20, -0.45, 0.45) * 1.7
-        score += HoldingService._bounded(ma_bias, -0.20, 0.20) * 1.5
-        score -= HoldingService._bounded(volatility20, 0.0, 0.25) * 2.1
+        if momentum5 is not None:
+            score += HoldingService._bounded(momentum5, -0.30, 0.30) * 2.3
+        if momentum20 is not None:
+            score += HoldingService._bounded(momentum20, -0.45, 0.45) * 1.7
+        if ma_bias is not None:
+            score += HoldingService._bounded(ma_bias, -0.20, 0.20) * 1.5
+        if volatility20 is not None:
+            score -= HoldingService._bounded(volatility20, 0.0, 0.25) * 2.1
         score += (HoldingService._bounded(fundamental_score, 0.0, 1.0) - 0.5) * 0.8
         score += (HoldingService._bounded(advanced_score, 0.0, 1.0) - 0.5) * 0.6
         score += HoldingService._bounded(event_score - negative_event, -1.0, 1.0) * 0.15

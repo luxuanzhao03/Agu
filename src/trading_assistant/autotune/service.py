@@ -41,6 +41,15 @@ _DEFAULT_SPACE: dict[str, dict[str, list[float | int | str | bool]]] = {
         "entry_ma_slow": [20, 30, 40, 55, 60],
         "atr_multiplier": [1.1, 1.4, 1.8, 2.2],
     },
+    "trend_pullback": {
+        "min_momentum60": [0.00, 0.01, 0.02, 0.03, 0.05],
+        "pullback_z_enter": [-0.20, -0.35, -0.50, -0.70, -0.90],
+        "pullback_z_exit": [0.00, 0.20, 0.35, 0.50],
+        "min_turnover": [1_500_000, 2_500_000, 4_000_000, 6_000_000],
+        "max_volatility20": [0.04, 0.06, 0.08, 0.10],
+        "risk_on_min": [0.40, 0.45, 0.50, 0.55],
+        "risk_off_strength_max": [0.50, 0.58, 0.65],
+    },
     "mean_reversion": {
         "z_enter": [1.0, 1.3, 1.6, 2.0],
         "z_exit": [-0.4, -0.2, 0.0, 0.2],

@@ -2,6 +2,7 @@
 const resultStatus = document.getElementById("resultStatus");
 const metricSampleSize = document.getElementById("metricSampleSize");
 const metricR2 = document.getElementById("metricR2");
+const metricTargetHorizon = document.getElementById("metricTargetHorizon");
 const metricPermutationP = document.getElementById("metricPermutationP");
 const metricRefreshAt = document.getElementById("metricRefreshAt");
 
@@ -22,6 +23,14 @@ function renderJson(payload) {
 function updateMetricsFromCase(payload) {
   const sampleSize = payload && Number.isFinite(payload.sample_size) ? String(payload.sample_size) : "-";
   const r2 = payload && payload.ols && Number.isFinite(payload.ols.r2) ? payload.ols.r2.toFixed(4) : "-";
+  const targetHorizon =
+    payload && Number.isFinite(payload.target_selected_horizon)
+      ? `T+${payload.target_selected_horizon}`
+      : payload &&
+          payload.momentum_group_mean_test &&
+          Number.isFinite(payload.momentum_group_mean_test.target_horizon)
+        ? `T+${payload.momentum_group_mean_test.target_horizon}`
+        : "-";
   const p =
     payload &&
     payload.momentum_group_mean_test &&
@@ -30,6 +39,7 @@ function updateMetricsFromCase(payload) {
       : "-";
   metricSampleSize.textContent = sampleSize;
   metricR2.textContent = r2;
+  if (metricTargetHorizon) metricTargetHorizon.textContent = targetHorizon;
   metricPermutationP.textContent = p;
 }
 
@@ -39,6 +49,7 @@ function updateMetricsFallback(payload) {
   } else if (payload && Number.isFinite(payload.row_count)) {
     metricSampleSize.textContent = String(payload.row_count);
   }
+  if (metricTargetHorizon) metricTargetHorizon.textContent = "-";
 }
 
 function buildRetestDemoRows() {
@@ -186,7 +197,8 @@ async function runMarketFactorStudy(event) {
     });
     renderJson(payload);
     updateMetricsFromCase(payload);
-    setStatus("success", "完整案例已完成");
+    const targetH = Number.isFinite(payload?.target_selected_horizon) ? `T+${payload.target_selected_horizon}` : "T+10";
+    setStatus("success", `完整案例已完成（目标收益期 ${targetH}）`);
   } catch (error) {
     renderJson({ error: String(error) });
     setStatus("error", "执行失败");

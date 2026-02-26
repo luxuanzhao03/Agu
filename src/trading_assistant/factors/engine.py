@@ -26,11 +26,14 @@ class FactorEngine:
         tr = pd.concat([tr_1, tr_2, tr_3], axis=1).max(axis=1)
         atr14 = tr.rolling(window=14, min_periods=1).mean()
 
-        ret = df["close"].pct_change().fillna(0.0)
-        momentum5 = df["close"].pct_change(5).fillna(0.0)
-        momentum20 = df["close"].pct_change(20).fillna(0.0)
-        momentum60 = df["close"].pct_change(60).fillna(0.0)
-        volatility20 = ret.rolling(window=20, min_periods=2).std().fillna(0.0)
+        # Keep insufficient-window values as NaN instead of filling 0,
+        # so downstream modules can explicitly drop/skip immature samples.
+        ret = df["close"].pct_change()
+        momentum5 = df["close"].pct_change(5)
+        momentum20 = df["close"].pct_change(20)
+        momentum60 = df["close"].pct_change(60)
+        momentum120 = df["close"].pct_change(120)
+        volatility20 = ret.rolling(window=20, min_periods=20).std()
 
         # Mean-reversion features.
         close_std20 = df["close"].rolling(window=20, min_periods=2).std().replace(0.0, np.nan)
@@ -48,6 +51,7 @@ class FactorEngine:
             momentum5=momentum5,
             momentum20=momentum20,
             momentum60=momentum60,
+            momentum120=momentum120,
             volatility20=volatility20,
             zscore20=zscore20,
             turnover20=turnover20,

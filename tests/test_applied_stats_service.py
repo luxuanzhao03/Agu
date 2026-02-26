@@ -122,6 +122,10 @@ def test_market_factor_study_runs() -> None:
     )
     assert result["symbol"] == "000001"
     assert result["sample_size"] >= 24
+    assert result["fundamental_enrichment"] is not None
+    assert result["fundamental_enrichment"]["mode"] == "pit"
+    assert int(result["target_selected_horizon"]) == 10
+    assert result["target_selected"] == "ret_next_10d"
+    assert result["target_selection_mode"] == "fixed_horizon"
     assert "ols" in result
     assert len(result["interpretation"]) >= 3
-

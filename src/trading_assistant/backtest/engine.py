@@ -225,7 +225,7 @@ class BacktestEngine:
             )
             expected_edge_bps = infer_expected_edge_bps(
                 confidence=float(signal.confidence),
-                momentum20=float(latest_feature.get("momentum20", 0.0)),
+                momentum20=_opt_float(latest_feature.get("momentum20")),
                 event_score=float(latest_feature.get("event_score", 0.0))
                 if "event_score" in features.columns
                 else None,

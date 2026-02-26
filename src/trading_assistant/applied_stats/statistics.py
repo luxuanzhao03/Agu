@@ -209,7 +209,16 @@ def correlation_matrix_with_p_values(
                 corr_matrix[col_i][col_j] = None
                 p_matrix[col_i][col_j] = None
                 continue
-            r = float(np.corrcoef(x_valid, y_valid)[0, 1])
+            # Avoid RuntimeWarning from np.corrcoef when a series has zero variance.
+            x_centered = x_valid - float(np.mean(x_valid))
+            y_centered = y_valid - float(np.mean(y_valid))
+            std_x = float(np.std(x_centered, ddof=0))
+            std_y = float(np.std(y_centered, ddof=0))
+            if std_x <= _EPS or std_y <= _EPS:
+                corr_matrix[col_i][col_j] = None
+                p_matrix[col_i][col_j] = None
+                continue
+            r = float(np.mean(x_centered * y_centered) / (std_x * std_y))
             if not np.isfinite(r):
                 corr_matrix[col_i][col_j] = None
                 p_matrix[col_i][col_j] = None
@@ -516,4 +525,107 @@ def ridge_regression(
         "rmse": rmse,
         "coefficients": coef_table,
         "method": "ridge",
+    }
+
+
+def information_coefficient(
+    factor: list[float | int | None] | np.ndarray | pd.Series,
+    target: list[float | int | None] | np.ndarray | pd.Series,
+    *,
+    method: str = "spearman",
+) -> float | None:
+    """
+    Information coefficient (IC): correlation between factor values and forward returns.
+
+    - `method="spearman"` is common in factor research because it is robust to outliers.
+    - `method="pearson"` uses linear correlation.
+    """
+    x = np.asarray(factor, dtype=float).reshape(-1)
+    y = np.asarray(target, dtype=float).reshape(-1)
+    if x.size != y.size:
+        raise ValueError("factor and target must have the same length.")
+    mask = np.isfinite(x) & np.isfinite(y)
+    if int(mask.sum()) < 3:
+        return None
+    x = x[mask]
+    y = y[mask]
+    key = str(method or "").strip().lower()
+    if key in ("spearman", "rank"):
+        xr = pd.Series(x).rank(method="average").to_numpy(dtype=float)
+        yr = pd.Series(y).rank(method="average").to_numpy(dtype=float)
+        denom = float(np.std(xr, ddof=1) * np.std(yr, ddof=1))
+        if denom <= _EPS:
+            return None
+        return float(np.corrcoef(xr, yr)[0, 1])
+    if key in ("pearson", "linear"):
+        denom = float(np.std(x, ddof=1) * np.std(y, ddof=1))
+        if denom <= _EPS:
+            return None
+        return float(np.corrcoef(x, y)[0, 1])
+    raise ValueError("method must be 'spearman' or 'pearson'.")
+
+
+def rolling_information_coefficient(
+    *,
+    trade_dates: list[object] | pd.Series | np.ndarray,
+    factor: list[float | int | None] | np.ndarray | pd.Series,
+    target: list[float | int | None] | np.ndarray | pd.Series,
+    window: int = 60,
+    method: str = "spearman",
+    min_obs: int = 20,
+) -> dict[str, Any]:
+    dates = list(trade_dates)
+    x = np.asarray(factor, dtype=float).reshape(-1)
+    y = np.asarray(target, dtype=float).reshape(-1)
+    if len(dates) != int(x.size) or int(x.size) != int(y.size):
+        raise ValueError("trade_dates, factor, and target must have identical lengths.")
+
+    w = max(5, int(window))
+    min_n = max(5, int(min_obs))
+    series: list[dict[str, object]] = []
+    for idx in range(w - 1, int(x.size)):
+        xs = x[idx - w + 1 : idx + 1]
+        ys = y[idx - w + 1 : idx + 1]
+        mask = np.isfinite(xs) & np.isfinite(ys)
+        ic = None
+        if int(mask.sum()) >= min_n:
+            ic = information_coefficient(xs[mask], ys[mask], method=method)
+        d = dates[idx]
+        date_text = d.isoformat() if hasattr(d, "isoformat") else str(d)
+        series.append({"trade_date": date_text, "ic": ic})
+
+    ic_values = np.array([row["ic"] for row in series if isinstance(row.get("ic"), (int, float)) and np.isfinite(row["ic"])], dtype=float)
+    if ic_values.size == 0:
+        summary = {
+            "count": 0,
+            "mean": None,
+            "std": None,
+            "t_stat": None,
+            "positive_ratio": None,
+            "min": None,
+            "max": None,
+        }
+    else:
+        mean_ic = float(np.mean(ic_values))
+        std_ic = float(np.std(ic_values, ddof=1)) if ic_values.size > 1 else 0.0
+        if std_ic <= _EPS or ic_values.size < 2:
+            t_stat = None
+        else:
+            t_stat = float(mean_ic / (std_ic / math.sqrt(float(ic_values.size))))
+        summary = {
+            "count": int(ic_values.size),
+            "mean": mean_ic,
+            "std": std_ic,
+            "t_stat": t_stat,
+            "positive_ratio": float(np.mean(ic_values > 0.0)),
+            "min": float(np.min(ic_values)),
+            "max": float(np.max(ic_values)),
+        }
+
+    return {
+        "window": int(w),
+        "method": str(method),
+        "min_obs": int(min_n),
+        "summary": summary,
+        "series": series,
     }

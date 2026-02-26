@@ -7,12 +7,14 @@ from trading_assistant.strategy.mean_reversion import MeanReversionStrategy
 from trading_assistant.strategy.multi_factor import MultiFactorStrategy
 from trading_assistant.strategy.sector_rotation import SectorRotationStrategy
 from trading_assistant.strategy.trend import TrendFollowingStrategy
+from trading_assistant.strategy.trend_pullback import TrendPullbackStrategy
 
 
 class StrategyRegistry:
     def __init__(self) -> None:
         strategies: list[BaseStrategy] = [
             TrendFollowingStrategy(),
+            TrendPullbackStrategy(),
             MeanReversionStrategy(),
             MultiFactorStrategy(),
             SectorRotationStrategy(),

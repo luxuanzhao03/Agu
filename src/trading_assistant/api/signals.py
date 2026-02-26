@@ -270,9 +270,10 @@ def generate_signals(
             if (req.portfolio_snapshot is not None and req.portfolio_snapshot.cash is not None)
             else small_capital_principal
         )
+        momentum20_for_edge = _opt_float(latest.get("momentum20"))
         expected_edge_bps = infer_expected_edge_bps(
             confidence=float(signal.confidence),
-            momentum20=float(latest.get("momentum20", 0.0)),
+            momentum20=momentum20_for_edge,
             event_score=float(latest.get("event_score", 0.0)) if "event_score" in latest else None,
             fundamental_score=float(latest.get("fundamental_score", 0.5))
             if bool(latest.get("fundamental_available", False))

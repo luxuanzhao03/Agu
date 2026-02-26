@@ -55,6 +55,7 @@ class StatusFailProvider(FakeProvider):
 class StrategyAwareBacktestEngine:
     _base_return = {
         "trend_following": 0.23,
+        "trend_pullback": 0.21,
         "mean_reversion": 0.20,
         "multi_factor": 0.18,
         "sector_rotation": 0.15,
@@ -62,6 +63,15 @@ class StrategyAwareBacktestEngine:
     }
     _target = {
         "trend_following": {"entry_ma_fast": 20.0, "entry_ma_slow": 60.0, "atr_multiplier": 2.0},
+        "trend_pullback": {
+            "min_momentum60": 0.02,
+            "pullback_z_enter": -0.45,
+            "pullback_z_exit": 0.20,
+            "min_turnover": 2_000_000.0,
+            "max_volatility20": 0.08,
+            "risk_on_min": 0.45,
+            "risk_off_strength_max": 0.58,
+        },
         "mean_reversion": {"z_enter": 2.0, "z_exit": 0.0, "min_turnover": 5_000_000.0},
         "multi_factor": {"buy_threshold": 0.55, "sell_threshold": 0.35},
         "sector_rotation": {"sector_strength": 0.60, "risk_off_strength": 0.50},

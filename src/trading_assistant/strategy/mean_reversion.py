@@ -25,9 +25,19 @@ class MeanReversionStrategy(BaseStrategy):
         min_turnover = float(context.params.get("min_turnover", 2_000_000.0))
 
         latest = features.iloc[-1]
-        z = float(latest.get("zscore20", 0.0))
-        turnover = float(latest.get("turnover20", 0.0))
-        momentum20 = float(latest.get("momentum20", 0.0))
+
+        def _opt_float(value: object) -> float | None:
+            try:
+                out = float(value)
+            except Exception:  # noqa: BLE001
+                return None
+            if out != out:  # NaN
+                return None
+            return out
+
+        z = _opt_float(latest.get("zscore20"))
+        turnover = _opt_float(latest.get("turnover20"))
+        momentum20 = _opt_float(latest.get("momentum20"))
         fundamental_available = bool(latest.get("fundamental_available", False))
         fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
         tushare_advanced_available = bool(latest.get("tushare_advanced_available", False))
@@ -36,13 +46,16 @@ class MeanReversionStrategy(BaseStrategy):
             float(latest.get("tushare_disclosure_risk_score", 0.5)) if tushare_advanced_available else 0.5
         )
 
-        if turnover < min_turnover:
+        if z is None or turnover is None:
+            action = SignalAction.WATCH
+            reason = "Insufficient factor history for mean-reversion signals."
+        elif turnover < min_turnover:
             action = SignalAction.WATCH
             reason = "Liquidity too low for mean-reversion execution."
         elif z <= -abs(z_enter):
             action = SignalAction.BUY
             reason = f"Price deviates below mean (z={z:.2f}), reversion entry candidate."
-        elif z >= abs(z_exit) or (z > -0.15 and momentum20 < -0.02):
+        elif z >= abs(z_exit) or (z > -0.15 and momentum20 is not None and momentum20 < -0.02):
             action = SignalAction.SELL
             reason = f"Mean reversion completed (z={z:.2f}), consider exit."
         else:
@@ -65,7 +78,8 @@ class MeanReversionStrategy(BaseStrategy):
             action = SignalAction.WATCH
             reason = f"Mean-reversion setup blocked by disclosure risk ({disclosure_risk:.2f})."
 
-        base_confidence = min(0.95, max(0.2, abs(z) / 3))
+        z_for_confidence = float(z) if z is not None else 0.0
+        base_confidence = min(0.95, max(0.2, abs(z_for_confidence) / 3))
         if not fundamental_available and not tushare_advanced_available:
             confidence = base_confidence
         else:
@@ -83,8 +97,9 @@ class MeanReversionStrategy(BaseStrategy):
                 strategy_name=self.info.name,
                 suggested_position=0.07 if action == SignalAction.BUY else None,
                 metadata={
-                    "zscore20": round(z, 4),
-                    "turnover20": round(turnover, 2),
+                    "zscore20": (round(float(z), 4) if z is not None else None),
+                    "turnover20": (round(float(turnover), 2) if turnover is not None else None),
+                    "momentum20": (round(float(momentum20), 4) if momentum20 is not None else None),
                     "fundamental_score": round(fundamental_score, 4),
                     "fundamental_available": fundamental_available,
                     "tushare_advanced_score": round(tushare_advanced_score, 4),

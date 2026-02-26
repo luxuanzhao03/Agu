@@ -30,7 +30,7 @@ class FactorSnapshotResponse(BaseModel):
     provider: str
     symbol: str
     trade_date: date
-    values: dict[str, float]
+    values: dict[str, float | None]
 
 
 @router.get("/snapshot", response_model=FactorSnapshotResponse)
@@ -84,8 +84,10 @@ def factor_snapshot(
         "ma60",
         "atr14",
         "ret_1d",
+        "momentum5",
         "momentum20",
         "momentum60",
+        "momentum120",
         "volatility20",
         "zscore20",
         "turnover20",
@@ -96,7 +98,16 @@ def factor_snapshot(
         "fundamental_leverage_score",
         "fundamental_completeness",
     ]
-    values = {k: round(float(latest.get(k, 0.0)), 6) for k in keys}
+    def _opt_float(value: object) -> float | None:
+        try:
+            out = float(value)
+        except Exception:  # noqa: BLE001
+            return None
+        if out != out:  # NaN
+            return None
+        return out
+
+    values = {k: (round(float(v), 6) if (v := _opt_float(latest.get(k))) is not None else None) for k in keys}
     audit.log(
         event_type="factor",
         action="snapshot",

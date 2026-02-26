@@ -10,6 +10,15 @@ const STRATEGY_PARAM_DEFAULTS = {
     entry_ma_slow: 34,
     atr_multiplier: 1.6,
   },
+  trend_pullback: {
+    min_momentum60: 0.02,
+    pullback_z_enter: -0.45,
+    pullback_z_exit: 0.2,
+    min_turnover: 2000000,
+    max_volatility20: 0.08,
+    risk_on_min: 0.45,
+    risk_off_strength_max: 0.58,
+  },
   mean_reversion: {
     z_enter: 1.5,
     z_exit: -0.1,

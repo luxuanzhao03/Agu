@@ -218,16 +218,24 @@ class ResearchWorkflowService:
                 stamp_duty_sell_rate=self.fee_stamp_duty_sell_rate,
                 slippage_rate=self.default_slippage_rate,
             )
+            def _opt_float(value: object) -> float | None:
+                try:
+                    out = float(value)
+                except Exception:  # noqa: BLE001
+                    return None
+                if out != out:  # NaN
+                    return None
+                return out
+
+            momentum20_for_edge = _opt_float(latest.get("momentum20"))
             expected_edge_bps = infer_expected_edge_bps(
                 confidence=float(signal.confidence),
-                momentum20=float(latest.get("momentum20", 0.0)),
+                momentum20=momentum20_for_edge,
                 event_score=float(latest.get("event_score", 0.0)) if "event_score" in latest else None,
                 fundamental_score=float(latest.get("fundamental_score", 0.5))
                 if bool(latest.get("fundamental_available", False))
                 else None,
             )
-            def _opt_float(value):
-                return float(value) if (value is not None and value == value) else None
 
             latest_tushare_disclosure_risk = _opt_float(latest.get("tushare_disclosure_risk_score"))
             latest_tushare_audit_risk = _opt_float(latest.get("tushare_audit_opinion_risk"))
@@ -315,17 +323,20 @@ class ResearchWorkflowService:
             if signal.action == SignalAction.BUY and (not risk.blocked):
                 fundamental_available = bool(latest.get("fundamental_available", False))
                 fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
-                momentum = float(latest.get("momentum20", 0.0))
-                blended_expected_return = 0.7 * momentum + 0.3 * (fundamental_score - 0.5)
-                optimize_candidates.append(
-                    OptimizeCandidate(
-                        symbol=signal.symbol,
-                        expected_return=blended_expected_return,
-                        volatility=max(0.001, float(latest.get("volatility20", 0.01))),
-                        industry=industry or "UNKNOWN",
-                        liquidity_score=min(1.0, float(latest.get("turnover20", 0.0)) / 30_000_000),
+                momentum = _opt_float(latest.get("momentum20"))
+                volatility20 = _opt_float(latest.get("volatility20"))
+                turnover20 = _opt_float(latest.get("turnover20"))
+                if momentum is not None and volatility20 is not None:
+                    blended_expected_return = 0.7 * float(momentum) + 0.3 * (fundamental_score - 0.5)
+                    optimize_candidates.append(
+                        OptimizeCandidate(
+                            symbol=signal.symbol,
+                            expected_return=blended_expected_return,
+                            volatility=max(0.001, float(volatility20)),
+                            industry=industry or "UNKNOWN",
+                            liquidity_score=min(1.0, float(turnover20 or 0.0) / 30_000_000),
+                        )
                     )
-                )
 
         optimized = None
         if req.optimize_portfolio and optimize_candidates:

@@ -45,17 +45,47 @@ class MultiFactorStrategy(BaseStrategy):
         min_tushare_score_buy = float(context.params.get("min_tushare_score_buy", 0.20))
 
         latest = features.iloc[-1]
-        momentum = max(-0.5, min(0.5, float(latest.get("momentum60", 0.0)))) + 0.5
-        quality = max(-0.5, min(0.5, float(latest.get("momentum20", 0.0)))) + 0.5
-        low_vol = 1.0 - min(1.0, float(latest.get("volatility20", 0.0)) * 5)
-        turnover = float(latest.get("turnover20", 0.0))
-        liquidity_raw = min(1.0, max(0.0, turnover / 30_000_000))
+
+        def _opt_float(value: object) -> float | None:
+            try:
+                out = float(value)
+            except Exception:  # noqa: BLE001
+                return None
+            if out != out:  # NaN
+                return None
+            return out
+
+        momentum60_raw = _opt_float(latest.get("momentum60"))
+        momentum20_raw = _opt_float(latest.get("momentum20"))
+        volatility20_raw = _opt_float(latest.get("volatility20"))
+        turnover_raw = _opt_float(latest.get("turnover20"))
+        missing_factors: list[str] = []
+        if momentum60_raw is None:
+            missing_factors.append("momentum60")
+        if momentum20_raw is None:
+            missing_factors.append("momentum20")
+        if volatility20_raw is None:
+            missing_factors.append("volatility20")
+        if turnover_raw is None:
+            missing_factors.append("turnover20")
+
         direction = max(-1.0, min(1.0, liquidity_direction))
-        # direction=1 uses pro-liquidity scoring, -1 uses contrarian liquidity scoring.
-        liquidity = (
-            ((1.0 + direction) / 2.0) * liquidity_raw
-            + ((1.0 - direction) / 2.0) * (1.0 - liquidity_raw)
-        )
+        if missing_factors:
+            momentum = 0.5
+            quality = 0.5
+            low_vol = 0.5
+            liquidity_raw = 0.5
+            liquidity = 0.5
+        else:
+            momentum = max(-0.5, min(0.5, float(momentum60_raw))) + 0.5
+            quality = max(-0.5, min(0.5, float(momentum20_raw))) + 0.5
+            low_vol = 1.0 - min(1.0, float(volatility20_raw) * 5)
+            liquidity_raw = min(1.0, max(0.0, float(turnover_raw) / 30_000_000))
+            # direction=1 uses pro-liquidity scoring, -1 uses contrarian liquidity scoring.
+            liquidity = (
+                ((1.0 + direction) / 2.0) * liquidity_raw
+                + ((1.0 - direction) / 2.0) * (1.0 - liquidity_raw)
+            )
         fundamental_available = bool(latest.get("fundamental_available", False))
         fundamental = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
         tushare_available = bool(latest.get("tushare_advanced_available", False))
@@ -75,7 +105,10 @@ class MultiFactorStrategy(BaseStrategy):
         else:
             score = sum(float(v) * max(0.0, w) for v, w in weighted_components) / total_weight
 
-        if score >= buy_threshold:
+        if missing_factors:
+            action = SignalAction.WATCH
+            reason = "Insufficient factor history: " + ", ".join(missing_factors) + "."
+        elif score >= buy_threshold:
             action = SignalAction.BUY
             reason = f"Multi-factor score {score:.3f} >= {buy_threshold:.3f}."
         elif score <= sell_threshold:
@@ -103,7 +136,7 @@ class MultiFactorStrategy(BaseStrategy):
                 symbol=str(latest["symbol"]),
                 trade_date=latest["trade_date"],
                 action=action,
-                confidence=min(0.95, max(0.25, score)),
+                confidence=min(0.95, max(0.25, score if not missing_factors else 0.25)),
                 reason=reason,
                 strategy_name=self.info.name,
                 suggested_position=0.06 if action == SignalAction.BUY else None,
@@ -119,6 +152,7 @@ class MultiFactorStrategy(BaseStrategy):
                     "fundamental_available": fundamental_available,
                     "tushare_advanced_score": round(tushare_advanced, 4),
                     "tushare_advanced_available": tushare_available,
+                    "missing_factors": (",".join(missing_factors) if missing_factors else None),
                 },
             )
         ]

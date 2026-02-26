@@ -22,11 +22,20 @@ class EventDrivenStrategy(BaseStrategy):
         context = context or StrategyContext()
         latest = features.iloc[-1]
 
+        def _opt_float(value: object) -> float | None:
+            try:
+                out = float(value)
+            except Exception:  # noqa: BLE001
+                return None
+            if out != out:  # NaN
+                return None
+            return out
+
         buy_event_threshold = float(context.params.get("event_score", 0.58))
         sell_event_threshold = float(context.params.get("negative_event_score", 0.45))
-        event_score = float(latest.get("event_score", 0.0))
-        negative_event = float(latest.get("negative_event_score", 0.0))
-        momentum20 = float(latest.get("momentum20", 0.0))
+        event_score = _opt_float(latest.get("event_score")) or 0.0
+        negative_event = _opt_float(latest.get("negative_event_score")) or 0.0
+        momentum20 = _opt_float(latest.get("momentum20"))
         fundamental_available = bool(latest.get("fundamental_available", False))
         fundamental_score = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
         tushare_advanced_available = bool(latest.get("tushare_advanced_available", False))
@@ -35,9 +44,21 @@ class EventDrivenStrategy(BaseStrategy):
             float(latest.get("tushare_disclosure_risk_score", 0.5)) if tushare_advanced_available else 0.5
         )
 
-        if event_score >= buy_event_threshold and momentum20 >= -0.06:
+        if event_score >= buy_event_threshold and (momentum20 is None or momentum20 >= -0.06):
             action = SignalAction.BUY
-            reason = f"Positive event score ({event_score:.2f}) >= threshold ({buy_event_threshold:.2f})."
+            if momentum20 is None:
+                reason = (
+                    f"Positive event score ({event_score:.2f}) >= threshold ({buy_event_threshold:.2f}); "
+                    "momentum20 unavailable, skipped momentum filter."
+                )
+            else:
+                reason = f"Positive event score ({event_score:.2f}) >= threshold ({buy_event_threshold:.2f})."
+        elif event_score >= buy_event_threshold and momentum20 < -0.06:
+            action = SignalAction.WATCH
+            reason = (
+                f"Positive event score reached threshold, but momentum20 ({momentum20:.3f}) "
+                "is below risk guardrail (-0.060)."
+            )
         elif negative_event >= sell_event_threshold:
             action = SignalAction.SELL
             reason = f"Negative event score ({negative_event:.2f}) >= threshold ({sell_event_threshold:.2f})."
@@ -81,6 +102,7 @@ class EventDrivenStrategy(BaseStrategy):
                 metadata={
                     "event_score": round(event_score, 4),
                     "negative_event_score": round(negative_event, 4),
+                    "momentum20": (round(float(momentum20), 4) if momentum20 is not None else None),
                     "buy_event_threshold": round(buy_event_threshold, 4),
                     "sell_event_threshold": round(sell_event_threshold, 4),
                     "fundamental_score": round(fundamental_score, 4),

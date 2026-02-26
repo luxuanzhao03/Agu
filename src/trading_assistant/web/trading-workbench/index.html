@@ -910,7 +910,7 @@
       <section id="tab-challenge" class="tab-panel" data-animate>
         <div class="panel-head">
           <h2>跨策略挑战赛页</h2>
-          <p>一键并行评测五策略：先调参，再按样本外硬门槛筛选，最后按综合分产出冠军/亚军与灰度上线建议。</p>
+          <p>一键并行评测多策略：先调参，再按样本外硬门槛筛选，最后按综合分产出冠军/亚军与灰度上线建议。</p>
           <div class="actions-row wrap panel-jumps">
             <button id="jumpToStrategyFromChallengeBtn" type="button" class="secondary">回到策略参数页</button>
             <button id="jumpToAutotuneFromChallengeBtn" type="button" class="secondary">打开自动调参页</button>
@@ -1034,9 +1034,10 @@
               </label>
 
               <div>
-                <p class="muted">参赛策略（全不勾选=后端按默认5策略）</p>
+                <p class="muted">参赛策略（全不勾选=后端按注册表默认策略）</p>
                 <div id="challengeStrategyPickers" class="inline-picks">
                   <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="trend_following" checked /> 趋势跟随（trend_following）</label>
+                  <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="trend_pullback" checked /> 趋势回调（trend_pullback）</label>
                   <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="mean_reversion" checked /> 均值回归（mean_reversion）</label>
                   <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="multi_factor" checked /> 多因子（multi_factor）</label>
                   <label class="inline"><input type="checkbox" class="challenge-strategy-picker" value="sector_rotation" checked /> 行业轮动（sector_rotation）</label>

@@ -108,11 +108,11 @@ def infer_expected_edge_bps(
 ) -> float:
     c = max(0.0, min(1.0, float(confidence)))
     base = max(0.0, (c - 0.5) * 400.0)
-    if momentum20 is not None:
+    if momentum20 is not None and math.isfinite(float(momentum20)):
         base += max(-80.0, min(120.0, float(momentum20) * 300.0))
-    if event_score is not None:
+    if event_score is not None and math.isfinite(float(event_score)):
         base += max(0.0, min(80.0, (float(event_score) - 0.5) * 200.0))
-    if fundamental_score is not None:
+    if fundamental_score is not None and math.isfinite(float(fundamental_score)):
         base += max(-40.0, min(60.0, (float(fundamental_score) - 0.5) * 120.0))
     return max(0.0, base)
 
