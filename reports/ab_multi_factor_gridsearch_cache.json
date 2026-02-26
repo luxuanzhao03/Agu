@@ -1,0 +1,54 @@
+{
+  "train_symbols": [
+    "000002",
+    "600736"
+  ],
+  "oos_symbols": [
+    "000002",
+    "600736"
+  ],
+  "best_baseline": {
+    "params": {
+      "w_momentum": 0.4,
+      "w_quality": 0.2,
+      "w_low_vol": 0.1,
+      "w_liquidity": 0.2,
+      "w_fundamental": 0.07,
+      "w_tushare_advanced": 0.03,
+      "min_fundamental_score_buy": 0.25,
+      "min_tushare_score_buy": 0.2,
+      "buy_threshold": 0.47,
+      "sell_threshold": 0.44
+    },
+    "train_avg_return": -0.001045,
+    "train_avg_sharpe": -0.570902,
+    "train_avg_mdd": 0.001231,
+    "oos_avg_return": -0.001843,
+    "oos_avg_sharpe": -0.24929,
+    "oos_avg_mdd": 0.002744
+  },
+  "best_expanded": {
+    "params": {
+      "buy_threshold": 0.47,
+      "sell_threshold": 0.44,
+      "w_momentum": 0.3,
+      "w_quality": 0.16,
+      "w_low_vol": 0.1,
+      "w_liquidity": 0.2,
+      "w_fundamental": 0.07,
+      "w_tushare_advanced": 0.03,
+      "w_short_momentum": 0.12,
+      "w_trend_strength": 0.08,
+      "w_reversion": 0.04,
+      "w_atr_stability": 0.04,
+      "min_fundamental_score_buy": 0.25,
+      "min_tushare_score_buy": 0.2
+    },
+    "train_avg_return": -0.001054,
+    "train_avg_sharpe": -0.104586,
+    "train_avg_mdd": 0.002981,
+    "oos_avg_return": -0.001185,
+    "oos_avg_sharpe": -0.401996,
+    "oos_avg_mdd": 0.001391
+  }
+}

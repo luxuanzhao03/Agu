@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 from functools import lru_cache
 
+from trading_assistant.applied_stats.service import AppliedStatisticsService
 from trading_assistant.autotune.service import AutoTuneService
 from trading_assistant.autotune.store import AutoTuneStore
 from trading_assistant.challenge.service import StrategyChallengeService
@@ -254,6 +255,15 @@ def get_pipeline_runner() -> DailyPipelineRunner:
 @lru_cache
 def get_fundamental_service() -> FundamentalService:
     return FundamentalService(provider=get_data_provider())
+
+
+@lru_cache
+def get_applied_statistics_service() -> AppliedStatisticsService:
+    return AppliedStatisticsService(
+        provider=get_data_provider(),
+        factor_engine=get_factor_engine(),
+        fundamental_service=get_fundamental_service(),
+    )
 
 
 @lru_cache

@@ -1,0 +1,12 @@
+{
+  "dataset_name": "graduate_retest_case",
+  "rows": [
+    {"score_math": 126, "score_english": 72, "score_stat": 134},
+    {"score_math": 118, "score_english": 69, "score_stat": 127},
+    {"score_math": 132, "score_english": 75, "score_stat": 139},
+    {"score_math": 110, "score_english": 66, "score_stat": 121},
+    {"score_math": 124, "score_english": 71, "score_stat": 131}
+  ],
+  "columns": ["score_math", "score_english", "score_stat"]
+}
+

@@ -1,0 +1,105 @@
+{
+  "summary": {
+    "train": {
+      "symbols": 2,
+      "base_avg_return": -0.003305,
+      "exp_avg_return": -0.003313,
+      "base_median_return": -0.003305,
+      "exp_median_return": -0.003313,
+      "base_avg_sharpe": -0.58484,
+      "exp_avg_sharpe": -0.600006,
+      "base_avg_max_drawdown": 0.00355,
+      "exp_avg_max_drawdown": 0.00355,
+      "wins_return": 0,
+      "wins_sharpe": 0,
+      "wins_drawdown": 0
+    },
+    "oos": {
+      "symbols": 2,
+      "base_avg_return": -0.001902,
+      "exp_avg_return": -0.002442,
+      "base_median_return": -0.001902,
+      "exp_median_return": -0.002442,
+      "base_avg_sharpe": -0.287046,
+      "exp_avg_sharpe": -0.422282,
+      "base_avg_max_drawdown": 0.002772,
+      "exp_avg_max_drawdown": 0.002925,
+      "wins_return": 1,
+      "wins_sharpe": 1,
+      "wins_drawdown": 0
+    }
+  },
+  "details": {
+    "train": [
+      {
+        "symbol": "000002",
+        "bars": 696,
+        "base": {
+          "total_return": -0.006558,
+          "max_drawdown": 0.006741,
+          "sharpe": -1.075022,
+          "trade_count": 5
+        },
+        "exp": {
+          "total_return": -0.006558,
+          "max_drawdown": 0.006741,
+          "sharpe": -1.075022,
+          "trade_count": 5
+        }
+      },
+      {
+        "symbol": "600736",
+        "bars": 696,
+        "base": {
+          "total_return": -5.2e-05,
+          "max_drawdown": 0.00036,
+          "sharpe": -0.094659,
+          "trade_count": 2
+        },
+        "exp": {
+          "total_return": -6.9e-05,
+          "max_drawdown": 0.00036,
+          "sharpe": -0.124991,
+          "trade_count": 2
+        }
+      }
+    ],
+    "oos": [
+      {
+        "symbol": "000002",
+        "bars": 515,
+        "base": {
+          "total_return": -0.003974,
+          "max_drawdown": 0.005326,
+          "sharpe": -0.936795,
+          "trade_count": 6
+        },
+        "exp": {
+          "total_return": -0.005068,
+          "max_drawdown": 0.005631,
+          "sharpe": -1.237594,
+          "trade_count": 6
+        }
+      },
+      {
+        "symbol": "600736",
+        "bars": 515,
+        "base": {
+          "total_return": 0.00017,
+          "max_drawdown": 0.000219,
+          "sharpe": 0.362703,
+          "trade_count": 2
+        },
+        "exp": {
+          "total_return": 0.000184,
+          "max_drawdown": 0.000219,
+          "sharpe": 0.393031,
+          "trade_count": 2
+        }
+      }
+    ]
+  },
+  "notes": {
+    "data_source": "local market_cache.db (provider=tushare cache rows)"
+  }
+}

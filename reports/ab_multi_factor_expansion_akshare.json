@@ -1,0 +1,52 @@
+{
+  "summary": {
+    "train": {
+      "symbols": 0,
+      "base_avg_return": 0.0,
+      "exp_avg_return": 0.0,
+      "base_median_return": 0.0,
+      "exp_median_return": 0.0,
+      "base_avg_sharpe": 0.0,
+      "exp_avg_sharpe": 0.0,
+      "base_avg_max_drawdown": 0.0,
+      "exp_avg_max_drawdown": 0.0,
+      "wins_on_return": 0,
+      "wins_on_sharpe": 0,
+      "wins_on_drawdown": 0
+    },
+    "oos": {
+      "symbols": 0,
+      "base_avg_return": 0.0,
+      "exp_avg_return": 0.0,
+      "base_median_return": 0.0,
+      "exp_median_return": 0.0,
+      "base_avg_sharpe": 0.0,
+      "exp_avg_sharpe": 0.0,
+      "base_avg_max_drawdown": 0.0,
+      "exp_avg_max_drawdown": 0.0,
+      "wins_on_return": 0,
+      "wins_on_sharpe": 0,
+      "wins_on_drawdown": 0
+    },
+    "notes": {
+      "provider": "akshare",
+      "tushare_available": false,
+      "symbols_target": [
+        "000001",
+        "000333",
+        "600036",
+        "600519",
+        "000858",
+        "300750",
+        "601318",
+        "002594"
+      ],
+      "symbols_train_used": [],
+      "symbols_oos_used": []
+    }
+  },
+  "details": {
+    "train": [],
+    "oos": []
+  }
+}

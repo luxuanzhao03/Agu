@@ -4,7 +4,7 @@ import argparse
 import json
 from datetime import date, timedelta
 
-from trading_assistant.core.container import get_pipeline_runner
+from trading_assistant.core.container import get_applied_statistics_service, get_pipeline_runner
 from trading_assistant.core.models import PipelineRunRequest
 
 
@@ -13,7 +13,7 @@ def _date_arg(value: str) -> date:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Trading assistant CLI")
+    parser = argparse.ArgumentParser(description="Trading and applied statistics assistant CLI")
     sub = parser.add_subparsers(dest="command", required=True)
 
     daily = sub.add_parser("daily-run", help="Run daily batch pipeline")
@@ -21,6 +21,15 @@ def build_parser() -> argparse.ArgumentParser:
     daily.add_argument("--start-date", type=_date_arg, default=(date.today() - timedelta(days=120)).isoformat())
     daily.add_argument("--end-date", type=_date_arg, default=date.today().isoformat())
     daily.add_argument("--strategy-name", default="trend_following")
+
+    applied = sub.add_parser("applied-stats-study", help="Run applied statistics market-factor study")
+    applied.add_argument("--symbol", required=True, help="Stock symbol, e.g. 000001")
+    applied.add_argument("--start-date", type=_date_arg, default=(date.today() - timedelta(days=240)).isoformat())
+    applied.add_argument("--end-date", type=_date_arg, default=date.today().isoformat())
+    applied.add_argument("--disable-fundamentals", action="store_true")
+    applied.add_argument("--export-markdown", action="store_true")
+    applied.add_argument("--permutations", type=int, default=2000)
+    applied.add_argument("--bootstrap-samples", type=int, default=2000)
     return parser
 
 
@@ -37,8 +46,18 @@ def main() -> None:
         )
         result = get_pipeline_runner().run(req)
         print(json.dumps(result.model_dump(), ensure_ascii=False, indent=2, default=str))
+    elif args.command == "applied-stats-study":
+        result = get_applied_statistics_service().market_factor_study(
+            symbol=str(args.symbol).strip(),
+            start_date=args.start_date if isinstance(args.start_date, date) else date.fromisoformat(args.start_date),
+            end_date=args.end_date if isinstance(args.end_date, date) else date.fromisoformat(args.end_date),
+            include_fundamentals=not bool(args.disable_fundamentals),
+            permutations=int(args.permutations),
+            bootstrap_samples=int(args.bootstrap_samples),
+            export_markdown=bool(args.export_markdown),
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
 if __name__ == "__main__":
     main()
-

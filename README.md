@@ -8,6 +8,15 @@
 - 不自动下单。
 - 最终交易动作由人工完成。
 
+## 应用统计改编说明（复试展示）
+
+为匹配应用统计专业复试展示场景，项目新增了独立的应用统计研究模块，不要求评审老师理解量化交易工程细节，也可以直接展示统计方法能力。
+
+- 新增 `applied_stats` 模块：描述统计、相关性分析、Jarque-Bera 正态性检验、双样本均值检验（Welch + 置换检验）、OLS 回归、VIF、多重诊断、自助法置信区间。
+- 新增 `/applied-stats/*` API：支持通用数值数据集分析，以及“市场数据作为应用统计案例”的一键研究。
+- 新增 CLI 子命令 `applied-stats-study`：可直接生成结构化统计报告（可导出 Markdown 到 `reports/`）。
+- 研究输出强调统计学流程：数据清洗 -> 假设检验 -> 建模估计 -> 诊断与解释，而不是交易执行工程。
+
 ## 已实现能力范围
 
 1. 数据层（多数据源回退）
@@ -178,6 +187,7 @@
 - 页面入口：`GET /ui/`。
 - 统一导航到投研与运维页面。
 - 提供流程化引导与快速状态摘要。
+- 新增应用统计展示页入口：`GET /applied-stats/showcase`（复试演示专用）。
 
 25. 合规证据包导出
 - 一键导出证据包 zip + SHA256 校验。
@@ -211,6 +221,12 @@
 - 证据包新增自动调参实验与生效记录（审计事件、画像快照、灰度规则）。
 - 支持后续审计追踪“实验 -> 生效 -> 回滚”全链路证据。
 
+30. 应用统计研究模块
+- 通用数值数据描述统计与相关性分析。
+- 双样本均值差异检验（参数法 + 置换检验）。
+- 多元线性回归与诊断（系数显著性、VIF、残差正态性、DW）。
+- 市场数据应用统计案例报告（可导出 Markdown）。
+
 ## 快速开始
 
 ```bash
@@ -229,6 +245,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_api.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\run_pipeline.ps1 -Symbols "000001,000002"
 ```
 
+应用统计案例（CLI）：
+
+```powershell
+python -m trading_assistant.cli applied-stats-study --symbol 000001 --start-date 2025-01-01 --end-date 2025-06-30 --export-markdown
+```
+
 Windows 一键启动：
 
 ```bat
@@ -240,6 +262,8 @@ start_system_windows.bat
 - `docs/system_pretrade_checklist_zh.md`（开盘前/盘中/收盘后检查清单）
 - `docs/tushare_2120_capability_map_zh.md`（2120 积分数据能力映射与接入说明）
 - `docs/runbooks/autotune_experiment_rollout.md`（自动调参与灰度生效 runbook）
+- `docs/applied_statistics_research_guide_zh.md`（应用统计研究模块说明）
+- `docs/applied_statistics_retest_pitch_zh.md`（应用统计复试展示话术）
 
 一键启动行为：
 - 自动切换到项目根目录（`%~dp0`）
@@ -296,6 +320,7 @@ kubectl apply -f deploy/k8s/private-cloud/trading-assistant.yaml
 http://127.0.0.1:8000/ui/
 http://127.0.0.1:8000/ops/dashboard
 http://127.0.0.1:8000/trading/workbench
+http://127.0.0.1:8000/applied-stats/showcase
 ```
 
 ## 可选鉴权（RBAC）
@@ -319,6 +344,10 @@ AUTH_API_KEYS=research_key:research,risk_key:risk,audit_key:audit,admin_key:admi
 - `GET /market/calendar`
 - `GET /market/tushare/capabilities`
 - `POST /market/tushare/prefetch`
+- `POST /applied-stats/descriptive`
+- `POST /applied-stats/tests/two-sample-mean`
+- `POST /applied-stats/model/ols`
+- `POST /applied-stats/cases/market-factor-study`
 - `POST /data/quality/report`
 - `POST /data/pit/validate`
 - `POST /data/pit/validate-events`

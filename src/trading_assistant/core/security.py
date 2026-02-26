@@ -88,6 +88,7 @@ def require_roles(*roles: UserRole) -> Callable:
 def permission_matrix() -> dict[str, list[str]]:
     return {
         "market_data_read": ["readonly", "research", "risk", "audit", "admin"],
+        "applied_statistics": ["readonly", "research", "risk", "admin"],
         "signal_generation": ["research", "risk", "admin"],
         "backtest": ["research", "risk", "admin"],
         "autotune": ["research", "risk", "admin"],

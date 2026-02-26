@@ -101,6 +101,7 @@ def test_ui_main_portal_route() -> None:
     assert "text/html" in resp.headers.get("content-type", "")
     assert 'href="/trading/workbench"' in resp.text
     assert 'href="/ops/dashboard"' in resp.text
+    assert 'href="/applied-stats/showcase"' in resp.text
 
 
 def test_ops_dashboard_has_cross_links() -> None:

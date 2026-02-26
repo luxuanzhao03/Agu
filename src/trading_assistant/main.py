@@ -7,6 +7,8 @@ from fastapi.staticfiles import StaticFiles
 
 from trading_assistant.api.audit import router as audit_router
 from trading_assistant.api.alerts import router as alerts_router
+from trading_assistant.api.applied_stats import router as applied_stats_router
+from trading_assistant.api.applied_stats_ui import router as applied_stats_ui_router
 from trading_assistant.api.autotune import router as autotune_router
 from trading_assistant.api.backtest import router as backtest_router
 from trading_assistant.api.challenge import router as challenge_router
@@ -72,6 +74,8 @@ if _web_root.exists():
 
 app.include_router(health_router)
 app.include_router(market_router)
+app.include_router(applied_stats_router)
+app.include_router(applied_stats_ui_router)
 app.include_router(data_governance_router)
 app.include_router(data_license_router)
 app.include_router(events_router)

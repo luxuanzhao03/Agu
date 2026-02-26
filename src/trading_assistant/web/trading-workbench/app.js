@@ -22,6 +22,7 @@ const STRATEGY_PARAM_DEFAULTS = {
     w_quality: 0.2,
     w_low_vol: 0.1,
     w_liquidity: 0.2,
+    liquidity_direction: -1.0,
     w_fundamental: 0.07,
     w_tushare_advanced: 0.03,
     min_fundamental_score_buy: 0.25,

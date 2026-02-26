@@ -53,6 +53,7 @@ _DEFAULT_SPACE: dict[str, dict[str, list[float | int | str | bool]]] = {
         "w_quality": [0.15, 0.20, 0.28],
         "w_low_vol": [0.05, 0.10, 0.15],
         "w_liquidity": [0.15, 0.22, 0.30],
+        "liquidity_direction": [-1.0, 1.0],
         "w_fundamental": [0.03, 0.07, 0.12],
         "w_tushare_advanced": [0.02, 0.05, 0.10],
         "min_fundamental_score_buy": [0.20, 0.25, 0.32],

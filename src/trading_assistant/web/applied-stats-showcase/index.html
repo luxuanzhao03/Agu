@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>应用统计展示台</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/ui/applied-stats-showcase/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Applied statistics showcase</p>
+          <h1>应用统计展示台</h1>
+          <p class="hero-desc">
+            展示“数据清洗 -> 假设检验 -> 回归建模 -> 诊断解释”的完整统计流程，便于复试老师快速理解项目的统计学价值。
+          </p>
+          <nav class="nav-links">
+            <a href="/ui/">主界面</a>
+            <a href="/trading/workbench">投研工作台</a>
+            <a href="/ops/dashboard">运维看板</a>
+          </nav>
+        </div>
+        <div class="hero-metrics">
+          <article class="metric">
+            <p>样本量</p>
+            <h3 id="metricSampleSize">-</h3>
+          </article>
+          <article class="metric">
+            <p>回归 R²</p>
+            <h3 id="metricR2">-</h3>
+          </article>
+          <article class="metric">
+            <p>置换检验 p-value</p>
+            <h3 id="metricPermutationP">-</h3>
+          </article>
+          <article class="metric">
+            <p>更新时间</p>
+            <h3 id="metricRefreshAt">-</h3>
+          </article>
+        </div>
+      </header>
+
+      <section class="grid">
+        <article class="card controls">
+          <h2>市场数据应用统计案例</h2>
+          <p>用于展示真实数据上的统计研究流程。</p>
+          <form id="marketFactorStudyForm">
+            <label>
+              股票代码
+              <input id="symbolInput" type="text" value="000001" />
+            </label>
+            <label>
+              开始日期
+              <input id="startDateInput" type="date" value="2025-01-01" />
+            </label>
+            <label>
+              结束日期
+              <input id="endDateInput" type="date" value="2025-06-30" />
+            </label>
+            <label class="inline">
+              <input id="includeFundamentalsInput" type="checkbox" checked />
+              启用基本面因子
+            </label>
+            <label class="inline">
+              <input id="exportMarkdownInput" type="checkbox" />
+              导出 Markdown 报告
+            </label>
+            <button id="runMarketFactorStudyBtn" type="submit">运行完整案例</button>
+          </form>
+        </article>
+
+        <article class="card quick-demos">
+          <h2>快速统计演示</h2>
+          <p>不依赖行情数据，几秒内展示统计学方法。</p>
+          <div class="demo-actions">
+            <button id="runDescriptiveDemoBtn" type="button">描述统计演示</button>
+            <button id="runTwoSampleDemoBtn" type="button">双样本检验演示</button>
+            <button id="runOlsDemoBtn" type="button">回归建模演示</button>
+          </div>
+          <ul>
+            <li>描述统计：均值、标准差、偏度、峰度</li>
+            <li>假设检验：Welch t + permutation test</li>
+            <li>回归分析：系数估计、显著性与诊断指标</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="card result-card">
+        <div class="result-head">
+          <h2>结果面板</h2>
+          <span id="resultStatus" class="status idle">等待运行</span>
+        </div>
+        <pre id="resultViewer">{}</pre>
+      </section>
+
+      <section class="card notes">
+        <h2>复试展示建议</h2>
+        <ol>
+          <li>先运行“描述统计演示”，引出研究变量的分布特征。</li>
+          <li>再运行“双样本检验演示”，说明假设检验思想。</li>
+          <li>最后运行“完整案例”，展示统计流程在真实数据上的落地。</li>
+        </ol>
+      </section>
+    </main>
+
+    <script src="/ui/applied-stats-showcase/app.js" defer></script>
+  </body>
+</html>
+

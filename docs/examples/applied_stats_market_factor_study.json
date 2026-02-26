@@ -1,0 +1,11 @@
+{
+  "symbol": "000001",
+  "start_date": "2025-01-01",
+  "end_date": "2025-06-30",
+  "include_fundamentals": true,
+  "permutations": 2000,
+  "bootstrap_samples": 2000,
+  "random_seed": 42,
+  "export_markdown": true
+}
+

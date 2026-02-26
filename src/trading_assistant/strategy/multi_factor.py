@@ -19,6 +19,7 @@ class MultiFactorStrategy(BaseStrategy):
             "w_quality": "float",
             "w_low_vol": "float",
             "w_liquidity": "float",
+            "liquidity_direction": "float",
             "w_fundamental": "float",
             "w_tushare_advanced": "float",
             "min_fundamental_score_buy": "float",
@@ -37,6 +38,7 @@ class MultiFactorStrategy(BaseStrategy):
         w_quality = float(context.params.get("w_quality", 0.20))
         w_low_vol = float(context.params.get("w_low_vol", 0.10))
         w_liquidity = float(context.params.get("w_liquidity", 0.20))
+        liquidity_direction = float(context.params.get("liquidity_direction", 1.0))
         w_fundamental = float(context.params.get("w_fundamental", 0.07))
         w_tushare_advanced = float(context.params.get("w_tushare_advanced", 0.03))
         min_fundamental_score_buy = float(context.params.get("min_fundamental_score_buy", 0.25))
@@ -47,7 +49,13 @@ class MultiFactorStrategy(BaseStrategy):
         quality = max(-0.5, min(0.5, float(latest.get("momentum20", 0.0)))) + 0.5
         low_vol = 1.0 - min(1.0, float(latest.get("volatility20", 0.0)) * 5)
         turnover = float(latest.get("turnover20", 0.0))
-        liquidity = min(1.0, turnover / 30_000_000)
+        liquidity_raw = min(1.0, max(0.0, turnover / 30_000_000))
+        direction = max(-1.0, min(1.0, liquidity_direction))
+        # direction=1 uses pro-liquidity scoring, -1 uses contrarian liquidity scoring.
+        liquidity = (
+            ((1.0 + direction) / 2.0) * liquidity_raw
+            + ((1.0 - direction) / 2.0) * (1.0 - liquidity_raw)
+        )
         fundamental_available = bool(latest.get("fundamental_available", False))
         fundamental = float(latest.get("fundamental_score", 0.5)) if fundamental_available else 0.5
         tushare_available = bool(latest.get("tushare_advanced_available", False))
@@ -104,7 +112,9 @@ class MultiFactorStrategy(BaseStrategy):
                     "momentum": round(momentum, 4),
                     "quality": round(quality, 4),
                     "low_vol": round(low_vol, 4),
+                    "liquidity_raw": round(liquidity_raw, 4),
                     "liquidity": round(liquidity, 4),
+                    "liquidity_direction": round(direction, 4),
                     "fundamental_score": round(fundamental, 4),
                     "fundamental_available": fundamental_available,
                     "tushare_advanced_score": round(tushare_advanced, 4),
